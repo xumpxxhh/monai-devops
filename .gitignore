@@ -1,0 +1,30 @@
+# dependencies
+node_modules
+
+# turbo
+.turbo
+
+# build outputs
+dist
+.next
+out
+build
+
+# env
+.env
+.env.*
+!.env.example
+
+# logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea
+.vscode/*
+!.vscode/extensions.json
