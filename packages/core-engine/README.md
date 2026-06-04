@@ -128,7 +128,7 @@ if (step.pluginResult?.code === PluginFailureCodes.PLUGIN_NOT_FOUND) { /* ... */
 - `scheduleWorkflow(workflow, context?)` → `Promise<ScheduleResult>`（整次 workflow 作为调度任务）
 - `registerPlugin` / `registerPlugins` / `getPlugins` 等（委托 plugin 模块）
 - `getExecutor()` / `getScheduler()` / `getResourceManager()` — 高级用法
-- `destroy()` — 释放资源池定时器、清空执行历史
+- `destroy()` — 释放资源池定时器
 
 ### executor（DAG 工作流）
 
@@ -204,7 +204,6 @@ await engine.runWorkflow(workflow, {
 - **DAG 非法**：抛出 `WorkflowValidationError`，**不**发 `workflow:start`。
 - **failFast**：仍在就绪队列但尚未开始的步骤会补发 `step:finished`（`skipReason: WORKFLOW_ABORTED`）；因依赖失败跳过的下游为 `DEPENDENCY_FAILED`。均写入最终 `result.results`。
 - **单独 `executeStep`**：无 `workflow:start` / `workflow:finished`，仅在有 `observer` 时发步骤事件（需传入 workflow 级 meta 的场景请用 `executeWorkflow`）。
-- **`getExecutionHistory(workflowId)`**：进程内按 `workflow.id` 覆盖，不适合作为 run 级进度源；生产进度请用 `observer` + 调用层存储。
 
 ### ExecutorOptions.observer
 
