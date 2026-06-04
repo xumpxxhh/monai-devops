@@ -1,0 +1,19 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "composite": false
+  },
+  "include": [
+    "index.ts",
+    "engine/**/*.ts",
+    "executor/**/*.ts",
+    "scheduler/**/*.ts",
+    "plugin/**/*.ts",
+    "resource/**/*.ts",
+    "observer/**/*.ts",
+    "utils/**/*.ts",
+    "context-keys.ts",
+    "errors.ts"
+  ],
+  "exclude": ["dist", "node_modules", "__tests__", "scripts"]
+}
