@@ -2,7 +2,7 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { createEngine } from "../engine";
 import { StepFailureKinds, StepStatuses } from "../errors";
-import { createPlugin } from "plugin-sdk";
+import { createPlugin } from "@monai-devops/plugin-sdk";
 
 const testPlugin = createPlugin({
   name: "test-plugin",

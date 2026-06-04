@@ -1,5 +1,5 @@
-import { createPlugin, getConfig } from "plugin-sdk";
-import type { PluginConfig, PluginContext, PluginResult } from "plugin-sdk";
+import { createPlugin, getConfig } from "@monai-devops/plugin-sdk";
+import type { PluginConfig, PluginContext, PluginResult } from "@monai-devops/plugin-sdk";
 
 /**
  * 测试插件执行函数

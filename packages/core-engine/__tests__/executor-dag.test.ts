@@ -6,7 +6,7 @@ import {
   type WorkflowDefinition,
   type PluginExecutor,
 } from "../executor";
-import { getContext, type PluginResult } from "plugin-sdk";
+import { getContext, type PluginResult } from "@monai-devops/plugin-sdk";
 import { WorkflowContextKeys } from "../context-keys";
 import { SkipReasons, StepFailureKinds, StepStatuses } from "../errors";
 

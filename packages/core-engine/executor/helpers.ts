@@ -3,7 +3,7 @@
  * @module executor/helpers
  */
 
-import { PluginFailureCodes, type PluginResult } from "plugin-sdk";
+import { PluginFailureCodes, type PluginResult } from "@monai-devops/plugin-sdk";
 import {
   StepFailureKinds,
   StepStatuses,

@@ -3,7 +3,7 @@
  * @module engine
  */
 
-import type { PluginDefinition } from "plugin-sdk";
+import type { PluginDefinition } from "@monai-devops/plugin-sdk";
 import { StepExecutionError, StepFailureKinds } from "../errors";
 import { createPluginManager } from "../plugin";
 import {

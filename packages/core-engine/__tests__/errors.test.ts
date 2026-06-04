@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { createEngine } from "../engine";
 import { createPluginManager } from "../plugin";
 import { createWorkflowExecutor } from "../executor";
-import { createPlugin, PluginFailureCodes } from "plugin-sdk";
+import { createPlugin, PluginFailureCodes } from "@monai-devops/plugin-sdk";
 import { StepFailureKinds, StepStatuses } from "../errors";
 
 describe("unified error model", () => {

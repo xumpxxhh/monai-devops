@@ -1,6 +1,6 @@
 /**
  * 核心引擎入口文件
- * @module core-engine
+ * @module @monai-devops/core-engine
  */
 
 export * from "./executor";

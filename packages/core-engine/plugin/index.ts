@@ -9,7 +9,7 @@ import {
   type PluginConfig,
   type PluginContext,
   type PluginResult,
-} from "plugin-sdk";
+} from "@monai-devops/plugin-sdk";
 
 /**
  * 插件注册信息

@@ -3,7 +3,7 @@
  * @module executor/types
  */
 
-import type { PluginConfig, PluginContext, PluginResult } from "plugin-sdk";
+import type { PluginConfig, PluginContext, PluginResult } from "@monai-devops/plugin-sdk";
 import type {
   SkipReason,
   StepFailureKind,

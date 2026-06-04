@@ -1,6 +1,6 @@
 /**
  * 插件SDK入口文件
- * @module plugin-sdk
+ * @module @monai-devops/plugin-sdk
  */
 
 export * from "./types";

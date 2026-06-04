@@ -4,7 +4,7 @@
  */
 
 import { randomUUID } from "node:crypto";
-import type { PluginResult } from "plugin-sdk";
+import type { PluginResult } from "@monai-devops/plugin-sdk";
 import {
   StepExecutionError,
   SkipReasons,
