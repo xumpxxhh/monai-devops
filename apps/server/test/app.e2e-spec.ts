@@ -27,14 +27,11 @@ describe('AppController (e2e)', () => {
   });
 
   it(`/${GLOBAL_API_PREFIX}/test (GET)`, () => {
-    return request(app.getHttpServer())
-      .get(`/${GLOBAL_API_PREFIX}/test`)
-      .expect(200)
-      .expect({
-        success: true,
-        message: '集成测试执行成功',
-        workflowId: 'integration-closed-loop',
-      });
+    return request(app.getHttpServer()).get(`/${GLOBAL_API_PREFIX}/test`).expect(200).expect({
+      success: true,
+      message: '集成测试执行成功',
+      workflowId: 'integration-closed-loop',
+    });
   });
 
   afterEach(async () => {

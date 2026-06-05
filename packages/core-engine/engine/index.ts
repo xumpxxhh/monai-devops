@@ -3,25 +3,22 @@
  * @module engine
  */
 
-import type { PluginDefinition } from "@monai-devops/plugin-sdk";
-import { StepExecutionError, StepFailureKinds } from "../errors.js";
-import { createPluginManager } from "../plugin/index.js";
+import type { PluginDefinition } from '@monai-devops/plugin-sdk';
+import { StepExecutionError, StepFailureKinds } from '../errors.js';
+import { createPluginManager } from '../plugin/index.js';
 import {
   createWorkflowExecutor,
   type WorkflowDefinition,
   type WorkflowRunResult,
   type ExecutionContext,
-} from "../executor/index.js";
+} from '../executor/index.js';
 import {
   createTaskScheduler,
   type SchedulerOptions,
   type ScheduleResult,
-} from "../scheduler/index.js";
-import {
-  createResourceManager,
-  type ResourcePoolOptions,
-} from "../resource/index.js";
-import type { WorkflowObserver } from "../observer/index.js";
+} from '../scheduler/index.js';
+import { createResourceManager, type ResourcePoolOptions } from '../resource/index.js';
+import type { WorkflowObserver } from '../observer/index.js';
 
 export interface EngineOptions {
   plugins?: PluginDefinition[];
@@ -43,11 +40,10 @@ export function createEngine(options: EngineOptions = {}) {
     maxParallelSteps: options.maxParallelSteps ?? 1,
     failFast: options.failFast ?? true,
     observer: options.observer,
-    pluginExecutor: (name, config, ctx) =>
-      plugins.executePlugin(name, config, ctx),
+    pluginExecutor: (name, config, ctx) => plugins.executePlugin(name, config, ctx),
     onStepStart: (step) => {
       const resourceType = step.config.resourceType;
-      if (typeof resourceType === "string" && resourceType.length > 0) {
+      if (typeof resourceType === 'string' && resourceType.length > 0) {
         const allocated = resources.allocateResource(resourceType);
         if (!allocated) {
           throw new StepExecutionError(

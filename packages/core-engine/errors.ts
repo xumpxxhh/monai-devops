@@ -4,26 +4,25 @@
  */
 
 export const StepStatuses = {
-  COMPLETED: "completed",
-  SKIPPED: "skipped",
-  FAILED: "failed",
+  COMPLETED: 'completed',
+  SKIPPED: 'skipped',
+  FAILED: 'failed',
 } as const;
 
 export type StepStatus = (typeof StepStatuses)[keyof typeof StepStatuses];
 
 export const StepFailureKinds = {
-  PLUGIN: "plugin",
-  RESOURCE: "resource",
-  INTERNAL: "internal",
+  PLUGIN: 'plugin',
+  RESOURCE: 'resource',
+  INTERNAL: 'internal',
 } as const;
 
-export type StepFailureKind =
-  (typeof StepFailureKinds)[keyof typeof StepFailureKinds];
+export type StepFailureKind = (typeof StepFailureKinds)[keyof typeof StepFailureKinds];
 
 export const SkipReasons = {
-  CONDITION_NOT_MET: "condition_not_met",
-  DEPENDENCY_FAILED: "dependency_failed",
-  WORKFLOW_ABORTED: "workflow_aborted",
+  CONDITION_NOT_MET: 'condition_not_met',
+  DEPENDENCY_FAILED: 'dependency_failed',
+  WORKFLOW_ABORTED: 'workflow_aborted',
 } as const;
 
 export type SkipReason = (typeof SkipReasons)[keyof typeof SkipReasons];
@@ -34,7 +33,7 @@ export type SkipReason = (typeof SkipReasons)[keyof typeof SkipReasons];
 export class WorkflowValidationError extends Error {
   constructor(message: string) {
     super(message);
-    this.name = "WorkflowValidationError";
+    this.name = 'WorkflowValidationError';
   }
 }
 
@@ -48,6 +47,6 @@ export class StepExecutionError extends Error {
     readonly cause?: unknown,
   ) {
     super(message);
-    this.name = "StepExecutionError";
+    this.name = 'StepExecutionError';
   }
 }

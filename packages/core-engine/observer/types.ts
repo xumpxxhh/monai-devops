@@ -9,7 +9,7 @@ import type {
   WorkflowDefinition,
   WorkflowRunResult,
   WorkflowStep,
-} from "../executor/types.js";
+} from '../executor/types.js';
 
 /**
  * 单次工作流运行的元数据
@@ -27,22 +27,22 @@ export interface WorkflowRunMeta {
  */
 export type WorkflowLifecycleEvent =
   | {
-      type: "workflow:start";
+      type: 'workflow:start';
       meta: WorkflowRunMeta;
       workflow: WorkflowDefinition;
     }
   | {
-      type: "workflow:finished";
+      type: 'workflow:finished';
       meta: WorkflowRunMeta;
       result: WorkflowRunResult;
     }
   | {
-      type: "step:start";
+      type: 'step:start';
       meta: WorkflowRunMeta;
       step: WorkflowStep;
     }
   | {
-      type: "step:finished";
+      type: 'step:finished';
       meta: WorkflowRunMeta;
       step: WorkflowStep;
       result: ExecutionResult;

@@ -3,7 +3,7 @@
  * @module hooks
  */
 
-import type { PluginConfig, PluginContext, PluginResult } from "../types/index.js";
+import type { PluginConfig, PluginContext, PluginResult } from '../types/index.js';
 
 /**
  * 插件生命周期钩子。
@@ -15,18 +15,11 @@ import type { PluginConfig, PluginContext, PluginResult } from "../types/index.j
  * - `execute` 返回 `{ success: false }` → 业务失败，仍调用 `afterExecute`，不调用 `onError`
  */
 export interface PluginHooks {
-  beforeExecute?: (
-    config: PluginConfig,
-    context: PluginContext,
-  ) => Promise<void> | void;
+  beforeExecute?: (config: PluginConfig, context: PluginContext) => Promise<void> | void;
   afterExecute?: (
     result: PluginResult,
     config: PluginConfig,
     context: PluginContext,
   ) => Promise<void> | void;
-  onError?: (
-    error: Error,
-    config: PluginConfig,
-    context: PluginContext,
-  ) => Promise<void> | void;
+  onError?: (error: Error, config: PluginConfig, context: PluginContext) => Promise<void> | void;
 }

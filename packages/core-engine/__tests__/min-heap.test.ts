@@ -1,9 +1,9 @@
-import { describe, it } from "node:test";
-import assert from "node:assert/strict";
-import { MinHeap } from "../utils/min-heap.js";
+import { describe, it } from 'node:test';
+import assert from 'node:assert/strict';
+import { MinHeap } from '../utils/min-heap.js';
 
-describe("MinHeap", () => {
-  it("starts empty", () => {
+describe('MinHeap', () => {
+  it('starts empty', () => {
     const heap = new MinHeap<number>((a, b) => a - b);
     assert.equal(heap.size, 0);
     assert.equal(heap.isEmpty(), true);
@@ -11,7 +11,7 @@ describe("MinHeap", () => {
     assert.equal(heap.pop(), undefined);
   });
 
-  it("peek returns minimum without removing", () => {
+  it('peek returns minimum without removing', () => {
     const heap = new MinHeap<number>((a, b) => a - b);
     heap.push(3);
     heap.push(1);
@@ -23,7 +23,7 @@ describe("MinHeap", () => {
     assert.equal(heap.size, 2);
   });
 
-  it("pops elements in ascending order", () => {
+  it('pops elements in ascending order', () => {
     const heap = new MinHeap<number>((a, b) => a - b);
     const input = [4, 1, 7, 3, 8, 2, 5, 6, 0, 9];
     for (const n of input) heap.push(n);
@@ -33,27 +33,30 @@ describe("MinHeap", () => {
       sorted.push(heap.pop()!);
     }
 
-    assert.deepEqual(sorted, [...input].sort((a, b) => a - b));
+    assert.deepEqual(
+      sorted,
+      [...input].sort((a, b) => a - b),
+    );
   });
 
-  it("handles single element push and pop", () => {
+  it('handles single element push and pop', () => {
     const heap = new MinHeap<string>((a, b) => a.localeCompare(b));
-    heap.push("only");
-    assert.equal(heap.pop(), "only");
+    heap.push('only');
+    assert.equal(heap.pop(), 'only');
     assert.equal(heap.isEmpty(), true);
   });
 
-  it("uses custom compare for object priority", () => {
+  it('uses custom compare for object priority', () => {
     type Item = { id: string; priority: number };
     const heap = new MinHeap<Item>((a, b) => a.priority - b.priority);
 
-    heap.push({ id: "c", priority: 3 });
-    heap.push({ id: "a", priority: 1 });
-    heap.push({ id: "b", priority: 2 });
+    heap.push({ id: 'c', priority: 3 });
+    heap.push({ id: 'a', priority: 1 });
+    heap.push({ id: 'b', priority: 2 });
 
     assert.deepEqual(
       [heap.pop()!, heap.pop()!, heap.pop()!].map((x) => x.id),
-      ["a", "b", "c"],
+      ['a', 'b', 'c'],
     );
   });
 });

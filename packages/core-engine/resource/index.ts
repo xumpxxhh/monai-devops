@@ -10,7 +10,7 @@ export interface Resource {
   id: string;
   type: string;
   name: string;
-  status: "available" | "allocated" | "released";
+  status: 'available' | 'allocated' | 'released';
   metadata?: Record<string, unknown>;
 }
 
@@ -27,11 +27,7 @@ export interface ResourcePoolOptions {
  * 创建资源管理器
  */
 export function createResourceManager(options: ResourcePoolOptions = {}) {
-  const {
-    maxResources = 100,
-    autoCleanup = true,
-    cleanupInterval = 60000,
-  } = options;
+  const { maxResources = 100, autoCleanup = true, cleanupInterval = 60000 } = options;
 
   const resources: Map<string, Resource> = new Map();
   let cleanupTimer: NodeJS.Timeout | null = null;
@@ -55,15 +51,15 @@ export function createResourceManager(options: ResourcePoolOptions = {}) {
 
       if (
         resource.type === type &&
-        resource.status === "available" &&
+        resource.status === 'available' &&
         (!name || resource.name === name)
       ) {
         allocationLock.add(resource.id);
         try {
-          if (resource.status !== "available") {
+          if (resource.status !== 'available') {
             return null;
           }
-          resource.status = "allocated";
+          resource.status = 'allocated';
           return { ...resource };
         } finally {
           allocationLock.delete(resource.id);
@@ -81,8 +77,8 @@ export function createResourceManager(options: ResourcePoolOptions = {}) {
     allocationLock.add(id);
     try {
       const resource = resources.get(id);
-      if (resource && resource.status === "allocated") {
-        resource.status = "released";
+      if (resource && resource.status === 'allocated') {
+        resource.status = 'released';
         if (autoCleanup) {
           setTimeout(() => {
             resources.delete(id);
@@ -107,16 +103,14 @@ export function createResourceManager(options: ResourcePoolOptions = {}) {
 
   function getAvailableResources(type?: string): Resource[] {
     return Array.from(resources.values())
-      .filter(
-        (r) => r.status === "available" && (!type || r.type === type),
-      )
+      .filter((r) => r.status === 'available' && (!type || r.type === type))
       .map((r) => ({ ...r }));
   }
 
   function cleanupResources(): number {
     let cleaned = 0;
     for (const [id, resource] of resources.entries()) {
-      if (resource.status === "released") {
+      if (resource.status === 'released') {
         resources.delete(id);
         cleaned++;
       }

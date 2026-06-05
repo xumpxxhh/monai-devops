@@ -3,13 +3,9 @@
  * @module executor/types
  */
 
-import type { PluginConfig, PluginContext, PluginResult } from "@monai-devops/plugin-sdk";
-import type {
-  SkipReason,
-  StepFailureKind,
-  StepStatus,
-} from "../errors.js";
-import type { WorkflowObserver } from "../observer/index.js";
+import type { PluginConfig, PluginContext, PluginResult } from '@monai-devops/plugin-sdk';
+import type { SkipReason, StepFailureKind, StepStatus } from '../errors.js';
+import type { WorkflowObserver } from '../observer/index.js';
 
 /**
  * 工作流定义

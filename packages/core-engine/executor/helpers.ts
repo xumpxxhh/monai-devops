@@ -3,19 +3,16 @@
  * @module executor/helpers
  */
 
-import { PluginFailureCodes, type PluginResult } from "@monai-devops/plugin-sdk";
+import { PluginFailureCodes, type PluginResult } from '@monai-devops/plugin-sdk';
 import {
   StepFailureKinds,
   StepStatuses,
   type SkipReason,
   type StepFailureKind,
-} from "../errors.js";
-import type { ExecutionResult } from "./types.js";
+} from '../errors.js';
+import type { ExecutionResult } from './types.js';
 
-export function buildCompletedResult(
-  stepId: string,
-  pluginResult: PluginResult,
-): ExecutionResult {
+export function buildCompletedResult(stepId: string, pluginResult: PluginResult): ExecutionResult {
   return {
     stepId,
     status: StepStatuses.COMPLETED,
@@ -25,10 +22,7 @@ export function buildCompletedResult(
   };
 }
 
-export function buildSkippedResult(
-  stepId: string,
-  skipReason: SkipReason,
-): ExecutionResult {
+export function buildSkippedResult(stepId: string, skipReason: SkipReason): ExecutionResult {
   return {
     stepId,
     status: StepStatuses.SKIPPED,
@@ -44,10 +38,7 @@ export interface FailedResultInput {
   failureKind: StepFailureKind;
 }
 
-export function buildFailedResult(
-  stepId: string,
-  input: FailedResultInput,
-): ExecutionResult {
+export function buildFailedResult(stepId: string, input: FailedResultInput): ExecutionResult {
   return {
     stepId,
     status: StepStatuses.FAILED,
@@ -58,9 +49,7 @@ export function buildFailedResult(
   };
 }
 
-export function pluginFailureKind(
-  pluginResult: PluginResult,
-): StepFailureKind {
+export function pluginFailureKind(pluginResult: PluginResult): StepFailureKind {
   if (
     pluginResult.code === PluginFailureCodes.PLUGIN_NOT_FOUND ||
     pluginResult.code === PluginFailureCodes.PLUGIN_EXECUTION_ERROR

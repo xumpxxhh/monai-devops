@@ -3,8 +3,4 @@
  * @module observer
  */
 
-export type {
-  WorkflowLifecycleEvent,
-  WorkflowObserver,
-  WorkflowRunMeta,
-} from "./types.js";
+export type { WorkflowLifecycleEvent, WorkflowObserver, WorkflowRunMeta } from './types.js';

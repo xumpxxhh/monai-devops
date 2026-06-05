@@ -4,7 +4,9 @@
   "description": "Plugin contract and helpers for monai-devops",
   "type": "module",
   "sideEffects": false,
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
@@ -17,7 +19,11 @@
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "prepublishOnly": "pnpm run build",
-    "check-types": "tsc --noEmit -p tsconfig.build.json"
+    "check-types": "tsc --noEmit -p tsconfig.build.json",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "format": "prettier --write .",
+    "format:check": "prettier --check ."
   },
   "engines": {
     "node": ">=20"

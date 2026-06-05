@@ -1,52 +1,51 @@
-import { useEffect, useState } from 'react'
-import { apiBaseUrl } from '../config/env'
-import '../App.css'
+import { useEffect, useState } from 'react';
+import { apiBaseUrl } from '../config/env';
+import '../App.css';
 
 interface IntegrationTestResult {
-  success: boolean
-  message: string
-  workflowId: string
+  success: boolean;
+  message: string;
+  workflowId: string;
 }
 
 type TestState =
   | { status: 'loading' }
   | { status: 'success'; data: IntegrationTestResult }
-  | { status: 'error'; message: string }
+  | { status: 'error'; message: string };
 
 async function fetchIntegrationTest(): Promise<IntegrationTestResult> {
-  const response = await fetch(`${apiBaseUrl}/test`)
+  const response = await fetch(`${apiBaseUrl}/test`);
 
   if (!response.ok) {
-    throw new Error(`HTTP ${response.status}`)
+    throw new Error(`HTTP ${response.status}`);
   }
 
-  return response.json() as Promise<IntegrationTestResult>
+  return response.json() as Promise<IntegrationTestResult>;
 }
 
 export default function Test() {
-  const [state, setState] = useState<TestState>({ status: 'loading' })
+  const [state, setState] = useState<TestState>({ status: 'loading' });
 
   useEffect(() => {
-    let cancelled = false
+    let cancelled = false;
 
     fetchIntegrationTest()
       .then((data) => {
         if (!cancelled) {
-          setState({ status: 'success', data })
+          setState({ status: 'success', data });
         }
       })
       .catch((error: unknown) => {
         if (!cancelled) {
-          const message =
-            error instanceof Error ? error.message : '请求失败'
-          setState({ status: 'error', message })
+          const message = error instanceof Error ? error.message : '请求失败';
+          setState({ status: 'error', message });
         }
-      })
+      });
 
     return () => {
-      cancelled = true
-    }
-  }, [])
+      cancelled = true;
+    };
+  }, []);
 
   return (
     <section id="center">
@@ -61,5 +60,5 @@ export default function Test() {
         </div>
       )}
     </section>
-  )
+  );
 }

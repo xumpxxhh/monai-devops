@@ -3,13 +3,8 @@
  * @module base
  */
 
-import type {
-  PluginManifest,
-  PluginConfig,
-  PluginContext,
-  PluginResult,
-} from "../types/index.js";
-import type { PluginHooks } from "../hooks/index.js";
+import type { PluginManifest, PluginConfig, PluginContext, PluginResult } from '../types/index.js';
+import type { PluginHooks } from '../hooks/index.js';
 
 /**
  * 插件执行函数类型
@@ -60,8 +55,7 @@ export function createPlugin({
             await hooks.afterExecute?.(result, config, context);
             return result;
           } catch (error) {
-            const err =
-              error instanceof Error ? error : new Error(String(error));
+            const err = error instanceof Error ? error : new Error(String(error));
             await hooks.onError?.(err, config, context);
             return { success: false, message: err.message };
           }
@@ -73,19 +67,13 @@ export function createPlugin({
 /**
  * 获取插件配置值的辅助函数
  */
-export function getConfig<T = unknown>(
-  config: PluginConfig,
-  key: string,
-): T | undefined {
+export function getConfig<T = unknown>(config: PluginConfig, key: string): T | undefined {
   return config[key] as T | undefined;
 }
 
 /**
  * 获取上下文值的辅助函数
  */
-export function getContext<T = unknown>(
-  context: PluginContext,
-  key: string,
-): T | undefined {
+export function getContext<T = unknown>(context: PluginContext, key: string): T | undefined {
   return context[key] as T | undefined;
 }

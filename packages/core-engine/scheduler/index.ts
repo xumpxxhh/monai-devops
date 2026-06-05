@@ -3,7 +3,7 @@
  * @module scheduler
  */
 
-import { MinHeap } from "../utils/min-heap.js";
+import { MinHeap } from '../utils/min-heap.js';
 
 /**
  * 任务定义
@@ -80,7 +80,7 @@ export function createTaskScheduler(options: SchedulerOptions = {}) {
     return {
       taskId: task.id,
       success: false,
-      error: new Error("Max retry attempts reached"),
+      error: new Error('Max retry attempts reached'),
     };
   }
 

@@ -30,12 +30,11 @@ export interface PluginContext {
  * 插件失败错误码（仅 success: false 时使用）
  */
 export const PluginFailureCodes = {
-  PLUGIN_NOT_FOUND: "PLUGIN_NOT_FOUND",
-  PLUGIN_EXECUTION_ERROR: "PLUGIN_EXECUTION_ERROR",
+  PLUGIN_NOT_FOUND: 'PLUGIN_NOT_FOUND',
+  PLUGIN_EXECUTION_ERROR: 'PLUGIN_EXECUTION_ERROR',
 } as const;
 
-export type PluginFailureCode =
-  (typeof PluginFailureCodes)[keyof typeof PluginFailureCodes];
+export type PluginFailureCode = (typeof PluginFailureCodes)[keyof typeof PluginFailureCodes];
 
 export interface PluginResult {
   success: boolean;

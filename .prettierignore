@@ -1,6 +1,9 @@
-node_modules
-dist
-.turbo
-coverage
-.vscode
-public
+**/node_modules/**
+**/dist/**
+**/.turbo/**
+**/coverage/**
+**/.vscode/**
+**/public/**
+**/.next/**
+pnpm-lock.yaml
+**/*.min.js

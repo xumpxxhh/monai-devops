@@ -30,18 +30,18 @@ flowchart TB
 
 ## 与 plugin-sdk 的分工
 
-| 类型 | 所在包 | 含义 |
-|------|--------|------|
-| `PluginManifest` | plugin-sdk | 插件注册元数据（name / version） |
-| `PluginConfig` | plugin-sdk | 单次 `execute` 入参 |
-| `PluginContext` | plugin-sdk | 单次执行上下文（索引签名，无编排字段） |
-| `PluginResult` | plugin-sdk | 执行结果（含可选 `code`） |
-| `PluginFailureCode` / `PluginFailureCodes` | plugin-sdk | 插件失败错误码常量 |
-| `ExecutionContext` | core-engine | 编排器注入的上下文（含 workflow / step / 前序结果等） |
-| `WorkflowContextKeys` | core-engine | 注入字段名常量，供 `getContext` 读取 |
-| `StepStatus` / `StepStatuses` | core-engine | 步骤状态：`completed` / `skipped` / `failed` |
-| `StepFailureKind` / `StepFailureKinds` | core-engine | 失败分类：`plugin` / `resource` / `internal` |
-| `SkipReason` / `SkipReasons` | core-engine | 跳过原因：`condition_not_met` / `dependency_failed` / `workflow_aborted` |
+| 类型                                       | 所在包      | 含义                                                                     |
+| ------------------------------------------ | ----------- | ------------------------------------------------------------------------ |
+| `PluginManifest`                           | plugin-sdk  | 插件注册元数据（name / version）                                         |
+| `PluginConfig`                             | plugin-sdk  | 单次 `execute` 入参                                                      |
+| `PluginContext`                            | plugin-sdk  | 单次执行上下文（索引签名，无编排字段）                                   |
+| `PluginResult`                             | plugin-sdk  | 执行结果（含可选 `code`）                                                |
+| `PluginFailureCode` / `PluginFailureCodes` | plugin-sdk  | 插件失败错误码常量                                                       |
+| `ExecutionContext`                         | core-engine | 编排器注入的上下文（含 workflow / step / 前序结果等）                    |
+| `WorkflowContextKeys`                      | core-engine | 注入字段名常量，供 `getContext` 读取                                     |
+| `StepStatus` / `StepStatuses`              | core-engine | 步骤状态：`completed` / `skipped` / `failed`                             |
+| `StepFailureKind` / `StepFailureKinds`     | core-engine | 失败分类：`plugin` / `resource` / `internal`                             |
+| `SkipReason` / `SkipReasons`               | core-engine | 跳过原因：`condition_not_met` / `dependency_failed` / `workflow_aborted` |
 
 依赖方向：**core-engine → plugin-sdk**。插件实现只需依赖 SDK；若需读取 `stepId`、`previousResults` 等，使用 `getContext(ctx, WorkflowContextKeys.xxx)`，字段由 executor 在运行时写入。
 
@@ -49,32 +49,28 @@ flowchart TB
 
 各层失败表达方式统一如下：
 
-| 层级 | 失败表达方式 | 示例 |
-|------|-------------|------|
-| 插件边界 | `PluginResult { success: false, code?, message? }` | 业务失败、插件未找到、execute 异常 |
-| 步骤编排 | `ExecutionResult { status: failed, failureKind, error?, pluginResult? }` | 插件失败、资源分配失败 |
-| 步骤跳过 | `ExecutionResult { status: skipped, skipReason }` | 条件不满足、依赖失败 |
-| 工作流校验 | `throw WorkflowValidationError` | 环依赖、无效 dependsOn（启动前） |
-| 调度器 | `ScheduleResult { success: false, error }` | 整次 workflow 任务重试耗尽 |
+| 层级       | 失败表达方式                                                             | 示例                               |
+| ---------- | ------------------------------------------------------------------------ | ---------------------------------- |
+| 插件边界   | `PluginResult { success: false, code?, message? }`                       | 业务失败、插件未找到、execute 异常 |
+| 步骤编排   | `ExecutionResult { status: failed, failureKind, error?, pluginResult? }` | 插件失败、资源分配失败             |
+| 步骤跳过   | `ExecutionResult { status: skipped, skipReason }`                        | 条件不满足、依赖失败               |
+| 工作流校验 | `throw WorkflowValidationError`                                          | 环依赖、无效 dependsOn（启动前）   |
+| 调度器     | `ScheduleResult { success: false, error }`                               | 整次 workflow 任务重试耗尽         |
 
 **原则**：插件层永不 throw；基础设施钩子（如资源分配）可 throw `StepExecutionError`，由 executor 统一捕获并转为 `StepStatuses.FAILED`。
 
 **常量（推荐用法，避免硬编码字符串）**
 
-| 常量 | 所在包 | 键 |
-|------|--------|-----|
-| `PluginFailureCodes` | plugin-sdk | `PLUGIN_NOT_FOUND`、`PLUGIN_EXECUTION_ERROR` |
-| `StepStatuses` | core-engine | `COMPLETED`、`SKIPPED`、`FAILED` |
-| `StepFailureKinds` | core-engine | `PLUGIN`、`RESOURCE`、`INTERNAL` |
-| `SkipReasons` | core-engine | `CONDITION_NOT_MET`、`DEPENDENCY_FAILED` |
+| 常量                 | 所在包      | 键                                           |
+| -------------------- | ----------- | -------------------------------------------- |
+| `PluginFailureCodes` | plugin-sdk  | `PLUGIN_NOT_FOUND`、`PLUGIN_EXECUTION_ERROR` |
+| `StepStatuses`       | core-engine | `COMPLETED`、`SKIPPED`、`FAILED`             |
+| `StepFailureKinds`   | core-engine | `PLUGIN`、`RESOURCE`、`INTERNAL`             |
+| `SkipReasons`        | core-engine | `CONDITION_NOT_MET`、`DEPENDENCY_FAILED`     |
 
 ```ts
-import { PluginFailureCodes } from "plugin-sdk";
-import {
-  StepStatuses,
-  StepFailureKinds,
-  SkipReasons,
-} from "core-engine";
+import { PluginFailureCodes } from 'plugin-sdk';
+import { StepStatuses, StepFailureKinds, SkipReasons } from 'core-engine';
 
 // 判断步骤结果
 const step = run.results[0];
@@ -85,20 +81,22 @@ if (step.status === StepStatuses.FAILED) {
 }
 
 // 插件失败码
-if (step.pluginResult?.code === PluginFailureCodes.PLUGIN_NOT_FOUND) { /* ... */ }
+if (step.pluginResult?.code === PluginFailureCodes.PLUGIN_NOT_FOUND) {
+  /* ... */
+}
 ```
 
 **ExecutionResult 字段**
 
-| 字段 | 说明 |
-|------|------|
-| `status` | `StepStatuses.COMPLETED` \| `SKIPPED` \| `FAILED` |
-| `success` | 与 status 同步：`status !== StepStatuses.FAILED` |
-| `failureKind` | 失败时：`StepFailureKinds.PLUGIN` \| `RESOURCE` \| `INTERNAL` |
-| `skipReason` | 跳过时：`SkipReasons.CONDITION_NOT_MET` \| `DEPENDENCY_FAILED` \| `WORKFLOW_ABORTED` |
-| `pluginResult` | 插件返回的原始结果 |
-| `error` | 失败时的 Error 对象 |
-| `result` | 成功时为插件 data；跳过时保留 `{ skipped: true, reason }` 以兼容旧断言 |
+| 字段           | 说明                                                                                 |
+| -------------- | ------------------------------------------------------------------------------------ |
+| `status`       | `StepStatuses.COMPLETED` \| `SKIPPED` \| `FAILED`                                    |
+| `success`      | 与 status 同步：`status !== StepStatuses.FAILED`                                     |
+| `failureKind`  | 失败时：`StepFailureKinds.PLUGIN` \| `RESOURCE` \| `INTERNAL`                        |
+| `skipReason`   | 跳过时：`SkipReasons.CONDITION_NOT_MET` \| `DEPENDENCY_FAILED` \| `WORKFLOW_ABORTED` |
+| `pluginResult` | 插件返回的原始结果                                                                   |
+| `error`        | 失败时的 Error 对象                                                                  |
+| `result`       | 成功时为插件 data；跳过时保留 `{ skipped: true, reason }` 以兼容旧断言               |
 
 **PluginFailureCodes**（plugin-sdk，`success: false` 时由 plugin 模块自动填充）
 
@@ -113,14 +111,14 @@ if (step.pluginResult?.code === PluginFailureCodes.PLUGIN_NOT_FOUND) { /* ... */
 
 **EngineOptions**
 
-| 选项 | 默认 | 说明 |
-|------|------|------|
-| `plugins` | — | 初始注册的 `PluginDefinition[]` |
-| `maxParallelSteps` | `1` | 工作流步骤最大并行数 |
-| `failFast` | `true` | 任一步失败后是否停止调度后续步骤 |
-| `scheduler` | — | 传给 `createTaskScheduler` 的选项 |
-| `resources` | — | 传给 `createResourceManager` 的选项 |
-| `observer` | — | 工作流生命周期观察者，见「可观测性」 |
+| 选项               | 默认   | 说明                                 |
+| ------------------ | ------ | ------------------------------------ |
+| `plugins`          | —      | 初始注册的 `PluginDefinition[]`      |
+| `maxParallelSteps` | `1`    | 工作流步骤最大并行数                 |
+| `failFast`         | `true` | 任一步失败后是否停止调度后续步骤     |
+| `scheduler`        | —      | 传给 `createTaskScheduler` 的选项    |
+| `resources`        | —      | 传给 `createResourceManager` 的选项  |
+| `observer`         | —      | 工作流生命周期观察者，见「可观测性」 |
 
 **主要 API**
 
@@ -186,12 +184,12 @@ await engine.runWorkflow(workflow, {
 
 ### 事件类型
 
-| 事件 | 触发时机 |
-|------|----------|
-| `workflow:start` | DAG 校验通过后、任一步骤开始前 |
-| `step:start` | 步骤实际执行前（条件跳过**不**触发） |
-| `step:finished` | 步骤结束（成功、失败、跳过均触发；失败只发此事件，不发单独 error 事件） |
-| `workflow:finished` | 所有步骤处理完毕（含 failFast 补发的未执行步） |
+| 事件                | 触发时机                                                                |
+| ------------------- | ----------------------------------------------------------------------- |
+| `workflow:start`    | DAG 校验通过后、任一步骤开始前                                          |
+| `step:start`        | 步骤实际执行前（条件跳过**不**触发）                                    |
+| `step:finished`     | 步骤结束（成功、失败、跳过均触发；失败只发此事件，不发单独 error 事件） |
+| `workflow:finished` | 所有步骤处理完毕（含 failFast 补发的未执行步）                          |
 
 每条事件携带 **`WorkflowRunMeta`**：`runId`、`workflowId`、可选 `traceId`、原始 `context`。
 
@@ -213,10 +211,10 @@ await engine.runWorkflow(workflow, {
 
 待执行任务保存在 **小顶堆** [`utils/min-heap.ts`](./utils/min-heap.ts)（包入口不导出，仅供 scheduler 内部使用）。
 
-| 操作 | 复杂度 |
-|------|--------|
+| 操作        | 复杂度   |
+| ----------- | -------- |
 | 入队 `push` | O(log n) |
-| 出队 `pop` | O(log n) |
+| 出队 `pop`  | O(log n) |
 
 **优先级规则（务必注意）**
 
@@ -225,11 +223,11 @@ await engine.runWorkflow(workflow, {
 
 **SchedulerOptions**
 
-| 选项 | 默认 | 说明 |
-|------|------|------|
-| `maxConcurrency` | `5` | 同时运行的任务数 |
-| `retryAttempts` | `3` | 失败重试次数 |
-| `retryDelay` | `1000` | 重试间隔（ms） |
+| 选项             | 默认   | 说明             |
+| ---------------- | ------ | ---------------- |
+| `maxConcurrency` | `5`    | 同时运行的任务数 |
+| `retryAttempts`  | `3`    | 失败重试次数     |
+| `retryDelay`     | `1000` | 重试间隔（ms）   |
 
 `scheduleTask(task)` 返回 `Promise<ScheduleResult>`，任务完成后 resolve；`getQueueStatus()` 返回 `queueLength`、`runningTasks`、`maxConcurrency`。
 
@@ -248,12 +246,12 @@ await engine.runWorkflow(workflow, {
 ## 快速开始
 
 ```ts
-import { createEngine, WorkflowContextKeys } from "core-engine";
-import { createPlugin, getContext } from "plugin-sdk";
+import { createEngine, WorkflowContextKeys } from 'core-engine';
+import { createPlugin, getContext } from 'plugin-sdk';
 
 const echoPlugin = createPlugin({
-  name: "echo",
-  version: "1.0.0",
+  name: 'echo',
+  version: '1.0.0',
   execute: async (config, ctx) => {
     const stepId = getContext<string>(ctx, WorkflowContextKeys.stepId);
     return { success: true, data: { stepId, value: config.value } };
@@ -267,17 +265,17 @@ const engine = createEngine({
 });
 
 const run = await engine.runWorkflow({
-  id: "demo",
-  name: "Demo Pipeline",
+  id: 'demo',
+  name: 'Demo Pipeline',
   steps: [
-    { id: "a", name: "A", plugin: "echo", config: { value: 1 } },
-    { id: "b", name: "B", plugin: "echo", config: { value: 2 } },
+    { id: 'a', name: 'A', plugin: 'echo', config: { value: 1 } },
+    { id: 'b', name: 'B', plugin: 'echo', config: { value: 2 } },
     {
-      id: "c",
-      name: "C",
-      plugin: "echo",
+      id: 'c',
+      name: 'C',
+      plugin: 'echo',
       config: { value: 3 },
-      dependsOn: ["a", "b"],
+      dependsOn: ['a', 'b'],
     },
   ],
 });
@@ -290,9 +288,9 @@ engine.destroy();
 
 ```ts
 const scheduled = await engine.scheduleWorkflow({
-  id: "demo-async",
-  name: "Async",
-  steps: [{ id: "s1", name: "S1", plugin: "echo", config: {} }],
+  id: 'demo-async',
+  name: 'Async',
+  steps: [{ id: 's1', name: 'S1', plugin: 'echo', config: {} }],
 });
 // scheduled.result 为 WorkflowRunResult（scheduleTask 的 result 字段）
 ```
@@ -306,13 +304,13 @@ const scheduled = await engine.scheduleWorkflow({
 
 **WorkflowStep**
 
-| 字段 | 说明 |
-|------|------|
-| `id` | 步骤唯一 ID |
-| `name` | 展示名 |
-| `plugin` | 已注册插件名 |
-| `config` | `PluginConfig`，步骤入参 |
-| `dependsOn` | 依赖的步骤 ID 列表 |
+| 字段        | 说明                                                       |
+| ----------- | ---------------------------------------------------------- |
+| `id`        | 步骤唯一 ID                                                |
+| `name`      | 展示名                                                     |
+| `plugin`    | 已注册插件名                                               |
+| `config`    | `PluginConfig`，步骤入参                                   |
+| `dependsOn` | 依赖的步骤 ID 列表                                         |
 | `condition` | 可选，`{ when, equals?, exists? }`，`when` 指向前序步骤 ID |
 
 **config 约定**
@@ -349,9 +347,9 @@ pnpm --filter core-engine test
 不必经过 `createEngine`，可按需组合：
 
 ```ts
-import { createWorkflowExecutor } from "core-engine/executor";
-import { createTaskScheduler } from "core-engine/scheduler";
-import { createPluginManager } from "core-engine/plugin";
+import { createWorkflowExecutor } from 'core-engine/executor';
+import { createTaskScheduler } from 'core-engine/scheduler';
+import { createPluginManager } from 'core-engine/plugin';
 ```
 
 （实际 import 路径以 monorepo 内 `core-engine` 包名为准。）

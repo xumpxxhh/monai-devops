@@ -4,10 +4,10 @@
  */
 
 export const WorkflowContextKeys = {
-  workflowId: "workflowId",
-  stepId: "stepId",
-  previousResults: "previousResults",
-  artifacts: "artifacts",
-  runId: "runId",
-  traceId: "traceId",
+  workflowId: 'workflowId',
+  stepId: 'stepId',
+  previousResults: 'previousResults',
+  artifacts: 'artifacts',
+  runId: 'runId',
+  traceId: 'traceId',
 } as const;
