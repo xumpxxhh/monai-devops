@@ -13,10 +13,18 @@ export interface IntegrationTestResult {
 }
 
 @Injectable()
-export class TestService {
+export class TestDevopsService {
   async runIntegrationTest(): Promise<IntegrationTestResult> {
+    console.log('runIntegrationTest');
     const workflowId = 'integration-closed-loop';
-    const engine = createEngine({ plugins: [testPlugin] });
+    const engine = createEngine({
+      plugins: [testPlugin],
+      observer: {
+        onEvent(event) {
+          console.log(JSON.stringify(event, null, 2));
+        },
+      },
+    });
 
     const workflow: WorkflowDefinition = {
       id: workflowId,

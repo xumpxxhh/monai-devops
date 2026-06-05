@@ -14,7 +14,6 @@ async function bootstrap() {
     );
     process.exit(1);
   }
-
   app.setGlobalPrefix(globalApiPrefix);
   app.enableCors();
   await app.listen(config.get<number>('PORT', 3000));

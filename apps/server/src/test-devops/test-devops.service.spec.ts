@@ -1,15 +1,15 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { TestService } from './test.service';
+import { TestDevopsService } from './test-devops.service';
 
-describe('TestService', () => {
-  let service: TestService;
+describe('TestDevopsService', () => {
+  let service: TestDevopsService;
 
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
-      providers: [TestService],
+      providers: [TestDevopsService],
     }).compile();
 
-    service = module.get<TestService>(TestService);
+    service = module.get<TestDevopsService>(TestDevopsService);
   });
 
   it('runs integration workflow via core-engine', async () => {
