@@ -3,7 +3,7 @@
  * @module hooks
  */
 
-import type { PluginConfig, PluginContext, PluginResult } from "../types";
+import type { PluginConfig, PluginContext, PluginResult } from "../types/index.js";
 
 /**
  * 插件生命周期钩子。

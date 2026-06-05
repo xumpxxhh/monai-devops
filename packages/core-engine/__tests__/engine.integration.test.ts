@@ -1,7 +1,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { createEngine } from "../engine";
-import { StepFailureKinds, StepStatuses } from "../errors";
+import { createEngine } from "../engine/index.js";
+import { StepFailureKinds, StepStatuses } from "../errors.js";
 import { createPlugin } from "@monai-devops/plugin-sdk";
 
 const testPlugin = createPlugin({

@@ -1,20 +1,20 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { createEngine } from "../engine";
+import { createEngine } from "../engine/index.js";
 import {
   createWorkflowExecutor,
   WorkflowValidationError,
   type WorkflowDefinition,
   type PluginExecutor,
-} from "../executor";
+} from "../executor/index.js";
 import { createPlugin, getContext } from "@monai-devops/plugin-sdk";
-import { WorkflowContextKeys } from "../context-keys";
+import { WorkflowContextKeys } from "../context-keys.js";
 import {
   SkipReasons,
   StepFailureKinds,
   StepStatuses,
-} from "../errors";
-import type { WorkflowLifecycleEvent } from "../observer";
+} from "../errors.js";
+import type { WorkflowLifecycleEvent } from "../observer/index.js";
 
 const testPlugin = createPlugin({
   name: "test-plugin",

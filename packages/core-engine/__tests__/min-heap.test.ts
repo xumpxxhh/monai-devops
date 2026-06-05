@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { MinHeap } from "../utils/min-heap";
+import { MinHeap } from "../utils/min-heap.js";
 
 describe("MinHeap", () => {
   it("starts empty", () => {

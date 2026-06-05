@@ -8,8 +8,8 @@ import type {
   PluginConfig,
   PluginContext,
   PluginResult,
-} from "../types";
-import type { PluginHooks } from "../hooks";
+} from "../types/index.js";
+import type { PluginHooks } from "../hooks/index.js";
 
 /**
  * 插件执行函数类型

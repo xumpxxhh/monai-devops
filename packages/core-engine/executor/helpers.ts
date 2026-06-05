@@ -9,8 +9,8 @@ import {
   StepStatuses,
   type SkipReason,
   type StepFailureKind,
-} from "../errors";
-import type { ExecutionResult } from "./types";
+} from "../errors.js";
+import type { ExecutionResult } from "./types.js";
 
 export function buildCompletedResult(
   stepId: string,

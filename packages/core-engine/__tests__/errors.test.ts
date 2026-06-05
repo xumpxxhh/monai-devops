@@ -1,10 +1,10 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { createEngine } from "../engine";
-import { createPluginManager } from "../plugin";
-import { createWorkflowExecutor } from "../executor";
+import { createEngine } from "../engine/index.js";
+import { createPluginManager } from "../plugin/index.js";
+import { createWorkflowExecutor } from "../executor/index.js";
 import { createPlugin, PluginFailureCodes } from "@monai-devops/plugin-sdk";
-import { StepFailureKinds, StepStatuses } from "../errors";
+import { StepFailureKinds, StepStatuses } from "../errors.js";
 
 describe("unified error model", () => {
   it("executePlugin returns PLUGIN_NOT_FOUND code", async () => {

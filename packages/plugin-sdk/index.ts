@@ -3,9 +3,9 @@
  * @module @monai-devops/plugin-sdk
  */
 
-export * from "./types";
-export * from "./base";
-export * from "./hooks";
+export * from "./types/index.js";
+export * from "./base/index.js";
+export * from "./hooks/index.js";
 
 export type {
   PluginManifest,
@@ -13,9 +13,9 @@ export type {
   PluginContext,
   PluginResult,
   PluginFailureCode,
-} from "./types";
+} from "./types/index.js";
 
-export { PluginFailureCodes } from "./types";
+export { PluginFailureCodes } from "./types/index.js";
 
 export {
   createPlugin,
@@ -24,4 +24,4 @@ export {
   type CreatePluginOptions,
   type PluginDefinition,
   type PluginExecuteFn,
-} from "./base";
+} from "./base/index.js";

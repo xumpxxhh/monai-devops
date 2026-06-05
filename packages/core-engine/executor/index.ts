@@ -11,14 +11,14 @@ import {
   StepFailureKinds,
   StepStatuses,
   WorkflowValidationError,
-} from "../errors";
-import type { WorkflowLifecycleEvent, WorkflowRunMeta } from "../observer";
+} from "../errors.js";
+import type { WorkflowLifecycleEvent, WorkflowRunMeta } from "../observer/index.js";
 import {
   buildCompletedResult,
   buildFailedResult,
   buildSkippedResult,
   pluginFailureKind,
-} from "./helpers";
+} from "./helpers.js";
 import type {
   ExecutionContext,
   ExecutionResult,
@@ -27,7 +27,7 @@ import type {
   WorkflowDefinition,
   WorkflowRunResult,
   WorkflowStep,
-} from "./types";
+} from "./types.js";
 
 export type {
   ExecutionContext,
@@ -38,9 +38,9 @@ export type {
   WorkflowDefinition,
   WorkflowRunResult,
   WorkflowStep,
-} from "./types";
+} from "./types.js";
 
-export { WorkflowValidationError } from "../errors";
+export { WorkflowValidationError } from "../errors.js";
 
 interface DagGraph {
   stepIds: Set<string>;

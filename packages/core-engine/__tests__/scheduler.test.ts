@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { createTaskScheduler } from "../scheduler";
+import { createTaskScheduler } from "../scheduler/index.js";
 
 const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
 

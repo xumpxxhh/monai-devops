@@ -3,7 +3,7 @@
  * @module scheduler
  */
 
-import { MinHeap } from "../utils/min-heap";
+import { MinHeap } from "../utils/min-heap.js";
 
 /**
  * 任务定义

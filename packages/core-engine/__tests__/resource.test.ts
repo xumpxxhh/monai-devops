@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { createResourceManager } from "../resource";
+import { createResourceManager } from "../resource/index.js";
 
 describe("resource manager", () => {
   it("allocates and releases resources", () => {

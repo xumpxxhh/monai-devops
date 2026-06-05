@@ -3,11 +3,11 @@
  * @module @monai-devops/core-engine
  */
 
-export * from "./executor";
-export * from "./scheduler";
-export * from "./plugin";
-export * from "./resource";
-export * from "./engine";
-export * from "./context-keys";
-export * from "./errors";
-export * from "./observer";
+export * from "./executor/index.js";
+export * from "./scheduler/index.js";
+export * from "./plugin/index.js";
+export * from "./resource/index.js";
+export * from "./engine/index.js";
+export * from "./context-keys.js";
+export * from "./errors.js";
+export * from "./observer/index.js";

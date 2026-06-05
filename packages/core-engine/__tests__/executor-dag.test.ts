@@ -5,10 +5,10 @@ import {
   WorkflowValidationError,
   type WorkflowDefinition,
   type PluginExecutor,
-} from "../executor";
+} from "../executor/index.js";
 import { getContext, type PluginResult } from "@monai-devops/plugin-sdk";
-import { WorkflowContextKeys } from "../context-keys";
-import { SkipReasons, StepFailureKinds, StepStatuses } from "../errors";
+import { WorkflowContextKeys } from "../context-keys.js";
+import { SkipReasons, StepFailureKinds, StepStatuses } from "../errors.js";
 
 const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
 

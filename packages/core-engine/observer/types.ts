@@ -9,7 +9,7 @@ import type {
   WorkflowDefinition,
   WorkflowRunResult,
   WorkflowStep,
-} from "../executor/types";
+} from "../executor/types.js";
 
 /**
  * 单次工作流运行的元数据

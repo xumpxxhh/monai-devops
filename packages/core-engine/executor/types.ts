@@ -8,8 +8,8 @@ import type {
   SkipReason,
   StepFailureKind,
   StepStatus,
-} from "../errors";
-import type { WorkflowObserver } from "../observer";
+} from "../errors.js";
+import type { WorkflowObserver } from "../observer/index.js";
 
 /**
  * 工作流定义

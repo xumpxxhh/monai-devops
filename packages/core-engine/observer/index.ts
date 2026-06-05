@@ -7,4 +7,4 @@ export type {
   WorkflowLifecycleEvent,
   WorkflowObserver,
   WorkflowRunMeta,
-} from "./types";
+} from "./types.js";
