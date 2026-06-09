@@ -50,3 +50,13 @@ export class StepExecutionError extends Error {
     this.name = 'StepExecutionError';
   }
 }
+
+/**
+ * 资源等待队列取消（failFast 等场景），由 executor 转为 SKIPPED / WORKFLOW_ABORTED
+ */
+export class ResourceQueueCancelledError extends Error {
+  constructor(message = '资源等待已取消') {
+    super(message);
+    this.name = 'ResourceQueueCancelledError';
+  }
+}
