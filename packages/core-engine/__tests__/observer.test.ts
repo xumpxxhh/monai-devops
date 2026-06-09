@@ -7,7 +7,7 @@ import {
   type WorkflowDefinition,
   type PluginExecutor,
 } from '../executor/index.js';
-import { createPlugin, getContext } from '@monai-devops/plugin-sdk';
+import { createPlugin, getContext, getLogger } from '@monai-devops/plugin-sdk';
 import { WorkflowContextKeys } from '../context-keys.js';
 import { SkipReasons, StepFailureKinds, StepStatuses } from '../errors.js';
 import type { WorkflowLifecycleEvent } from '../observer/index.js';
@@ -319,5 +319,227 @@ describe('WorkflowObserver', () => {
     );
 
     assert.equal(events.length, 0);
+  });
+
+  it('emits plugin:log between step:start and step:finished', async () => {
+    const loggingPlugin = createPlugin({
+      name: 'logging-plugin',
+      version: '1.0.0',
+      execute: async (config, context) => {
+        getLogger(context).info('plugin started', { type: config.type });
+        return { success: true, message: 'ok' };
+      },
+    });
+
+    const { events, observer } = collectEvents();
+    const engine = createEngine({
+      plugins: [loggingPlugin],
+      observer,
+    });
+
+    await engine.runWorkflow({
+      id: 'wf-log',
+      name: 'log',
+      steps: [
+        {
+          id: 's1',
+          name: 'S1',
+          plugin: 'logging-plugin',
+          config: { type: 'unit' },
+        },
+      ],
+    });
+
+    const types = events.map((e) => e.type);
+    const startIdx = types.indexOf('step:start');
+    const finishedIdx = types.indexOf('step:finished');
+    const logIdx = types.indexOf('plugin:log');
+
+    assert.ok(startIdx >= 0 && logIdx > startIdx && finishedIdx > logIdx);
+
+    const logEvent = events[logIdx];
+    assert.equal(logEvent?.type, 'plugin:log');
+    if (logEvent?.type === 'plugin:log') {
+      assert.equal(logEvent.log.message, 'plugin started');
+      assert.equal(logEvent.log.level, 'info');
+      assert.equal(logEvent.step.id, 's1');
+      assert.equal(logEvent.meta.runId.length > 0, true);
+      assert.deepEqual(logEvent.log.data, { type: 'unit' });
+    }
+
+    engine.destroy();
+  });
+
+  it('emits plugin:log with stream on append', async () => {
+    const loggingPlugin = createPlugin({
+      name: 'append-plugin',
+      version: '1.0.0',
+      execute: async (_config, context) => {
+        getLogger(context).append('line1\n', 'stdout');
+        return { success: true, message: 'ok' };
+      },
+    });
+
+    const { events, observer } = collectEvents();
+    const engine = createEngine({
+      plugins: [loggingPlugin],
+      observer,
+    });
+
+    await engine.runWorkflow({
+      id: 'wf-append',
+      name: 'append',
+      steps: [{ id: 's1', name: 'S1', plugin: 'append-plugin', config: {} }],
+    });
+
+    const logEvent = events.find((e) => e.type === 'plugin:log');
+    assert.equal(logEvent?.type, 'plugin:log');
+    if (logEvent?.type === 'plugin:log') {
+      assert.equal(logEvent.log.message, 'line1\n');
+      assert.equal(logEvent.log.stream, 'stdout');
+    }
+
+    engine.destroy();
+  });
+
+  it('succeeds without observer when plugin uses getLogger', async () => {
+    const loggingPlugin = createPlugin({
+      name: 'noop-log-plugin',
+      version: '1.0.0',
+      execute: async (_config, context) => {
+        getLogger(context).info('should not throw');
+        return { success: true, message: 'ok' };
+      },
+    });
+
+    const engine = createEngine({ plugins: [loggingPlugin] });
+
+    const run = await engine.runWorkflow({
+      id: 'wf-noop',
+      name: 'noop',
+      steps: [{ id: 's1', name: 'S1', plugin: 'noop-log-plugin', config: {} }],
+    });
+
+    assert.equal(run.success, true);
+    engine.destroy();
+  });
+
+  it('preserves plugin:log order under concurrent log calls', async () => {
+    const loggingPlugin = createPlugin({
+      name: 'ordered-log-plugin',
+      version: '1.0.0',
+      execute: async (_config, context) => {
+        const log = getLogger(context);
+        log.info('first');
+        log.info('second');
+        log.append('third\n', 'stdout');
+        return { success: true, message: 'ok' };
+      },
+    });
+
+    const { events, observer } = collectEvents();
+    const engine = createEngine({ plugins: [loggingPlugin], observer });
+
+    await engine.runWorkflow({
+      id: 'wf-order',
+      name: 'order',
+      steps: [{ id: 's1', name: 'S1', plugin: 'ordered-log-plugin', config: {} }],
+    });
+
+    const logMessages = events
+      .filter(
+        (e): e is Extract<WorkflowLifecycleEvent, { type: 'plugin:log' }> =>
+          e.type === 'plugin:log',
+      )
+      .map((e) => e.log.message);
+
+    assert.deepEqual(logMessages, ['first', 'second', 'third\n']);
+    engine.destroy();
+  });
+
+  it('waits for slow plugin:log observer before step:finished', async () => {
+    const events: WorkflowLifecycleEvent[] = [];
+    let releaseSlowLog!: () => void;
+    const slowLogGate = new Promise<void>((resolve) => {
+      releaseSlowLog = resolve;
+    });
+
+    const loggingPlugin = createPlugin({
+      name: 'slow-log-plugin',
+      version: '1.0.0',
+      execute: async (_config, context) => {
+        getLogger(context).info('slow');
+        getLogger(context).info('fast');
+        return { success: true, message: 'ok' };
+      },
+    });
+
+    const engine = createEngine({
+      plugins: [loggingPlugin],
+      observer: {
+        onEvent: async (event) => {
+          events.push(event);
+          if (event.type === 'plugin:log' && event.log.message === 'slow') {
+            await slowLogGate;
+          }
+        },
+      },
+    });
+
+    const runPromise = engine.runWorkflow({
+      id: 'wf-slow-log',
+      name: 'slow-log',
+      steps: [{ id: 's1', name: 'S1', plugin: 'slow-log-plugin', config: {} }],
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    assert.equal(
+      events.some((e) => e.type === 'step:finished'),
+      false,
+      'step:finished must not emit before slow log completes',
+    );
+
+    releaseSlowLog();
+    await runPromise;
+
+    const types = events.map((e) => e.type);
+    const slowIdx = events.findIndex((e) => e.type === 'plugin:log' && e.log.message === 'slow');
+    const fastIdx = events.findIndex((e) => e.type === 'plugin:log' && e.log.message === 'fast');
+    const finishedIdx = types.indexOf('step:finished');
+
+    assert.ok(slowIdx >= 0 && fastIdx > slowIdx && finishedIdx > fastIdx);
+    engine.destroy();
+  });
+
+  it('fails step when plugin:log observer throws', async () => {
+    const loggingPlugin = createPlugin({
+      name: 'throw-log-plugin',
+      version: '1.0.0',
+      execute: async (_config, context) => {
+        getLogger(context).info('boom');
+        return { success: true, message: 'ok' };
+      },
+    });
+
+    const engine = createEngine({
+      plugins: [loggingPlugin],
+      observer: {
+        onEvent: async (event) => {
+          if (event.type === 'plugin:log') {
+            throw new Error('log observer failed');
+          }
+        },
+      },
+    });
+
+    const run = await engine.runWorkflow({
+      id: 'wf-log-error',
+      name: 'log-error',
+      steps: [{ id: 's1', name: 'S1', plugin: 'throw-log-plugin', config: {} }],
+    });
+
+    assert.equal(run.success, false);
+    assert.equal(run.results[0]?.status, StepStatuses.FAILED);
+    engine.destroy();
   });
 });

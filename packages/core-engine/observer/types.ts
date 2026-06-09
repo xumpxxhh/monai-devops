@@ -10,6 +10,7 @@ import type {
   WorkflowRunResult,
   WorkflowStep,
 } from '../executor/types.js';
+import type { PluginLogEntry } from '@monai-devops/plugin-sdk';
 
 /**
  * 单次工作流运行的元数据
@@ -53,6 +54,12 @@ export type WorkflowLifecycleEvent =
       meta: WorkflowRunMeta;
       step: WorkflowStep;
       result: ExecutionResult;
+    }
+  | {
+      type: 'plugin:log';
+      meta: WorkflowRunMeta;
+      step: WorkflowStep;
+      log: PluginLogEntry;
     };
 
 /**

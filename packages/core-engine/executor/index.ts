@@ -4,7 +4,7 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import type { PluginResult } from '@monai-devops/plugin-sdk';
+import { noopLogger, PluginContextKeys, type PluginResult } from '@monai-devops/plugin-sdk';
 import {
   ResourceQueueCancelledError,
   StepExecutionError,
@@ -14,6 +14,7 @@ import {
   WorkflowValidationError,
 } from '../errors.js';
 import type { WorkflowLifecycleEvent, WorkflowRunMeta } from '../observer/index.js';
+import { createContextLogger } from '../plugin/create-context-logger.js';
 import {
   buildCompletedResult,
   buildFailedResult,
@@ -238,7 +239,21 @@ export function createWorkflowExecutor(options: ExecutorOptions = {}) {
       let pluginResult: PluginResult;
 
       if (pluginExecutor) {
-        pluginResult = await pluginExecutor(step.plugin, step.config, context);
+        let flushLogs: (() => Promise<void>) | undefined;
+        let pluginContext = context as typeof context & Record<string, unknown>;
+
+        if (meta) {
+          const { logger, flush } = createContextLogger({
+            emit: (log) => emit({ type: 'plugin:log', meta, step, log }),
+          });
+          flushLogs = flush;
+          pluginContext = { ...context, [PluginContextKeys.logger]: logger };
+        } else {
+          pluginContext = { ...context, [PluginContextKeys.logger]: noopLogger };
+        }
+
+        pluginResult = await pluginExecutor(step.plugin, step.config, pluginContext);
+        await flushLogs?.();
       } else {
         pluginResult = {
           success: true,
