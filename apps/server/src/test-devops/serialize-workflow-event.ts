@@ -56,5 +56,9 @@ export function serializeWorkflowEvent(
     };
   }
 
+  if (event.type === 'plugin:log') {
+    return event;
+  }
+
   return event;
 }
