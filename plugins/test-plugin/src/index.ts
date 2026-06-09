@@ -1,6 +1,10 @@
 import { createPlugin, getConfig } from '@monai-devops/plugin-sdk';
 import type { PluginConfig, PluginContext, PluginResult } from '@monai-devops/plugin-sdk';
 
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 /**
  * 测试插件执行函数
  */
@@ -9,6 +13,7 @@ async function executeTestPlugin(
   context: PluginContext,
 ): Promise<PluginResult> {
   const type = getConfig<string>(config, 'type');
+  await delay(3000);
 
   try {
     switch (type) {
