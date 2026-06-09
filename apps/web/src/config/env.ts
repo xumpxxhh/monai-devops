@@ -13,3 +13,19 @@ export const routerBasename = toRouterBasename(rawBasePath);
 
 /** 后端 API 基地址（含 GLOBAL_API_PREFIX） */
 export const apiBaseUrl = import.meta.env.DEVOPS_API_BASE_URL ?? '';
+
+/** test-devops WebSocket 地址（由 API 基地址推导） */
+export function getTestDevopsWsUrl(): string {
+  if (!apiBaseUrl) return '';
+
+  try {
+    const url = new URL(apiBaseUrl);
+    url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
+    url.pathname = `${url.pathname.replace(/\/$/, '')}/test-devops/ws`;
+    url.search = '';
+    url.hash = '';
+    return url.toString();
+  } catch {
+    return '';
+  }
+}
