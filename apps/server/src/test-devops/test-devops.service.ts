@@ -2,30 +2,50 @@ import { Injectable } from '@nestjs/common';
 import {
   createEngine,
   type WorkflowDefinition,
+  type WorkflowLifecycleEvent,
   type WorkflowRunResult,
   type WorkflowStep,
 } from '@monai-devops/core-engine';
 import { testPlugin } from 'test-plugin';
+
 export interface IntegrationTestResult {
   success: boolean;
   message: string;
   workflowId: string;
 }
 
+export interface WorkflowRunSession {
+  result: Promise<WorkflowRunResult>;
+  destroy: () => void;
+}
+
 @Injectable()
 export class TestDevopsService {
-  async runIntegrationTest(): Promise<IntegrationTestResult> {
-    console.log('runIntegrationTest');
-    const workflowId = 'integration-closed-loop';
+  runWorkflowWithObserver(
+    workflow: WorkflowDefinition,
+    onEvent: (event: WorkflowLifecycleEvent) => void | Promise<void>,
+  ): WorkflowRunSession {
     const engine = createEngine({
       plugins: [testPlugin],
-      observer: {
-        onEvent(event) {
-          console.log(JSON.stringify(event, null, 2));
-        },
-      },
+      observer: { onEvent },
     });
 
+    let destroyed = false;
+    const destroy = () => {
+      if (destroyed) return;
+      destroyed = true;
+      engine.destroy();
+    };
+
+    const result = engine.runWorkflow(workflow).finally(() => {
+      destroy();
+    });
+
+    return { result, destroy };
+  }
+
+  async runIntegrationTest(): Promise<IntegrationTestResult> {
+    const workflowId = 'integration-closed-loop';
     const workflow: WorkflowDefinition = {
       id: workflowId,
       name: 'Core Engine Integration Test',
@@ -34,21 +54,21 @@ export class TestDevopsService {
           id: 'integration-step',
           name: 'Integration Test',
           plugin: 'test-plugin',
-          config: { type: 'integration' },
+          config: { type: 'runner' },
         } satisfies WorkflowStep,
       ],
     };
 
-    try {
-      const run: WorkflowRunResult = await engine.runWorkflow(workflow);
+    const { result } = this.runWorkflowWithObserver(workflow, (event) => {
+      // console.log(JSON.stringify(event, null, 2));
+    });
 
-      return {
-        success: run.success,
-        message: run.results[0]?.pluginResult?.message ?? '',
-        workflowId,
-      };
-    } finally {
-      engine.destroy();
-    }
+    const run = await result;
+
+    return {
+      success: run.success,
+      message: run.results[0]?.pluginResult?.message ?? '',
+      workflowId,
+    };
   }
 }

@@ -1,10 +1,13 @@
+import './preload-env.js';
 import 'reflect-metadata';
 import { NestFactory } from '@nestjs/core';
 import { ConfigService } from '@nestjs/config';
+import { WsAdapter } from '@nestjs/platform-ws';
 import { AppModule } from './app.module.js';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
+  app.useWebSocketAdapter(new WsAdapter(app));
   const config = app.get(ConfigService);
 
   const globalApiPrefix = config.get<string>('GLOBAL_API_PREFIX')?.trim();
