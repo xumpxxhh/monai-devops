@@ -1,0 +1,4 @@
+- 单个插件的日志事件（已实现）
+  - SDK：`PluginLogger`、`getLogger(context)`、`noopLogger`
+  - 引擎：执行步骤时注入 logger，通过 `WorkflowObserver` 发出 `plugin:log` 事件
+  - 插件用法：`const log = getLogger(context); log.info('...'); log.append(chunk, 'stdout')`
