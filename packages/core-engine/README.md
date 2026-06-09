@@ -46,7 +46,24 @@ flowchart TB
 | `StepFailureKind` / `StepFailureKinds`     | core-engine | 失败分类：`plugin` / `resource` / `internal`                             |
 | `SkipReason` / `SkipReasons`               | core-engine | 跳过原因：`condition_not_met` / `dependency_failed` / `workflow_aborted` |
 
-依赖方向：**core-engine → plugin-sdk**。插件实现只需依赖 SDK；若需读取 `stepId`、`previousResults` 等，使用 `getContext(ctx, WorkflowContextKeys.xxx)`，字段由 executor 在运行时写入。
+依赖方向：**core-engine → plugin-sdk**。插件实现只需依赖 SDK；若需读取编排字段，使用 `getContext(ctx, WorkflowContextKeys.xxx)`，字段由 executor 在运行时写入。
+
+### ExecutionContext 与 WorkflowContextKeys
+
+`ExecutionContext` 继承 `PluginContext`，executor 每步注入：
+
+| 字段 | 键名（`WorkflowContextKeys`） | 说明 |
+| ---- | ----------------------------- | ---- |
+| `workflowId` | `workflowId` | 当前工作流 ID |
+| `stepId` | `stepId` | 当前步骤 ID |
+| `previousResults` | `previousResults` | 前序非 FAILED 步骤的 `result` map |
+| `artifacts` | `artifacts` | 调用方可传入的共享产物 |
+| `priority` | — | run 级调度优先级，步骤 `priority` 可覆盖 |
+| `runId` | `runId` | 单次 run 标识；未传时自动生成 UUID |
+| `traceId` | `traceId` | 可选，供调用层追踪关联 |
+| `logger` | `logger` | 步骤级 `PluginLogger`（`step:start` 后可用） |
+
+`WorkflowContextKeys` 同时 **re-export** `PluginContextKeys`（来自 plugin-sdk）。
 
 ## 错误模型
 
@@ -69,11 +86,27 @@ flowchart TB
 | `PluginFailureCodes` | plugin-sdk  | `PLUGIN_NOT_FOUND`、`PLUGIN_EXECUTION_ERROR` |
 | `StepStatuses`       | core-engine | `COMPLETED`、`SKIPPED`、`FAILED`             |
 | `StepFailureKinds`   | core-engine | `PLUGIN`、`RESOURCE`、`INTERNAL`             |
-| `SkipReasons`        | core-engine | `CONDITION_NOT_MET`、`DEPENDENCY_FAILED`     |
+| `SkipReasons`        | core-engine | `CONDITION_NOT_MET`、`DEPENDENCY_FAILED`、`WORKFLOW_ABORTED` |
+
+**WorkflowValidationError**（启动前抛出）
+
+- 重复的步骤 ID
+- `dependsOn` 引用不存在的步骤
+- 存在循环依赖
+
+**ResourceQueueCancelledError**（resource-scheduler 内部）
+
+- failFast 时 `cancelByRunId` 取消排队中的资源等待
+- `resourceScheduler.destroy()` 销毁调度器
+- 由 executor 捕获并转为 `SKIPPED / WORKFLOW_ABORTED`
+
+**WorkflowRunResult.success**
+
+- 所有步骤 `status !== StepStatuses.FAILED` 时为 `true`（跳过步骤不影响 success）
 
 ```ts
-import { PluginFailureCodes } from 'plugin-sdk';
-import { StepStatuses, StepFailureKinds, SkipReasons } from 'core-engine';
+import { PluginFailureCodes } from '@monai-devops/plugin-sdk';
+import { StepStatuses, StepFailureKinds, SkipReasons } from '@monai-devops/core-engine';
 
 // 判断步骤结果
 const step = run.results[0];
@@ -114,22 +147,29 @@ if (step.pluginResult?.code === PluginFailureCodes.PLUGIN_NOT_FOUND) {
 
 **EngineOptions**
 
-| 选项               | 默认   | 说明                                 |
-| ------------------ | ------ | ------------------------------------ |
-| `plugins`          | —      | 初始注册的 `PluginDefinition[]`      |
-| `maxParallelSteps` | `1`    | 工作流步骤最大并行数                 |
-| `failFast`         | `true` | 任一步失败后是否停止调度后续步骤     |
-| `scheduler`        | —      | 传给 `createTaskScheduler` 的选项    |
-| `resources`        | —      | 传给 `createResourceManager` 的选项  |
-| `observer`         | —      | 工作流生命周期观察者，见「可观测性」 |
+| 选项               | 默认   | 说明                                                                 |
+| ------------------ | ------ | -------------------------------------------------------------------- |
+| `plugins`          | —      | 初始注册的 `PluginDefinition[]`                                      |
+| `maxParallelSteps` | `1`    | 工作流步骤最大并行数                                                 |
+| `failFast`         | `true` | 任一步失败后是否停止调度后续步骤                                     |
+| `scheduler`        | —      | 传给 `createTaskScheduler` 的选项                                    |
+| `resources`        | —      | 传给 `createResourceManager` 的选项（engine 强制 `autoCleanup: false`） |
+| `initialResources` | —      | 启动时预注册的资源列表                                               |
+| `defaultPoolSize`  | `5`    | `default` 类型资源池槽位数（未声明 `resourceType` 的步骤使用）     |
+| `observer`         | —      | 工作流生命周期观察者，见「可观测性」                                 |
+
+**默认资源池**：engine 启动时会注册 `defaultPoolSize` 个 `type: "default"` 的资源（id 形如 `default-0`）。步骤未在 `config.resourceType` 中指定类型时，经 resource-scheduler 从该池分配。
+
+**runId 与资源分配**：`onStepStart` 仅在 context 含非空 `runId` 时调用 resource-scheduler；未传 `runId` 时跳过资源 acquire/release（步骤仍可执行插件）。
 
 **主要 API**
 
 - `runWorkflow(workflow, context?)` → `WorkflowRunResult`
 - `scheduleWorkflow(workflow, context?)` → `Promise<ScheduleResult>`（整次 workflow 作为调度任务）
-- `registerPlugin` / `registerPlugins` / `getPlugins` 等（委托 plugin 模块）
+- `registerPlugin` / `registerPlugins` / `unregisterPlugin` / `getPlugin` / `getPlugins` / `getPluginNames` / `hasPlugin`
+- `registerResource(resource)` — 动态注册资源并唤醒等待队列
 - `getExecutor()` / `getScheduler()` / `getResourceManager()` / `getResourceScheduler()` — 高级用法
-- `destroy()` — 释放资源池定时器
+- `destroy()` — 释放 resource-scheduler、资源池定时器与执行历史
 
 ### executor（DAG 工作流）
 
@@ -145,6 +185,25 @@ if (step.pluginResult?.code === PluginFailureCodes.PLUGIN_NOT_FOUND) {
 
 也可单独使用 `createWorkflowExecutor(options)`，自行注入 `pluginExecutor` 与 `observer`。
 
+**Executor 额外 API**（经 `getExecutor()` 获取）
+
+| 方法 | 说明 |
+| ---- | ---- |
+| `executeStep(step, context, meta?)` | 单步执行；无 `workflow:start` / `workflow:finished` |
+| `getExecutionHistory(workflowId)` | 最近一次 `executeWorkflow` 的步骤结果 |
+| `clearHistory()` | 清空历史（`destroy()` 时也会调用） |
+
+**StepCondition 求值**（基于 `previousResults[when]`）
+
+| 字段 | 行为 |
+| ---- | ---- |
+| `exists: true` | 值不为 `undefined` / `null` |
+| `exists: false` | 值为 `undefined` 或 `null` |
+| `equals` | 严格相等 `===` |
+| 均未指定 | 值不为 `undefined` / `null` 即通过 |
+
+**previousResults**：仅包含**非 FAILED** 步骤的 `result`；FAILED 步骤不会写入前序结果 map。
+
 ## 可观测性
 
 执行过程中通过 **`WorkflowObserver`** 向调用层暴露结构化事件；engine **不包含**持久化、HTTP 或追踪 SDK，由 server/CLI 在 `onEvent` 中自行落库、打日志、接 OpenTelemetry。
@@ -156,7 +215,7 @@ import {
   createEngine,
   type WorkflowLifecycleEvent,
   type WorkflowObserver,
-} from "core-engine";
+} from "@monai-devops/core-engine";
 
 const observer: WorkflowObserver = {
   onEvent: async (event: WorkflowLifecycleEvent) => {
@@ -172,6 +231,9 @@ const observer: WorkflowObserver = {
         break;
       case "step:finished":
         // 步骤结束（含 completed / skipped / failed）
+        break;
+      case "plugin:log":
+        // 插件执行期日志（log.info / log.append 等）
         break;
       case "workflow:finished":
         // 整次 run 结束
@@ -195,8 +257,16 @@ await engine.runWorkflow(workflow, {
 | `workflow:start`    | DAG 校验通过后、任一步骤开始前                                          |
 | `step:queued`       | 步骤进入资源调度队列（条件跳过**不**触发）                              |
 | `step:start`        | 资源分配成功后、插件执行前（条件跳过**不**触发）                        |
+| `plugin:log`        | 插件通过 `getLogger(context)` 写日志；在 `step:start` 与 `step:finished` 之间 |
 | `step:finished`     | 步骤结束（成功、失败、跳过均触发；失败只发此事件，不发单独 error 事件） |
 | `workflow:finished` | 所有步骤处理完毕（含 failFast 补发的未执行步）                          |
+
+**plugin:log 语义**
+
+- executor 在 `step:start` 后向插件 context 注入 `PluginLogger`（键名 `WorkflowContextKeys.logger` / `PluginContextKeys.logger`）
+- 日志经 `createContextLogger` 串行 emit，**全部 flush 完成后**才发出 `step:finished`
+- 并发 `log.info` 等调用顺序与调用顺序一致
+- `onEvent` 处理 `plugin:log` 时若 **throw**，当前步骤标记为 `FAILED / INTERNAL`
 
 每条事件携带 **`WorkflowRunMeta`**：`runId`、`workflowId`、可选 `traceId`、原始 `context`。
 
@@ -240,7 +310,14 @@ await engine.runWorkflow(workflow, {
 
 ### plugin（插件注册表）
 
-`createPluginManager()` 提供注册、卸载、`executePlugin(name, config, context)`。未找到插件或执行异常时返回带 `PluginFailureCodes` 的 `{ success: false, message }`（不抛错）；engine 透传 Result，executor 将其转为 `ExecutionResult.status: StepStatuses.FAILED`。
+`createPluginManager()` 提供注册、卸载、`executePlugin(name, config, context)`。未找到插件或 execute 内未捕获异常时返回带 `PluginFailureCodes` 的 `{ success: false, message }`（不抛错）；engine 透传 Result，executor 将其转为 `ExecutionResult.status: StepStatuses.FAILED`。
+
+额外导出 **`createContextLogger({ emit })`**：将 `PluginLogger` 桥接到自定义 emit（executor 内部用于 `plugin:log`）；返回 `{ logger, flush }`，`flush()` 等待已入队日志全部 emit。
+
+| 方法 | 说明 |
+| ---- | ---- |
+| `clearPlugins()` | 清空注册表 |
+| `getStats()` | `{ total, plugins }` |
 
 ### resource-scheduler（Step 级资源调度队列）
 
@@ -251,21 +328,32 @@ await engine.runWorkflow(workflow, {
 - **优先级来源**：`step.priority ?? context.priority ?? 0`
 - **failFast**：`cancelByRunId` 取消同 run 下排队步骤，转为 `SKIPPED / WORKFLOW_ABORTED`
 - **唤醒**：`releaseResource` 或 `registerResource` 触发 `onResourceAvailable` 回调后重新 `processQueue`
+- **API**：`acquire` / `cancelByRunId` / `getQueueStatus` / `notifyResourceAvailable` / `destroy`
 
 ### resource（资源池）
 
 `createResourceManager` 管理 `available` / `allocated` / `released` 状态。
 
+**ResourcePoolOptions**
+
+| 选项 | 默认 | 说明 |
+| ---- | ---- | ---- |
+| `maxResources` | `10` | 池内资源数量上限 |
+| `autoCleanup` | `true` | 为 `true` 时 `release` 后延迟删除；engine 构造时覆盖为 `false` |
+| `cleanupInterval` | `60000` | 自动清理间隔（ms） |
+| `onResourceAvailable` | — | 有空闲资源时回调（engine 用于唤醒 resource-scheduler） |
+
 - 步骤 `config.resourceType` 为字符串时，engine 经 resource-scheduler `acquire` 分配、`onStepComplete` / `onStepError` 释放
-- `autoCleanup: false`（默认测试配置）时 `release` 将资源归还为 `available` 供复用
+- `autoCleanup: false`（engine 默认）时 `release` 将资源归还为 `available` 供复用
 - `autoCleanup: true` 时构造即启动定时清理；`release` 后延迟 `cleanupInterval` 从 Map 删除
 - 分配/释放对同一 id 使用互斥，避免并发竞态
+- **API**：`registerResource` / `hasAvailable` / `allocateResource` / `releaseResource` / `getResource` / `getAllResources` / `getAvailableResources` / `cleanupResources` / `destroy`
 
 ## 快速开始
 
 ```ts
-import { createEngine, WorkflowContextKeys } from 'core-engine';
-import { createPlugin, getContext } from 'plugin-sdk';
+import { createEngine, WorkflowContextKeys } from '@monai-devops/core-engine';
+import { createPlugin, getContext } from '@monai-devops/plugin-sdk';
 
 const echoPlugin = createPlugin({
   name: 'echo',
@@ -330,6 +418,7 @@ const scheduled = await engine.scheduleWorkflow({
 | `config`    | `PluginConfig`，步骤入参                                   |
 | `dependsOn` | 依赖的步骤 ID 列表                                         |
 | `condition` | 可选，`{ when, equals?, exists? }`，`when` 指向前序步骤 ID |
+| `priority`  | 可选，资源调度优先级，数值越小越优先；默认继承 run 级 `context.priority` 或 `0` |
 
 **config 约定**
 
@@ -340,14 +429,14 @@ const scheduled = await engine.scheduleWorkflow({
 入口 [`index.ts`](./index.ts) 导出：
 
 - `./executor` — `createWorkflowExecutor`、`WorkflowDefinition`、`ExecutionContext` 等
-- `./scheduler` — `createTaskScheduler`
-- `./plugin` — `createPluginManager`
+- `./scheduler` — `createTaskScheduler`（别名 `createScheduler`）
+- `./plugin` — `createPluginManager`（别名 `createManager`）、`createContextLogger` 等
 - `./resource` — `createResourceManager`
 - `./resource-scheduler` — `createResourceStepScheduler`
 - `./engine` — `createEngine`
 - `./observer` — `WorkflowObserver`、`WorkflowLifecycleEvent`、`WorkflowRunMeta`
-- `./context-keys` — `WorkflowContextKeys`
-- `./errors` — `StepExecutionError`、`WorkflowValidationError`、`StepStatuses`、`StepFailureKinds`、`SkipReasons` 及对应类型
+- `./context-keys` — `WorkflowContextKeys`（含 `PluginContextKeys` re-export）
+- `./errors` — `StepExecutionError`、`WorkflowValidationError`、`ResourceQueueCancelledError`、`StepStatuses`、`StepFailureKinds`、`SkipReasons` 及对应类型
 
 ## 开发与测试
 
@@ -359,22 +448,22 @@ pnpm --filter core-engine check-types
 pnpm --filter core-engine test
 ```
 
-测试覆盖：DAG 并行与 failFast、engine 集成、错误模型、scheduler（含优先级与并发）、min-heap、resource 生命周期。
+测试覆盖：DAG 并行与 failFast、engine 集成、错误模型、observer（含 `plugin:log` 顺序与失败语义）、scheduler（含优先级与并发）、min-heap、resource 生命周期、resource-scheduler 队列与 cancel。
 
 ## 子模块独立使用
 
 不必经过 `createEngine`，可按需组合：
 
 ```ts
-import { createWorkflowExecutor } from 'core-engine/executor';
-import { createTaskScheduler } from 'core-engine/scheduler';
-import { createPluginManager } from 'core-engine/plugin';
+import { createWorkflowExecutor } from '@monai-devops/core-engine';
+import { createTaskScheduler } from '@monai-devops/core-engine';
+import { createPluginManager } from '@monai-devops/core-engine';
 ```
 
-（实际 import 路径以 monorepo 内 `core-engine` 包名为准。）
+（子路径 deep import 未在 `exports` 中单独声明，请从包根 `@monai-devops/core-engine` 导入。）
 
 ## 后续规划
 
-- Nest `apps/server` 集成与 HTTP API（消费 `WorkflowObserver`）
+- 生产级工作流 HTTP API 与持久化（`apps/server` 已有 test-devops 闭环验证）
 - 表达式级 `condition`（当前仅为结构化条件）
 - 步骤级 `AbortSignal` 取消进行中的插件执行
