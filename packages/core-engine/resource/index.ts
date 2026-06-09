@@ -21,13 +21,20 @@ export interface ResourcePoolOptions {
   maxResources?: number;
   autoCleanup?: boolean;
   cleanupInterval?: number;
+  /** 有新空闲资源时回调（供 resource-scheduler 唤醒等待队列） */
+  onResourceAvailable?: (type: string) => void;
 }
 
 /**
  * 创建资源管理器
  */
 export function createResourceManager(options: ResourcePoolOptions = {}) {
-  const { maxResources = 100, autoCleanup = true, cleanupInterval = 60000 } = options;
+  const {
+    maxResources = 10,
+    autoCleanup = true,
+    cleanupInterval = 60000,
+    onResourceAvailable,
+  } = options;
 
   const resources: Map<string, Resource> = new Map();
   let cleanupTimer: NodeJS.Timeout | null = null;
@@ -42,7 +49,24 @@ export function createResourceManager(options: ResourcePoolOptions = {}) {
       return false;
     }
     resources.set(resource.id, { ...resource });
+    if (resource.status === 'available') {
+      onResourceAvailable?.(resource.type);
+    }
     return true;
+  }
+
+  function hasAvailable(type: string, name?: string): boolean {
+    for (const resource of resources.values()) {
+      if (allocationLock.has(resource.id)) continue;
+      if (
+        resource.type === type &&
+        resource.status === 'available' &&
+        (!name || resource.name === name)
+      ) {
+        return true;
+      }
+    }
+    return false;
   }
 
   function allocateResource(type: string, name?: string): Resource | null {
@@ -78,11 +102,14 @@ export function createResourceManager(options: ResourcePoolOptions = {}) {
     try {
       const resource = resources.get(id);
       if (resource && resource.status === 'allocated') {
-        resource.status = 'released';
         if (autoCleanup) {
+          resource.status = 'released';
           setTimeout(() => {
             resources.delete(id);
           }, cleanupInterval);
+        } else {
+          resource.status = 'available';
+          onResourceAvailable?.(resource.type);
         }
         return true;
       }
@@ -140,6 +167,7 @@ export function createResourceManager(options: ResourcePoolOptions = {}) {
 
   return {
     registerResource,
+    hasAvailable,
     allocateResource,
     releaseResource,
     getResource,

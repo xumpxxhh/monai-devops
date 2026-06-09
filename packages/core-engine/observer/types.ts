@@ -37,6 +37,13 @@ export type WorkflowLifecycleEvent =
       result: WorkflowRunResult;
     }
   | {
+      type: 'step:queued';
+      meta: WorkflowRunMeta;
+      step: WorkflowStep;
+      resourceType: string;
+      priority: number;
+    }
+  | {
       type: 'step:start';
       meta: WorkflowRunMeta;
       step: WorkflowStep;

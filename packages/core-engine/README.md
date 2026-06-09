@@ -13,16 +13,19 @@ flowchart TB
     PM[plugin]
     EX[executor]
     SCH[scheduler]
+    RS[resource-scheduler]
     RES[resource]
   end
   SDK[plugin-sdk]
   CE --> PM
   CE --> EX
   CE --> SCH
+  CE --> RS
   CE --> RES
   PM --> SDK
   EX -->|"pluginExecutor"| PM
-  EX -->|"onStepStart resourceType"| RES
+  EX -->|"onStepStart acquire"| RS
+  RS --> RES
   SCH -->|"scheduleWorkflow"| EX
 ```
 
@@ -125,7 +128,7 @@ if (step.pluginResult?.code === PluginFailureCodes.PLUGIN_NOT_FOUND) {
 - `runWorkflow(workflow, context?)` → `WorkflowRunResult`
 - `scheduleWorkflow(workflow, context?)` → `Promise<ScheduleResult>`（整次 workflow 作为调度任务）
 - `registerPlugin` / `registerPlugins` / `getPlugins` 等（委托 plugin 模块）
-- `getExecutor()` / `getScheduler()` / `getResourceManager()` — 高级用法
+- `getExecutor()` / `getScheduler()` / `getResourceManager()` / `getResourceScheduler()` — 高级用法
 - `destroy()` — 释放资源池定时器
 
 ### executor（DAG 工作流）
@@ -161,8 +164,11 @@ const observer: WorkflowObserver = {
       case "workflow:start":
         // 记录 run 开始
         break;
+      case "step:queued":
+        // 步骤进入资源等待队列
+        break;
       case "step:start":
-        // 步骤开始
+        // 资源分配成功，即将执行插件
         break;
       case "step:finished":
         // 步骤结束（含 completed / skipped / failed）
@@ -187,7 +193,8 @@ await engine.runWorkflow(workflow, {
 | 事件                | 触发时机                                                                |
 | ------------------- | ----------------------------------------------------------------------- |
 | `workflow:start`    | DAG 校验通过后、任一步骤开始前                                          |
-| `step:start`        | 步骤实际执行前（条件跳过**不**触发）                                    |
+| `step:queued`       | 步骤进入资源调度队列（条件跳过**不**触发）                              |
+| `step:start`        | 资源分配成功后、插件执行前（条件跳过**不**触发）                        |
 | `step:finished`     | 步骤结束（成功、失败、跳过均触发；失败只发此事件，不发单独 error 事件） |
 | `workflow:finished` | 所有步骤处理完毕（含 failFast 补发的未执行步）                          |
 
@@ -235,11 +242,22 @@ await engine.runWorkflow(workflow, {
 
 `createPluginManager()` 提供注册、卸载、`executePlugin(name, config, context)`。未找到插件或执行异常时返回带 `PluginFailureCodes` 的 `{ success: false, message }`（不抛错）；engine 透传 Result，executor 将其转为 `ExecutionResult.status: StepStatuses.FAILED`。
 
+### resource-scheduler（Step 级资源调度队列）
+
+`createResourceStepScheduler` 按 **resourceType** 维护独立小顶堆队列，最小调度单元为单个 workflow 的单个 step（队列项 ID：`${runId}:${stepId}`）。
+
+- **资源不足**：步骤挂起等待，**不**立即失败；`maxParallelSteps` 等待期间仍占用 inFlight 槽位
+- **排序**：`priority` 数值越小越优先；同 priority 按入队时间 FIFO
+- **优先级来源**：`step.priority ?? context.priority ?? 0`
+- **failFast**：`cancelByRunId` 取消同 run 下排队步骤，转为 `SKIPPED / WORKFLOW_ABORTED`
+- **唤醒**：`releaseResource` 或 `registerResource` 触发 `onResourceAvailable` 回调后重新 `processQueue`
+
 ### resource（资源池）
 
 `createResourceManager` 管理 `available` / `allocated` / `released` 状态。
 
-- 步骤 `config.resourceType` 为字符串时，engine 在 `onStepStart` 分配、`onStepComplete` / `onStepError` 释放；分配失败 throw `StepExecutionError`（`StepFailureKinds.RESOURCE`）
+- 步骤 `config.resourceType` 为字符串时，engine 经 resource-scheduler `acquire` 分配、`onStepComplete` / `onStepError` 释放
+- `autoCleanup: false`（默认测试配置）时 `release` 将资源归还为 `available` 供复用
 - `autoCleanup: true` 时构造即启动定时清理；`release` 后延迟 `cleanupInterval` 从 Map 删除
 - 分配/释放对同一 id 使用互斥，避免并发竞态
 
@@ -325,6 +343,7 @@ const scheduled = await engine.scheduleWorkflow({
 - `./scheduler` — `createTaskScheduler`
 - `./plugin` — `createPluginManager`
 - `./resource` — `createResourceManager`
+- `./resource-scheduler` — `createResourceStepScheduler`
 - `./engine` — `createEngine`
 - `./observer` — `WorkflowObserver`、`WorkflowLifecycleEvent`、`WorkflowRunMeta`
 - `./context-keys` — `WorkflowContextKeys`
