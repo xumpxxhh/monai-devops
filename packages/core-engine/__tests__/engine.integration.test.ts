@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { createEngine } from '../engine/index.js';
-import { StepFailureKinds, StepStatuses } from '../errors.js';
+import { StepStatuses } from '../errors.js';
 import { createPlugin } from '@monai-devops/plugin-sdk';
 
 const testPlugin = createPlugin({
@@ -62,11 +62,15 @@ describe('createEngine integration', () => {
     engine.destroy();
   });
 
-  it('fails step when resource allocation fails', async () => {
-    const engine = createEngine({ plugins: [testPlugin] });
-    const run = await engine.runWorkflow({
+  it('queues step when resource unavailable then completes after register', async () => {
+    const engine = createEngine({
+      plugins: [testPlugin],
+      resources: { autoCleanup: false },
+    });
+
+    const runPromise = engine.runWorkflow({
       id: 'wf-3',
-      name: 'no resource',
+      name: 'queued resource',
       steps: [
         {
           id: 's1',
@@ -77,10 +81,57 @@ describe('createEngine integration', () => {
       ],
     });
 
-    assert.equal(run.success, false);
-    const s1 = run.results.find((r) => r.stepId === 's1');
-    assert.equal(s1?.status, StepStatuses.FAILED);
-    assert.equal(s1?.failureKind, StepFailureKinds.RESOURCE);
+    await new Promise((r) => setTimeout(r, 30));
+    assert.equal(engine.getResourceScheduler().getQueueStatus('runner').queueLength, 1);
+
+    engine.getResourceManager().registerResource({
+      id: 'r1',
+      type: 'runner',
+      name: 'runner-1',
+      status: 'available',
+    });
+
+    const run = await runPromise;
+    assert.equal(run.success, true);
+    assert.equal(run.results[0]?.status, StepStatuses.COMPLETED);
+    engine.destroy();
+  });
+
+  it('runs competing steps sequentially with one runner', async () => {
+    const engine = createEngine({
+      plugins: [testPlugin],
+      maxParallelSteps: 2,
+      resources: { autoCleanup: false },
+    });
+
+    engine.getResourceManager().registerResource({
+      id: 'r1',
+      type: 'runner',
+      name: 'runner-1',
+      status: 'available',
+    });
+
+    const run = await engine.runWorkflow({
+      id: 'wf-4',
+      name: 'compete',
+      steps: [
+        {
+          id: 's1',
+          name: 'first',
+          plugin: 'test-plugin',
+          config: { type: 'unit', resourceType: 'runner' },
+        },
+        {
+          id: 's2',
+          name: 'second',
+          plugin: 'test-plugin',
+          config: { type: 'unit', resourceType: 'runner' },
+        },
+      ],
+    });
+
+    assert.equal(run.success, true);
+    assert.equal(run.results.length, 2);
     engine.destroy();
   });
 });

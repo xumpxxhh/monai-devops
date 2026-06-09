@@ -8,7 +8,7 @@ import {
 } from '../executor/index.js';
 import { getContext, type PluginResult } from '@monai-devops/plugin-sdk';
 import { WorkflowContextKeys } from '../context-keys.js';
-import { SkipReasons, StepFailureKinds, StepStatuses } from '../errors.js';
+import { ResourceQueueCancelledError, SkipReasons, StepFailureKinds, StepStatuses } from '../errors.js';
 
 const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -130,6 +130,50 @@ describe('executor DAG', () => {
       skipped: true,
       reason: SkipReasons.DEPENDENCY_FAILED,
     });
+  });
+
+  it('onWorkflowAbort cancels waiting onStepStart', async () => {
+    let abortRunId: string | undefined;
+    const executor = createWorkflowExecutor({
+      failFast: true,
+      maxParallelSteps: 2,
+      pluginExecutor: async (_name, _config, ctx) => {
+        const stepId = getContext<string>(ctx, WorkflowContextKeys.stepId)!;
+        if (stepId === 'a') return { success: false, message: 'fail a' };
+        return { success: true, data: {} };
+      },
+      onStepStart: async (step, context) => {
+        if (step.id !== 'b') return;
+        const runId = getContext<string>(context, WorkflowContextKeys.runId)!;
+        await new Promise((_resolve, reject) => {
+          const timer = setTimeout(() => reject(new Error('should abort first')), 500);
+          const check = setInterval(() => {
+            if (abortRunId === runId) {
+              clearInterval(check);
+              clearTimeout(timer);
+              reject(new ResourceQueueCancelledError());
+            }
+          }, 5);
+        });
+      },
+      onWorkflowAbort: (runId) => {
+        abortRunId = runId;
+      },
+    });
+
+    const workflow: WorkflowDefinition = {
+      id: 'abort-wait',
+      name: 'abort-wait',
+      steps: [
+        { id: 'a', name: 'A', plugin: 'p', config: {} },
+        { id: 'b', name: 'B', plugin: 'p', config: {} },
+      ],
+    };
+
+    const run = await executor.executeWorkflow(workflow);
+    const b = run.results.find((r) => r.stepId === 'b');
+    assert.equal(b?.status, StepStatuses.SKIPPED);
+    assert.equal(b?.skipReason, SkipReasons.WORKFLOW_ABORTED);
   });
 
   it('evaluates structured condition', async () => {

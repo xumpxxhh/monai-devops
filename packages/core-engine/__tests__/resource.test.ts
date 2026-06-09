@@ -17,7 +17,7 @@ describe('resource manager', () => {
     assert.equal(allocated?.status, 'allocated');
 
     assert.equal(rm.releaseResource('r1'), true);
-    assert.equal(rm.getResource('r1')?.status, 'released');
+    assert.equal(rm.getResource('r1')?.status, 'available');
     rm.destroy();
   });
 

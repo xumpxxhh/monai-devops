@@ -244,13 +244,17 @@ describe('WorkflowObserver', () => {
     assert.equal(events.length, 0);
   });
 
-  it('createEngine observer receives events on resource allocation failure', async () => {
+  it('createEngine observer receives step:queued then step:start on resource wait', async () => {
     const { events, observer } = collectEvents();
-    const engine = createEngine({ plugins: [testPlugin], observer });
+    const engine = createEngine({
+      plugins: [testPlugin],
+      observer,
+      resources: { autoCleanup: false },
+    });
 
-    const run = await engine.runWorkflow({
+    const runPromise = engine.runWorkflow({
       id: 'wf-res',
-      name: 'resource fail',
+      name: 'resource queue',
       steps: [
         {
           id: 's1',
@@ -261,16 +265,25 @@ describe('WorkflowObserver', () => {
       ],
     });
 
-    assert.equal(run.success, false);
+    await new Promise((r) => setTimeout(r, 20));
     assert.ok(events.some((e) => e.type === 'workflow:start'));
-    assert.ok(
-      events.some(
-        (e) =>
-          e.type === 'step:finished' &&
-          e.result.status === StepStatuses.FAILED &&
-          e.result.failureKind === StepFailureKinds.RESOURCE,
-      ),
-    );
+    assert.ok(events.some((e) => e.type === 'step:queued'));
+
+    engine.getResourceManager().registerResource({
+      id: 'r1',
+      type: 'runner',
+      name: 'runner-1',
+      status: 'available',
+    });
+
+    const run = await runPromise;
+    assert.equal(run.success, true);
+
+    const types = events.map((e) => e.type);
+    const queuedIdx = types.indexOf('step:queued');
+    const startIdx = types.indexOf('step:start');
+    const finishedIdx = types.indexOf('step:finished');
+    assert.ok(queuedIdx >= 0 && startIdx > queuedIdx && finishedIdx > startIdx);
     assert.equal(events.at(-1)?.type, 'workflow:finished');
     engine.destroy();
   });
