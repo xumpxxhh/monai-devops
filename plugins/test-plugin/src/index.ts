@@ -1,4 +1,4 @@
-import { createPlugin, getConfig } from '@monai-devops/plugin-sdk';
+import { createPlugin, getConfig, getLogger } from '@monai-devops/plugin-sdk';
 import type { PluginConfig, PluginContext, PluginResult } from '@monai-devops/plugin-sdk';
 
 function delay(ms: number): Promise<void> {
@@ -13,7 +13,15 @@ async function executeTestPlugin(
   context: PluginContext,
 ): Promise<PluginResult> {
   const type = getConfig<string>(config, 'type');
+  const log = getLogger(context);
+
+  log.info('开始执行测试', { type });
   await delay(3000);
+  log.append('[runner] building...\n', 'stdout');
+
+  await delay(3000);
+
+  log.info('测试执行完成', { type });
 
   try {
     switch (type) {
@@ -54,15 +62,9 @@ export const testPlugin = createPlugin({
   version: '1.0.0',
   execute: executeTestPlugin,
   hooks: {
-    beforeExecute: async (config, context) => {
-      // console.log("beforeExecute", config, context);
-    },
-    afterExecute: async (result, config, context) => {
-      // console.log("afterExecute", result, config, context);
-    },
-    onError: async (error, config, context) => {
-      // console.log("onError", error, config, context);
-    },
+    beforeExecute: async () => {},
+    afterExecute: async () => {},
+    onError: async () => {},
   },
 });
 
