@@ -20,8 +20,8 @@ flowchart TB
   end
 
   subgraph packages [核心包]
-    CE[@monai-devops/core-engine]
-    SDK[@monai-devops/plugin-sdk]
+    CE["@monai-devops/core-engine"]
+    SDK["@monai-devops/plugin-sdk"]
   end
 
   subgraph plugins [插件]
