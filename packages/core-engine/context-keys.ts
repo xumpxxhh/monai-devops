@@ -3,6 +3,8 @@
  * @module context-keys
  */
 
+export { PluginContextKeys } from '@monai-devops/plugin-sdk';
+
 export const WorkflowContextKeys = {
   workflowId: 'workflowId',
   stepId: 'stepId',
@@ -10,4 +12,5 @@ export const WorkflowContextKeys = {
   artifacts: 'artifacts',
   runId: 'runId',
   traceId: 'traceId',
+  logger: 'logger',
 } as const;

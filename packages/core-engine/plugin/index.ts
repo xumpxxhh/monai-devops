@@ -132,3 +132,6 @@ export function createPluginManager() {
  * 默认导出插件管理器工厂函数
  */
 export const createManager = createPluginManager;
+
+export { createContextLogger } from './create-context-logger.js';
+export type { CreateContextLoggerOptions, ContextLogger } from './create-context-logger.js';
