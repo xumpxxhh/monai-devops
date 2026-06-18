@@ -99,11 +99,7 @@ export interface ExecutorOptions {
     meta?: WorkflowRunMeta,
   ) => void | Promise<void>;
   /** 引擎内部/高级定制：步骤完成钩子（含失败与跳过） */
-  onStepComplete?: (
-    step: WorkflowStep,
-    result: ExecutionResult,
-    context: ExecutionContext,
-  ) => void;
+  onStepComplete?: (step: WorkflowStep, result: ExecutionResult, context: ExecutionContext) => void;
   /** 引擎内部/高级定制：步骤错误钩子（失败时在 onStepComplete 之前调用） */
   onStepError?: (step: WorkflowStep, error: Error, context: ExecutionContext) => void;
   /** failFast 中止时取消同 runId 下排队中的资源等待 */
