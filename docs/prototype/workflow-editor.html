@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>编排器 · Demo Pipeline · MONAI DevOps</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="assets/theme.js"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.5.2/css/all.min.css" />
+  <link rel="stylesheet" href="assets/console.css" />
+</head>
+<body class="bg-canvas text-ink antialiased h-screen overflow-hidden flex flex-col">
+
+  <!-- 顶部:运行级配置 + 试运行/运行 -->
+  <header class="h-14 shrink-0 bg-surface border-b border-line flex items-center gap-4 px-5">
+    <a href="workflows.html" class="w-9 h-9 grid place-items-center rounded-ctrl hover:bg-raised text-muted hover:text-ink" title="返回工作流列表"><i class="fa-solid fa-arrow-left"></i></a>
+    <div class="flex items-center gap-2">
+      <i class="fa-solid fa-sitemap text-brand"></i>
+      <input value="Demo Pipeline" class="bg-transparent font-semibold tracking-tight text-base w-44 focus:outline-none focus:bg-raised rounded px-1 -mx-1" />
+    </div>
+    <div class="h-6 w-px bg-line mx-1"></div>
+
+    <label class="flex items-center gap-2 text-sm text-muted">并行数
+      <select class="h-8 px-2 rounded-ctrl bg-raised border border-line text-ink text-sm focus:outline-none focus:border-brand">
+        <option>1</option><option selected>2</option><option>3</option><option>5</option>
+      </select>
+    </label>
+    <label class="flex items-center gap-2 text-sm text-muted cursor-pointer select-none">
+      <span class="relative inline-flex items-center">
+        <input type="checkbox" checked class="peer sr-only" />
+        <span class="w-9 h-5 rounded-pill bg-line peer-checked:bg-brand transition-colors"></span>
+        <span class="absolute left-0.5 w-4 h-4 rounded-full bg-white transition-transform peer-checked:translate-x-4"></span>
+      </span>
+      failFast
+    </label>
+    <label class="flex items-center gap-2 text-sm text-muted">默认优先级
+      <input type="number" value="0" class="w-16 h-8 px-2 rounded-ctrl bg-raised border border-line text-ink text-sm font-mono focus:outline-none focus:border-brand" />
+    </label>
+    <span class="text-[11px] text-faint">(数值越小越先调度)</span>
+
+    <div class="ml-auto flex items-center gap-2">
+      <span id="valid-pill" class="inline-flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-pill bg-completed/10 text-completed border border-completed/30">
+        <i class="fa-solid fa-circle-check"></i> DAG 校验通过
+      </span>
+      <button onclick="dryRun()" class="h-9 px-4 rounded-ctrl border border-line text-sm hover:border-brand hover:text-brand transition-colors"><i class="fa-solid fa-flask mr-1.5"></i>试运行</button>
+      <button id="run-btn" onclick="startRun()" class="h-9 px-4 rounded-ctrl bg-brand text-white text-sm font-medium hover:bg-brand-hover transition-colors"><i class="fa-solid fa-play mr-1.5"></i>运行</button>
+    </div>
+  </header>
+
+  <div class="flex-1 flex min-h-0">
+    <!-- 左:插件库 -->
+    <aside class="w-56 shrink-0 bg-surface border-r border-line flex flex-col">
+      <div class="p-3 border-b border-line">
+        <div class="text-xs uppercase tracking-wider text-faint mb-2">插件库</div>
+        <div class="relative">
+          <i class="fa-solid fa-magnifying-glass absolute left-2.5 top-1/2 -translate-y-1/2 text-faint text-xs"></i>
+          <input oninput="filterPlugins(this.value)" placeholder="搜索插件…" class="w-full h-8 pl-8 pr-2 rounded-ctrl bg-raised border border-line text-sm placeholder:text-faint focus:outline-none focus:border-brand" />
+        </div>
+      </div>
+      <div id="plib" class="flex-1 overflow-auto p-2 space-y-1.5"></div>
+      <div class="p-3 text-[11px] text-faint border-t border-line flex items-center gap-1.5">
+        <i class="fa-solid fa-arrow-pointer"></i> 拖入画布即新增步骤
+      </div>
+    </aside>
+
+    <!-- 中:DAG 画布 -->
+    <section class="flex-1 min-w-0 relative bg-panel" style="background-image: radial-gradient(circle, #DDE3EE 1px, transparent 1px); background-size: 22px 22px;">
+      <!-- 工具条 -->
+      <div class="absolute top-3 left-1/2 -translate-x-1/2 z-10 flex items-center gap-1 bg-surface border border-line rounded-pill px-1.5 py-1 shadow-card text-sm">
+        <button class="px-2.5 h-7 rounded-pill hover:bg-raised text-muted" title="自动布局"><i class="fa-solid fa-wand-magic-sparkles"></i></button>
+        <button class="px-2.5 h-7 rounded-pill hover:bg-raised text-muted" title="放大"><i class="fa-solid fa-magnifying-glass-plus"></i></button>
+        <button class="px-2.5 h-7 rounded-pill hover:bg-raised text-muted" title="缩小"><i class="fa-solid fa-magnifying-glass-minus"></i></button>
+        <div class="w-px h-4 bg-line mx-0.5"></div>
+        <button onclick="validateDag()" class="px-3 h-7 rounded-pill hover:bg-raised text-muted"><i class="fa-solid fa-shield-halved mr-1"></i>校验 DAG</button>
+        <button onclick="toggleCycle()" class="px-3 h-7 rounded-pill hover:bg-raised text-queued"><i class="fa-solid fa-circle-nodes mr-1"></i>制造环(演示)</button>
+      </div>
+
+      <!-- DAG:SVG 连线 + 绝对定位节点 -->
+      <div class="absolute inset-0 grid place-items-center">
+        <div class="relative" style="width: 560px; height: 420px;">
+          <svg class="absolute inset-0 w-full h-full pointer-events-none" viewBox="0 0 560 420">
+            <defs>
+              <marker id="arr" markerWidth="9" markerHeight="9" refX="6" refY="3" orient="auto" markerUnits="strokeWidth">
+                <path d="M0,0 L6,3 L0,6 Z" fill="#B7C0D0"></path>
+              </marker>
+            </defs>
+            <!-- A->B  A->C  B->D  C->D -->
+            <path class="edge" marker-end="url(#arr)" d="M280,92 C220,120 180,130 165,148"></path>
+            <path class="edge" marker-end="url(#arr)" d="M280,92 C340,120 380,130 395,148"></path>
+            <path class="edge" marker-end="url(#arr)" d="M165,212 C200,250 250,270 268,288"></path>
+            <path class="edge" marker-end="url(#arr)" d="M395,212 C360,250 310,270 292,288"></path>
+          </svg>
+
+          <!-- 节点 -->
+          <button data-node="A" onclick="selectNode('A')" class="dag-node absolute -translate-x-1/2 w-28 rounded-ctrl bg-surface border border-line node-idle p-2.5 text-left hover:border-brand transition-colors" style="left:280px; top:40px;">
+            <div class="text-[10px] text-faint font-mono">#a</div>
+            <div class="font-medium text-sm">checkout</div>
+            <div class="text-[11px] text-muted flex items-center gap-1"><i class="fa-solid fa-cube text-[9px]"></i> echo</div>
+          </button>
+          <button data-node="B" onclick="selectNode('B')" class="dag-node absolute -translate-x-1/2 w-28 rounded-ctrl bg-surface border border-brand node-idle p-2.5 text-left ring-2 ring-brand/40 transition-colors" style="left:165px; top:160px;">
+            <div class="text-[10px] text-faint font-mono">#b</div>
+            <div class="font-medium text-sm">compile</div>
+            <div class="text-[11px] text-muted flex items-center gap-1"><i class="fa-solid fa-cube text-[9px]"></i> build</div>
+          </button>
+          <button data-node="C" onclick="selectNode('C')" class="dag-node absolute -translate-x-1/2 w-28 rounded-ctrl bg-surface border border-line node-idle p-2.5 text-left hover:border-brand transition-colors" style="left:395px; top:160px;">
+            <div class="text-[10px] text-faint font-mono">#c</div>
+            <div class="font-medium text-sm">unit-test</div>
+            <div class="text-[11px] text-muted flex items-center gap-1"><i class="fa-solid fa-microchip text-[9px]"></i> test · gpu</div>
+          </button>
+          <button data-node="D" onclick="selectNode('D')" class="dag-node absolute -translate-x-1/2 w-28 rounded-ctrl bg-surface border border-line node-idle p-2.5 text-left hover:border-brand transition-colors" style="left:280px; top:300px;">
+            <div class="text-[10px] text-faint font-mono">#d</div>
+            <div class="font-medium text-sm">package</div>
+            <div class="text-[11px] text-muted flex items-center gap-1"><i class="fa-solid fa-cube text-[9px]"></i> deploy</div>
+          </button>
+        </div>
+      </div>
+    </section>
+
+    <!-- 右:步骤属性 -->
+    <aside class="w-80 shrink-0 bg-surface border-l border-line flex flex-col overflow-auto">
+      <div class="px-4 h-12 flex items-center justify-between border-b border-line">
+        <span class="text-sm font-medium">步骤属性 · <span id="sel-name" class="text-brand">compile</span></span>
+        <span class="text-[10px] font-mono text-faint" id="sel-id">#b</span>
+      </div>
+      <div class="p-4 space-y-4 text-sm">
+        <div>
+          <label class="block text-xs text-muted mb-1.5">ID <span class="text-faint">(同工作流内唯一)</span></label>
+          <input id="f-id" value="b" class="w-full h-9 px-3 rounded-ctrl bg-raised border border-line font-mono focus:outline-none focus:border-brand" />
+        </div>
+        <div>
+          <label class="block text-xs text-muted mb-1.5">名称</label>
+          <input id="f-name" value="compile" class="w-full h-9 px-3 rounded-ctrl bg-raised border border-line focus:outline-none focus:border-brand" />
+        </div>
+        <div>
+          <label class="block text-xs text-muted mb-1.5">插件 <span class="text-faint">(仅可选已注册)</span></label>
+          <select class="w-full h-9 px-2 rounded-ctrl bg-raised border border-line focus:outline-none focus:border-brand">
+            <option>echo</option><option selected>build</option><option>test</option><option>deploy</option><option>notify</option>
+          </select>
+        </div>
+        <div>
+          <label class="block text-xs text-muted mb-1.5">依赖于 (dependsOn)</label>
+          <div class="flex flex-wrap items-center gap-1.5">
+            <span class="inline-flex items-center gap-1 px-2 py-1 rounded-pill bg-brand/15 text-brand text-xs font-mono">a (checkout) <button class="hover:text-white"><i class="fa-solid fa-xmark"></i></button></span>
+            <button class="inline-flex items-center gap-1 px-2 py-1 rounded-pill border border-dashed border-line text-xs text-muted hover:border-brand hover:text-brand"><i class="fa-solid fa-plus"></i> 添加依赖</button>
+          </div>
+        </div>
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="block text-xs text-muted mb-1.5">优先级</label>
+            <input type="number" value="0" class="w-full h-9 px-3 rounded-ctrl bg-raised border border-line font-mono focus:outline-none focus:border-brand" />
+            <p class="text-[10px] text-queued mt-1"><i class="fa-solid fa-circle-info"></i> 数值越小越先调度</p>
+          </div>
+          <div>
+            <label class="block text-xs text-muted mb-1.5">资源类型</label>
+            <select class="w-full h-9 px-2 rounded-ctrl bg-raised border border-line focus:outline-none focus:border-brand">
+              <option>default</option><option>gpu</option><option>cpu</option><option value="">无(默认池)</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="border-t border-line-soft pt-4">
+          <div class="text-xs text-muted mb-2 flex items-center gap-1.5"><i class="fa-solid fa-code-branch text-faint"></i> 条件 (可选,满足才执行)</div>
+          <div class="flex items-center gap-2">
+            <select class="h-9 px-2 rounded-ctrl bg-raised border border-line text-sm focus:outline-none focus:border-brand">
+              <option>when: a</option><option>when: checkout</option>
+            </select>
+            <label class="flex items-center gap-1 text-xs"><input type="radio" name="cond" checked class="accent-brand" /> exists</label>
+            <label class="flex items-center gap-1 text-xs"><input type="radio" name="cond" class="accent-brand" /> equals</label>
+          </div>
+          <p class="text-[10px] text-faint mt-2">结构化条件 (when / exists / equals),内核暂不支持表达式。</p>
+        </div>
+
+        <div class="border-t border-line-soft pt-4">
+          <label class="block text-xs text-muted mb-1.5">config <span class="text-faint">(插件入参 JSON)</span></label>
+          <textarea id="f-config" rows="5" oninput="validateJson(this)" class="w-full px-3 py-2 rounded-ctrl bg-panel border border-line font-mono text-xs leading-relaxed focus:outline-none focus:border-brand">{
+  "target": "linux/amd64",
+  "cache": true
+}</textarea>
+          <p id="json-hint" class="text-[10px] text-completed mt-1"><i class="fa-solid fa-check"></i> JSON 合法</p>
+        </div>
+      </div>
+      <div class="mt-auto p-4 border-t border-line flex items-center justify-end gap-2 bg-surface sticky bottom-0">
+        <button class="h-9 px-4 rounded-ctrl border border-line text-sm hover:bg-raised">取消</button>
+        <button onclick="toast('步骤 compile 已保存','ok')" class="h-9 px-4 rounded-ctrl bg-brand text-white text-sm font-medium hover:bg-brand-hover">保存</button>
+      </div>
+    </aside>
+  </div>
+
+  <script src="assets/app.js"></script>
+  <script>
+    const PLUGINS = [
+      { name: 'echo',   ver: 'v1.0.0', icon: 'fa-terminal' },
+      { name: 'build',  ver: 'v2.1.0', icon: 'fa-hammer' },
+      { name: 'test',   ver: 'v1.3.0', icon: 'fa-vial' },
+      { name: 'deploy', ver: 'v0.9.0', icon: 'fa-rocket' },
+      { name: 'notify', ver: 'v1.0.0', icon: 'fa-bell' },
+      { name: 'lint',   ver: 'v1.1.0', icon: 'fa-broom' },
+      { name: 'docker', ver: 'v3.0.1', icon: 'fa-cubes-stacked' },
+    ];
+    function renderPlugins(list) {
+      document.getElementById('plib').innerHTML = list.map((p) => `
+        <div draggable="true" onclick="toast('已添加步骤:${p.name}','ok')" class="group flex items-center gap-2.5 px-2.5 py-2 rounded-ctrl border border-line bg-raised/40 hover:border-brand hover:bg-raised cursor-grab active:cursor-grabbing transition-colors">
+          <span class="grid place-items-center w-7 h-7 rounded-md bg-brand/15 text-brand text-xs"><i class="fa-solid ${p.icon}"></i></span>
+          <div class="min-w-0 flex-1">
+            <div class="text-sm font-medium truncate">${p.name}</div>
+            <div class="text-[10px] text-faint font-mono">${p.ver}</div>
+          </div>
+          <i class="fa-solid fa-grip-vertical text-faint opacity-0 group-hover:opacity-100 text-xs"></i>
+        </div>`).join('');
+    }
+    function filterPlugins(q) {
+      const k = q.trim().toLowerCase();
+      renderPlugins(PLUGINS.filter((p) => p.name.includes(k)));
+    }
+    renderPlugins(PLUGINS);
+
+    const NODE_DATA = {
+      A: { id: 'a', name: 'checkout' }, B: { id: 'b', name: 'compile' },
+      C: { id: 'c', name: 'unit-test' }, D: { id: 'd', name: 'package' },
+    };
+    function selectNode(n) {
+      document.querySelectorAll('.dag-node').forEach((el) => {
+        const on = el.dataset.node === n;
+        el.classList.toggle('border-brand', on);
+        el.classList.toggle('ring-2', on);
+        el.classList.toggle('ring-brand/40', on);
+        el.classList.toggle('border-line', !on);
+      });
+      const d = NODE_DATA[n];
+      document.getElementById('sel-name').textContent = d.name;
+      document.getElementById('sel-id').textContent = '#' + d.id;
+      document.getElementById('f-id').value = d.id;
+      document.getElementById('f-name').value = d.name;
+    }
+
+    let cycle = false;
+    function toggleCycle() {
+      cycle = !cycle;
+      const pill = document.getElementById('valid-pill');
+      const run = document.getElementById('run-btn');
+      const nodeC = document.querySelector('[data-node="C"]');
+      const nodeD = document.querySelector('[data-node="D"]');
+      if (cycle) {
+        pill.className = 'inline-flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-pill bg-failed/10 text-failed border border-failed/30';
+        pill.innerHTML = '<i class="fa-solid fa-triangle-exclamation"></i> 检测到环:c → d → c';
+        [nodeC, nodeD].forEach((el) => { el.classList.remove('node-idle'); el.classList.add('node-failed'); });
+        run.disabled = true; run.classList.add('opacity-40', 'cursor-not-allowed');
+        toast('DAG 存在环,已禁用运行 (对应内核 WorkflowValidationError)', 'err');
+      } else { validateDag(); }
+    }
+    function validateDag() {
+      cycle = false;
+      const pill = document.getElementById('valid-pill');
+      const run = document.getElementById('run-btn');
+      pill.className = 'inline-flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-pill bg-completed/10 text-completed border border-completed/30';
+      pill.innerHTML = '<i class="fa-solid fa-circle-check"></i> DAG 校验通过';
+      document.querySelectorAll('.dag-node').forEach((el) => { el.classList.remove('node-failed'); el.classList.add('node-idle'); });
+      run.disabled = false; run.classList.remove('opacity-40', 'cursor-not-allowed');
+    }
+    function validateJson(el) {
+      const hint = document.getElementById('json-hint');
+      try { JSON.parse(el.value); el.classList.remove('border-failed'); hint.className = 'text-[10px] text-completed mt-1'; hint.innerHTML = '<i class="fa-solid fa-check"></i> JSON 合法'; }
+      catch (e) { el.classList.add('border-failed'); hint.className = 'text-[10px] text-failed mt-1'; hint.innerHTML = '<i class="fa-solid fa-xmark"></i> JSON 非法:' + e.message; }
+    }
+    function dryRun() { if (cycle) return toast('DAG 存在环,无法运行', 'err'); toast('已用当前草稿发起试运行…', 'ok'); setTimeout(() => location.href = 'run-detail.html', 900); }
+    function startRun() { if (cycle) return toast('DAG 存在环,无法运行', 'err'); toast('已发起运行,建立 WebSocket…', 'ok'); setTimeout(() => location.href = 'run-detail.html', 900); }
+  </script>
+</body>
+</html>

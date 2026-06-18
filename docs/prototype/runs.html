@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>运行 · MONAI DevOps</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="assets/theme.js"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.5.2/css/all.min.css" />
+  <link rel="stylesheet" href="assets/console.css" />
+</head>
+<body class="bg-canvas text-ink antialiased" data-page="runs" data-crumb="<span>运行</span> <i class='fa-solid fa-angle-right text-xs mx-1 text-faint'></i> <span class='text-ink'>列表</span>">
+  <div class="flex min-h-screen">
+    <div id="side-nav"></div>
+    <div class="flex-1 flex flex-col min-w-0">
+      <div id="top-bar"></div>
+      <main class="flex-1 p-6 overflow-auto">
+
+        <div class="flex items-center justify-between mb-6">
+          <div>
+            <h1 class="text-lg font-semibold tracking-tight">运行</h1>
+            <p class="text-sm text-muted mt-0.5">进行中的运行已置顶并实时刷新,点任意行进入运行详情。</p>
+          </div>
+          <div class="relative w-72">
+            <i class="fa-solid fa-magnifying-glass absolute left-3 top-1/2 -translate-y-1/2 text-faint text-sm"></i>
+            <input oninput="filterRuns(this.value)" placeholder="搜索 runId / 工作流…" class="w-full h-9 pl-9 pr-3 rounded-ctrl bg-surface border border-line text-sm placeholder:text-faint focus:outline-none focus:border-brand focus:ring-2 focus:ring-brand/20" />
+          </div>
+        </div>
+
+        <div class="flex gap-6">
+          <!-- 左筛选 -->
+          <aside class="w-56 shrink-0">
+            <div class="bg-surface border border-line rounded-card p-4 space-y-5 text-sm sticky top-6">
+              <div>
+                <div class="text-xs uppercase tracking-wider text-faint mb-2.5">状态</div>
+                <div class="space-y-2">
+                  <label class="flex items-center gap-2 cursor-pointer"><input type="checkbox" class="accent-brand" onchange="applyStatus()" data-st="running" /> <span class="inline-flex items-center gap-1.5"><i class="fa-solid fa-circle text-[7px] text-running"></i> 进行中</span></label>
+                  <label class="flex items-center gap-2 cursor-pointer"><input type="checkbox" class="accent-brand" onchange="applyStatus()" data-st="completed" /> <span class="inline-flex items-center gap-1.5"><i class="fa-solid fa-circle text-[7px] text-completed"></i> 成功</span></label>
+                  <label class="flex items-center gap-2 cursor-pointer"><input type="checkbox" class="accent-brand" onchange="applyStatus()" data-st="failed" /> <span class="inline-flex items-center gap-1.5"><i class="fa-solid fa-circle text-[7px] text-failed"></i> 失败</span></label>
+                  <label class="flex items-center gap-2 cursor-pointer"><input type="checkbox" class="accent-brand" onchange="applyStatus()" data-st="skipped" /> <span class="inline-flex items-center gap-1.5"><i class="fa-solid fa-circle text-[7px] text-skipped"></i> 部分跳过</span></label>
+                </div>
+              </div>
+              <div>
+                <div class="text-xs uppercase tracking-wider text-faint mb-2">工作流</div>
+                <select class="w-full h-9 px-2 rounded-ctrl bg-raised border border-line focus:outline-none focus:border-brand">
+                  <option>全部工作流</option><option>Build & Deploy</option><option>Demo Pipeline</option><option>Nightly E2E</option>
+                </select>
+              </div>
+              <div>
+                <div class="text-xs uppercase tracking-wider text-faint mb-2">时间范围</div>
+                <input type="date" class="w-full h-9 px-2 rounded-ctrl bg-raised border border-line text-muted focus:outline-none focus:border-brand" />
+              </div>
+              <div class="flex gap-2 pt-1">
+                <button onclick="toast('已应用筛选','ok')" class="flex-1 h-9 rounded-ctrl bg-brand text-white text-sm font-medium hover:bg-brand-hover">查询</button>
+                <button onclick="resetFilter()" class="h-9 px-3 rounded-ctrl border border-line text-sm hover:bg-raised">重置</button>
+              </div>
+            </div>
+          </aside>
+
+          <!-- 主表格 -->
+          <div class="flex-1 min-w-0 bg-surface border border-line rounded-card shadow-card overflow-hidden">
+            <table class="w-full text-sm">
+              <thead>
+                <tr class="text-left text-muted bg-panel/60 border-b border-line">
+                  <th class="font-medium px-5 py-3">状态</th>
+                  <th class="font-medium px-4 py-3">工作流</th>
+                  <th class="font-medium px-4 py-3">runId</th>
+                  <th class="font-medium px-4 py-3">开始时间</th>
+                  <th class="font-medium px-4 py-3 w-56">步骤进度</th>
+                </tr>
+              </thead>
+              <tbody id="runs-tbody" class="divide-y divide-line-soft"></tbody>
+            </table>
+            <div class="flex items-center justify-between px-5 py-3 border-t border-line text-sm text-muted">
+              <span id="runs-count"></span>
+              <div class="flex items-center gap-1">
+                <button class="w-8 h-8 rounded-ctrl bg-brand text-white">1</button>
+                <button class="w-8 h-8 rounded-ctrl hover:bg-raised">2</button>
+                <button class="w-8 h-8 rounded-ctrl hover:bg-raised">3</button>
+                <button class="w-8 h-8 rounded-ctrl hover:bg-raised"><i class="fa-solid fa-angle-right text-xs"></i></button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+      </main>
+    </div>
+  </div>
+
+  <script src="assets/app.js"></script>
+  <script>
+    const RUNS = [
+      { st: 'running',   wf: 'Build & Deploy', rid: 'a1b2c3d4e5f6', time: '刚刚',      done: 2, total: 6, note: '2/6 · ◔1 ⌛2', failAt: 0 },
+      { st: 'running',   wf: 'Data Sync',      rid: 'c4d5e6f70811', time: '1 分钟前',  done: 1, total: 2, note: '1/2',          failAt: 0 },
+      { st: 'completed', wf: 'Demo Pipeline',  rid: '550e8400e29b', time: '2 分钟前',  done: 3, total: 3, note: '3/3',          failAt: 0 },
+      { st: 'completed', wf: 'Lint & Audit',   rid: '7a3f9c10de22', time: '5 小时前',  done: 3, total: 3, note: '3/3',          failAt: 0 },
+      { st: 'failed',    wf: 'Build & Deploy', rid: '77c0e9f12a3b', time: '1 小时前',  done: 3, total: 6, note: '失败于 ④',    failAt: 4 },
+      { st: 'failed',    wf: 'Infra Provision',rid: 'b9e1d2c3f4a5', time: '昨天 18:40', done: 1, total: 4, note: '失败于 ②',    failAt: 2 },
+      { st: 'skipped',   wf: 'Nightly E2E',    rid: '9f1a2b3c4d5e', time: '昨天 02:00', done: 2, total: 4, note: '2 跳过',      failAt: 0, skip: 2 },
+      { st: 'completed', wf: 'Release v2.3',   rid: 'd3a8b7c6e5f4', time: '2 天前',    done: 7, total: 7, note: '7/7',          failAt: 0 },
+    ];
+    const META = {
+      running:   { icon: 'fa-circle-notch fa-spin', cls: 'text-running',   bg: 'bg-running/10',   label: '运行中' },
+      completed: { icon: 'fa-circle-check',         cls: 'text-completed', bg: 'bg-completed/10', label: '成功' },
+      failed:    { icon: 'fa-circle-xmark',         cls: 'text-failed',    bg: 'bg-failed/10',    label: '失败' },
+      skipped:   { icon: 'fa-circle-minus',         cls: 'text-skipped',   bg: 'bg-skipped/10',   label: '部分跳过' },
+    };
+    function progressBar(r) {
+      const cells = [];
+      for (let i = 0; i < r.total; i++) {
+        let c = 'bg-line';
+        if (r.st === 'failed' && i === r.failAt - 1) c = 'bg-failed';
+        else if (i < r.done) c = 'bg-completed';
+        else if (r.st === 'running' && i === r.done) c = 'bg-running';
+        else if (r.st === 'skipped' && i >= r.done) c = 'bg-skipped/70';
+        cells.push(`<span class="h-1.5 flex-1 rounded-full ${c}"></span>`);
+      }
+      return `<div class="flex items-center gap-2">
+        <div class="flex gap-0.5 flex-1">${cells.join('')}</div>
+        <span class="text-xs text-muted whitespace-nowrap font-mono">${r.note}</span>
+      </div>`;
+    }
+    function renderRuns(list) {
+      // 进行中置顶
+      const sorted = [...list].sort((a, b) => (b.st === 'running') - (a.st === 'running'));
+      document.getElementById('runs-tbody').innerHTML = sorted.map((r) => {
+        const m = META[r.st];
+        return `<tr onclick="location.href='run-detail.html'" class="hover:bg-raised/40 cursor-pointer transition-colors ${r.st === 'running' ? 'bg-running/[0.04]' : ''}">
+          <td class="px-5 py-3.5"><span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-pill text-xs ${m.bg} ${m.cls}"><i class="fa-solid ${m.icon} text-[11px]"></i> ${m.label}</span></td>
+          <td class="px-4 py-3.5 font-medium">${r.wf}</td>
+          <td class="px-4 py-3.5">
+            <span class="inline-flex items-center gap-1.5 font-mono text-xs text-muted" title="${r.rid}">
+              ${r.rid.slice(0, 6)}…
+              <button onclick="event.stopPropagation();copyText('${r.rid}','runId')" class="text-faint hover:text-brand"><i class="fa-regular fa-copy"></i></button>
+            </span>
+          </td>
+          <td class="px-4 py-3.5 text-muted">${r.time}</td>
+          <td class="px-4 py-3.5">${progressBar(r)}</td>
+        </tr>`;
+      }).join('');
+      document.getElementById('runs-count').textContent = `共 ${list.length} 次运行`;
+    }
+    function filterRuns(q) {
+      const k = q.trim().toLowerCase();
+      renderRuns(RUNS.filter((r) => r.wf.toLowerCase().includes(k) || r.rid.includes(k)));
+    }
+    function applyStatus() {
+      const on = [...document.querySelectorAll('[data-st]:checked')].map((c) => c.dataset.st);
+      renderRuns(on.length ? RUNS.filter((r) => on.includes(r.st)) : RUNS);
+    }
+    function resetFilter() {
+      document.querySelectorAll('[data-st]').forEach((c) => (c.checked = false));
+      renderRuns(RUNS); toast('已重置筛选');
+    }
+    renderRuns(RUNS);
+  </script>
+</body>
+</html>

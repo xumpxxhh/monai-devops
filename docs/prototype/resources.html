@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>资源与调度 · MONAI DevOps</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="assets/theme.js"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.5.2/css/all.min.css" />
+  <link rel="stylesheet" href="assets/console.css" />
+</head>
+<body class="bg-canvas text-ink antialiased" data-page="resources" data-crumb="<span>资源与调度</span>">
+  <div class="flex min-h-screen">
+    <div id="side-nav"></div>
+    <div class="flex-1 flex flex-col min-w-0">
+      <div id="top-bar"></div>
+      <main class="flex-1 p-6 overflow-auto space-y-6">
+
+        <div>
+          <h1 class="text-lg font-semibold tracking-tight">资源与调度</h1>
+          <p class="text-sm text-muted mt-0.5">理解「步骤为什么排队」:资源不足时步骤挂起等待(非失败)。</p>
+        </div>
+
+        <!-- 资源池占用 -->
+        <section class="bg-surface border border-line rounded-card p-5">
+          <div class="flex items-center gap-2 mb-4">
+            <i class="fa-solid fa-layer-group text-brand"></i>
+            <h2 class="font-medium">资源池占用</h2>
+          </div>
+          <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <!-- default -->
+            <div class="bg-panel border border-line rounded-ctrl p-4">
+              <div class="flex items-center justify-between mb-2">
+                <span class="font-mono text-sm">default</span>
+                <span class="text-xs text-muted">4 / 5 已分配</span>
+              </div>
+              <div class="h-2.5 rounded-full bg-raised overflow-hidden"><div class="h-full bg-running rounded-full" style="width:80%"></div></div>
+              <div class="text-xs text-muted mt-2">还剩 1 个槽位</div>
+            </div>
+            <!-- gpu(瓶颈) -->
+            <div class="bg-panel border border-failed/40 rounded-ctrl p-4">
+              <div class="flex items-center justify-between mb-2">
+                <span class="font-mono text-sm">gpu <span class="ml-1 text-[10px] px-1.5 py-0.5 rounded-pill bg-failed/15 text-failed">瓶颈</span></span>
+                <span class="text-xs text-failed">3 / 3 已满</span>
+              </div>
+              <div class="h-2.5 rounded-full bg-raised overflow-hidden"><div class="h-full bg-failed rounded-full" style="width:100%"></div></div>
+              <div class="text-xs text-failed mt-2">无空闲槽位,3 个步骤排队等待</div>
+            </div>
+            <!-- cpu -->
+            <div class="bg-panel border border-line rounded-ctrl p-4">
+              <div class="flex items-center justify-between mb-2">
+                <span class="font-mono text-sm">cpu</span>
+                <span class="text-xs text-muted">1 / 4 已分配</span>
+              </div>
+              <div class="h-2.5 rounded-full bg-raised overflow-hidden"><div class="h-full bg-completed rounded-full" style="width:25%"></div></div>
+              <div class="text-xs text-muted mt-2">资源充足</div>
+            </div>
+          </div>
+        </section>
+
+        <!-- 调度队列 -->
+        <section class="bg-surface border border-line rounded-card overflow-hidden">
+          <div class="flex items-center gap-2 px-5 py-4 border-b border-line">
+            <i class="fa-solid fa-list-ol text-brand"></i>
+            <h2 class="font-medium">调度队列</h2>
+            <span class="text-xs text-queued ml-1"><i class="fa-solid fa-circle-info"></i> 按优先级排序,数值越小越先;同级 FIFO</span>
+          </div>
+          <table class="w-full text-sm">
+            <thead>
+              <tr class="text-left text-muted bg-panel/60 border-b border-line">
+                <th class="font-medium px-5 py-3">优先级</th>
+                <th class="font-medium px-4 py-3">步骤</th>
+                <th class="font-medium px-4 py-3">runId</th>
+                <th class="font-medium px-4 py-3">资源类型</th>
+                <th class="font-medium px-4 py-3 text-right">等待时长</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-line-soft">
+              <tr class="hover:bg-raised/40">
+                <td class="px-5 py-3"><span class="font-mono text-completed font-medium">0</span></td>
+                <td class="px-4 py-3"><span class="font-mono">f</span> <span class="text-muted">(Build &amp; Deploy)</span></td>
+                <td class="px-4 py-3 font-mono text-xs text-muted">a1b2c3…</td>
+                <td class="px-4 py-3"><span class="text-xs px-2 py-0.5 rounded-pill bg-failed/10 text-failed font-mono">gpu</span></td>
+                <td class="px-4 py-3 text-right font-mono text-queued">00:42</td>
+              </tr>
+              <tr class="hover:bg-raised/40">
+                <td class="px-5 py-3"><span class="font-mono text-completed font-medium">0</span></td>
+                <td class="px-4 py-3"><span class="font-mono">q</span> <span class="text-muted">(Image Bake)</span></td>
+                <td class="px-4 py-3 font-mono text-xs text-muted">8b2c1d…</td>
+                <td class="px-4 py-3"><span class="text-xs px-2 py-0.5 rounded-pill bg-failed/10 text-failed font-mono">gpu</span></td>
+                <td class="px-4 py-3 text-right font-mono text-queued">00:21</td>
+              </tr>
+              <tr class="hover:bg-raised/40">
+                <td class="px-5 py-3"><span class="font-mono text-muted font-medium">5</span></td>
+                <td class="px-4 py-3"><span class="font-mono">k</span> <span class="text-muted">(Nightly E2E)</span></td>
+                <td class="px-4 py-3 font-mono text-xs text-muted">9f1a2b…</td>
+                <td class="px-4 py-3"><span class="text-xs px-2 py-0.5 rounded-pill bg-failed/10 text-failed font-mono">gpu</span></td>
+                <td class="px-4 py-3 text-right font-mono text-queued">00:05</td>
+              </tr>
+            </tbody>
+          </table>
+        </section>
+
+        <!-- 调度器状态 -->
+        <section class="grid grid-cols-2 md:grid-cols-4 gap-4">
+          <div class="bg-surface border border-line rounded-card p-4">
+            <div class="text-xs text-muted mb-1">最大并发</div>
+            <div class="text-2xl font-semibold font-mono">5</div>
+          </div>
+          <div class="bg-surface border border-line rounded-card p-4">
+            <div class="text-xs text-muted mb-1">重试策略</div>
+            <div class="text-base font-medium font-mono">3 次 / 1000ms</div>
+          </div>
+          <div class="bg-surface border border-line rounded-card p-4">
+            <div class="text-xs text-muted mb-1">运行中任务</div>
+            <div class="text-2xl font-semibold font-mono text-running">2</div>
+          </div>
+          <div class="bg-surface border border-line rounded-card p-4">
+            <div class="text-xs text-muted mb-1">排队任务</div>
+            <div class="text-2xl font-semibold font-mono text-queued">3</div>
+          </div>
+        </section>
+
+        <p class="text-xs text-faint flex items-center gap-1.5"><i class="fa-regular fa-circle-question"></i> 数据对应内核 getQueueStatus;gpu 池打满是当前 <a href="run-detail.html" class="text-brand hover:underline">Build &amp; Deploy</a> 步骤 f 排队的原因。</p>
+
+      </main>
+    </div>
+  </div>
+  <script src="assets/app.js"></script>
+</body>
+</html>

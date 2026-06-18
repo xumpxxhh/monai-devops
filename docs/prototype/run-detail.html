@@ -1,0 +1,323 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>运行详情 · Build & Deploy · MONAI DevOps</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="assets/theme.js"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.5.2/css/all.min.css" />
+  <link rel="stylesheet" href="assets/console.css" />
+</head>
+<body class="bg-canvas text-ink antialiased h-screen overflow-hidden flex flex-col">
+
+  <!-- 顶:运行摘要 -->
+  <header class="shrink-0 bg-surface border-b border-line px-5 py-3">
+    <div class="flex items-center gap-3 flex-wrap">
+      <a href="runs.html" class="w-9 h-9 grid place-items-center rounded-ctrl hover:bg-raised text-muted hover:text-ink" title="返回运行列表"><i class="fa-solid fa-arrow-left"></i></a>
+      <h1 class="font-semibold tracking-tight text-base">Build &amp; Deploy</h1>
+      <span class="inline-flex items-center gap-1.5 font-mono text-xs text-muted bg-raised px-2 py-1 rounded-ctrl" title="a1b2c3d4e5f6">
+        a1b2c3…
+        <button onclick="copyText('a1b2c3d4e5f6','runId')" class="text-faint hover:text-brand"><i class="fa-regular fa-copy"></i></button>
+      </span>
+      <span id="run-state" class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-pill text-xs bg-running/10 text-running"><i class="fa-solid fa-circle-notch fa-spin text-[11px]"></i> 运行中</span>
+      <span class="text-xs text-muted">并行 <span class="font-mono text-ink">2</span></span>
+      <span class="text-xs text-muted">failFast <span class="font-mono text-failed">关</span></span>
+      <span class="inline-flex items-center gap-1.5 text-xs text-muted"><i class="fa-regular fa-clock"></i> <span id="timer" class="font-mono text-ink">00:42</span></span>
+
+      <div class="ml-auto flex items-center gap-2">
+        <button onclick="toast('运行暂不支持中途取消(内核 AbortSignal 未实现)','warn')" class="h-8 px-3 rounded-ctrl border border-line text-xs text-faint cursor-not-allowed" title="内核 AbortSignal 未实现,暂不支持取消">
+          <i class="fa-solid fa-stop mr-1"></i> 取消运行
+        </button>
+      </div>
+    </div>
+    <!-- 进度 + 状态计数 -->
+    <div class="flex items-center gap-4 mt-3 flex-wrap">
+      <div class="flex items-center gap-2">
+        <div class="flex gap-0.5 w-40">
+          <span class="h-1.5 flex-1 rounded-full bg-completed"></span>
+          <span class="h-1.5 flex-1 rounded-full bg-completed"></span>
+          <span class="h-1.5 flex-1 rounded-full bg-failed"></span>
+          <span class="h-1.5 flex-1 rounded-full bg-skipped/70"></span>
+          <span class="h-1.5 flex-1 rounded-full bg-running"></span>
+          <span class="h-1.5 flex-1 rounded-full bg-queued"></span>
+        </div>
+        <span class="text-xs text-muted font-mono">进度 2/6</span>
+      </div>
+      <div class="flex items-center gap-3 text-xs">
+        <span class="inline-flex items-center gap-1 text-completed"><i class="fa-solid fa-circle-check"></i> 2 完成</span>
+        <span class="inline-flex items-center gap-1 text-failed"><i class="fa-solid fa-circle-xmark"></i> 1 失败</span>
+        <span class="inline-flex items-center gap-1 text-skipped"><i class="fa-solid fa-circle-minus"></i> 1 跳过</span>
+        <span class="inline-flex items-center gap-1 text-running"><i class="fa-solid fa-circle-notch fa-spin"></i> 1 运行中</span>
+        <span class="inline-flex items-center gap-1 text-queued"><i class="fa-solid fa-hourglass-half"></i> 1 排队</span>
+      </div>
+    </div>
+    <!-- 断连提示(默认隐藏,点顶栏 ws 演示触发) -->
+    <div id="ws-banner" class="hidden mt-3 flex items-center gap-2 text-xs text-queued bg-queued/10 border border-queued/30 rounded-ctrl px-3 py-2">
+      <i class="fa-solid fa-plug-circle-exclamation"></i> WebSocket 重连中,页面已置为只读,实时刷新暂停。
+    </div>
+  </header>
+
+  <div class="flex-1 flex min-h-0">
+    <!-- 左:DAG 状态视图 -->
+    <section class="flex-1 min-w-0 relative bg-panel border-r border-line" style="background-image: radial-gradient(circle, #DDE3EE 1px, transparent 1px); background-size: 22px 22px;">
+      <div class="absolute top-3 left-4 text-xs uppercase tracking-wider text-faint z-10">DAG 状态视图 <span class="text-faint/70 normal-case">· 点节点联动右侧日志</span></div>
+
+      <div class="absolute inset-0 grid place-items-center pt-6">
+        <div class="relative" style="width: 600px; height: 440px;">
+          <svg class="absolute inset-0 w-full h-full pointer-events-none" viewBox="0 0 600 440">
+            <defs>
+              <marker id="arr" markerWidth="9" markerHeight="9" refX="6" refY="3" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L6,3 L0,6 Z" fill="#B7C0D0"></path></marker>
+            </defs>
+            <!-- A->B A->C A->E A->F  B->D C->D -->
+            <path class="edge" marker-end="url(#arr)" d="M300,86 C220,110 175,120 165,138"></path>
+            <path class="edge" marker-end="url(#arr)" d="M300,86 C300,110 305,120 305,138"></path>
+            <path class="edge edge-active" marker-end="url(#arr)" d="M300,86 C380,110 430,120 445,138"></path>
+            <path class="edge" marker-end="url(#arr)" d="M300,86 C420,108 540,118 552,138"></path>
+            <path class="edge" marker-end="url(#arr)" d="M165,202 C180,250 215,270 230,288"></path>
+            <path class="edge" marker-end="url(#arr)" d="M305,202 C290,250 260,270 250,288"></path>
+          </svg>
+          <!-- 节点容器,由脚本渲染 -->
+          <div id="dag-nodes"></div>
+        </div>
+      </div>
+
+      <!-- 图例 -->
+      <div class="absolute bottom-3 left-1/2 -translate-x-1/2 flex items-center gap-3 text-[11px] text-muted bg-surface/80 backdrop-blur border border-line rounded-pill px-3 py-1.5">
+        <span class="flex items-center gap-1"><i class="fa-solid fa-circle text-[7px] text-completed"></i> 完成</span>
+        <span class="flex items-center gap-1"><i class="fa-solid fa-circle text-[7px] text-running"></i> 运行中</span>
+        <span class="flex items-center gap-1"><i class="fa-solid fa-circle text-[7px] text-queued"></i> 排队</span>
+        <span class="flex items-center gap-1"><i class="fa-solid fa-circle text-[7px] text-failed"></i> 失败</span>
+        <span class="flex items-center gap-1"><i class="fa-solid fa-circle text-[7px] text-skipped"></i> 跳过</span>
+      </div>
+    </section>
+
+    <!-- 右:事件 / 日志流 -->
+    <section class="w-[480px] shrink-0 flex flex-col bg-canvas">
+      <div class="h-12 shrink-0 flex items-center justify-between px-4 border-b border-line">
+        <span class="text-sm font-medium">事件 / 日志流</span>
+        <div class="flex items-center gap-1 text-xs">
+          <button data-tabgroup="logf" class="tab tab-active px-2.5 py-1 rounded-ctrl" onclick="filterLog('all',this)">全部</button>
+          <button data-tabgroup="logf" class="tab px-2.5 py-1 rounded-ctrl" onclick="filterLog('log',this)">仅日志</button>
+          <button data-tabgroup="logf" class="tab px-2.5 py-1 rounded-ctrl" onclick="filterLog('error',this)">仅错误</button>
+        </div>
+      </div>
+      <div id="log-stream" class="flex-1 overflow-auto px-4 py-3 font-mono text-xs leading-relaxed"></div>
+      <div class="shrink-0 h-11 flex items-center gap-2 px-4 border-t border-line bg-surface text-xs">
+        <button id="pause-btn" onclick="togglePause()" class="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-ctrl border border-line hover:bg-raised"><i class="fa-solid fa-pause"></i> 暂停</button>
+        <label class="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-ctrl border border-line cursor-pointer select-none"><input id="autoscroll" type="checkbox" checked class="accent-brand" /> 自动滚动</label>
+        <button onclick="toast('已导出 run-a1b2c3d4.log','ok')" class="ml-auto inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-ctrl border border-line hover:bg-raised"><i class="fa-solid fa-download"></i> 导出日志</button>
+      </div>
+    </section>
+  </div>
+
+  <!-- 步骤详情抽屉 -->
+  <div id="drawer" class="hidden fixed inset-0 z-50">
+    <div class="absolute inset-0 bg-black/50" onclick="closeDrawer()"></div>
+    <div id="drawer-panel" class="absolute right-0 top-0 h-full w-[420px] bg-surface border-l border-line shadow-pop overflow-auto"></div>
+  </div>
+
+  <script src="assets/app.js"></script>
+  <script>
+    // ── 步骤数据(单一事实来源)──
+    const STEPS = {
+      A: { id: 'a', name: 'checkout', plugin: 'echo',   res: 'default-0', x: 300, y: 46,  state: 'completed' },
+      B: { id: 'b', name: 'compile',  plugin: 'build',  res: 'default-1', x: 165, y: 156, state: 'completed' },
+      C: { id: 'c', name: 'unit-test',plugin: 'test',   res: 'gpu-0',     x: 305, y: 156, state: 'failed',  failureKind: 'plugin' },
+      D: { id: 'd', name: 'package',  plugin: 'deploy', res: '—',         x: 230, y: 300, state: 'skipped', skipReason: 'dependency_failed' },
+      E: { id: 'e', name: 'deploy',   plugin: 'deploy', res: 'default-0', x: 480, y: 156, state: 'running' },
+      F: { id: 'f', name: 'notify',   plugin: 'notify', res: 'gpu(等待)', x: 552, y: 156, state: 'queued',  waitFor: 'gpu' },
+    };
+    const ST = {
+      completed: { ring: 'node-completed', icon: 'fa-check',        ic: 'text-completed', bg: 'bg-completed', label: '完成' },
+      running:   { ring: 'node-running running-ring', icon: 'fa-circle-notch fa-spin', ic: 'text-running', bg: 'bg-running', label: '运行中' },
+      queued:    { ring: 'node-queued',    icon: 'fa-hourglass-half',ic: 'text-queued',   bg: 'bg-queued',  label: '排队' },
+      failed:    { ring: 'node-failed',    icon: 'fa-xmark',         ic: 'text-failed',   bg: 'bg-failed',  label: '失败' },
+      skipped:   { ring: 'node-skipped',   icon: 'fa-minus',         ic: 'text-skipped',  bg: 'bg-skipped', label: '跳过' },
+      idle:      { ring: 'node-idle',      icon: 'fa-circle',        ic: 'text-faint',    bg: 'bg-line',    label: '待运行' },
+    };
+    function renderNodes() {
+      document.getElementById('dag-nodes').innerHTML = Object.keys(STEPS).map((k) => {
+        const s = STEPS[k]; const m = ST[s.state];
+        const extra = s.state === 'queued' ? `<div class="text-[10px] text-queued mt-0.5">⌛ 等待 ${s.waitFor}</div>` : '';
+        return `<button onclick="openDrawer('${k}')" class="dag-node absolute -translate-x-1/2 w-28 rounded-ctrl bg-surface ${m.ring} p-2.5 text-left hover:scale-[1.03] transition-transform" style="left:${s.x}px; top:${s.y}px;">
+          <div class="flex items-center justify-between">
+            <span class="text-[10px] text-faint font-mono">#${s.id}</span>
+            <span class="grid place-items-center w-4 h-4 rounded-full ${m.bg} text-[8px] text-white"><i class="fa-solid ${m.icon}"></i></span>
+          </div>
+          <div class="font-medium text-sm">${s.name}</div>
+          <div class="text-[11px] ${m.ic}">${m.label}</div>
+          ${extra}
+        </button>`;
+      }).join('');
+    }
+    renderNodes();
+
+    // ── 事件 / 日志流 ──
+    const LOG = [
+      { t: '00:01', kind: 'event', type: 'workflow:start',  body: 'run a1b2c3d4  parallel=2 failFast=off' },
+      { t: '00:01', kind: 'event', type: 'step:queued',     body: 'a (checkout)' },
+      { t: '00:02', kind: 'event', type: 'step:start',      body: 'a  res=default-0' },
+      { t: '00:02', kind: 'log',   step: 'a', lv: 'info',   body: 'checkout: cloning github.com/acme/app …' },
+      { t: '00:04', kind: 'event', type: 'step:finished',   body: 'a  completed', ok: true },
+      { t: '00:04', kind: 'event', type: 'step:queued',     body: 'b' },
+      { t: '00:04', kind: 'event', type: 'step:queued',     body: 'c  ⌛ 等待 gpu' },
+      { t: '00:04', kind: 'event', type: 'step:queued',     body: 'e' },
+      { t: '00:04', kind: 'event', type: 'step:queued',     body: 'f  ⌛ 等待 gpu' },
+      { t: '00:05', kind: 'event', type: 'step:start',      body: 'b  res=default-1' },
+      { t: '00:05', kind: 'log',   step: 'b', lv: 'info',   body: 'build: compiling 128 modules' },
+      { t: '00:09', kind: 'event', type: 'step:finished',   body: 'b  completed', ok: true },
+      { t: '00:10', kind: 'event', type: 'step:start',      body: 'c  res=gpu-0' },
+      { t: '00:11', kind: 'log',   step: 'c', lv: 'info',   body: 'test: running 342 cases on cuda:0' },
+      { t: '00:24', kind: 'log',   step: 'c', lv: 'warn',   body: 'test: flaky retry case #118' },
+      { t: '00:38', kind: 'error', step: 'c', lv: 'error',  body: 'AssertionError: expected 200, got 503' },
+      { t: '00:39', kind: 'error', type: 'step:finished',   body: 'c  failed  failureKind=plugin', fail: true },
+      { t: '00:39', kind: 'event', type: 'step:finished',   body: 'd  skipped  reason=dependency_failed', skip: true },
+      { t: '00:39', kind: 'event', type: 'step:start',      body: 'e  res=default-0' },
+      { t: '00:40', kind: 'log',   step: 'e', lv: 'info',   body: 'deploy: pushing image acme/app:1.4.0 …' },
+    ];
+    const LIVE = [
+      { t: '00:43', kind: 'log', step: 'e', lv: 'info', body: 'deploy: 2/5 replicas ready …' },
+      { t: '00:45', kind: 'log', step: 'e', lv: 'info', body: 'deploy: 4/5 replicas ready …' },
+      { t: '00:46', kind: 'event', type: 'step:queued', body: 'f  ⌛ 仍在等待 gpu (00:42)' },
+      { t: '00:48', kind: 'log', step: 'e', lv: 'info', body: 'deploy: rollout healthy, 5/5 ready' },
+    ];
+    const TYPE_COLOR = {
+      'workflow:start': 'text-brand', 'step:queued': 'text-queued',
+      'step:start': 'text-running', 'step:finished': 'text-muted', 'workflow:finished': 'text-brand',
+    };
+    const LV_COLOR = { info: 'text-running', warn: 'text-queued', error: 'text-failed' };
+    function lineHtml(e) {
+      let inner;
+      if (e.kind === 'log' || (e.kind === 'error' && e.step)) {
+        inner = `<span class="text-faint">${e.t}</span> <span class="text-brand">[${e.step}]</span> <span class="${LV_COLOR[e.lv]}">log.${e.lv}</span> <span class="text-ink/90">${e.body}</span>`;
+      } else {
+        let c = TYPE_COLOR[e.type] || 'text-muted';
+        let tail = '';
+        if (e.ok) tail = ' <span class="text-completed">✓</span>';
+        if (e.fail) { c = 'text-failed'; tail = ' <i class="fa-solid fa-triangle-exclamation"></i>'; }
+        if (e.skip) c = 'text-skipped';
+        inner = `<span class="text-faint">${e.t}</span> <span class="${c}">${e.type}</span> <span class="text-ink/90">${e.body}</span>${tail}`;
+      }
+      const dk = e.kind === 'error' ? 'error' : (e.kind === 'log' ? 'log' : 'event');
+      return `<div class="log-line" data-kind="${dk}">${inner}</div>`;
+    }
+    const stream = document.getElementById('log-stream');
+    function paint(list) {
+      stream.innerHTML = list.map(lineHtml).join('') + '<div id="cursor" class="cursor-blink text-faint pt-1"></div>';
+    }
+    let buffer = [...LOG];
+    paint(buffer);
+    function scrollBottom() { if (document.getElementById('autoscroll').checked) stream.scrollTop = stream.scrollHeight; }
+    scrollBottom();
+
+    let curFilter = 'all';
+    function filterLog(f, btn) {
+      curFilter = f; switchTab(btn, 'logf');
+      stream.querySelectorAll('.log-line').forEach((el) => {
+        const k = el.dataset.kind;
+        const show = f === 'all' || (f === 'log' && k === 'log') || (f === 'error' && k === 'error');
+        el.classList.toggle('hidden', !show);
+      });
+    }
+
+    // 实时追加(演示)
+    let paused = false, liveIdx = 0;
+    const liveTimer = setInterval(() => {
+      if (paused || liveIdx >= LIVE.length) return;
+      buffer.push(LIVE[liveIdx++]);
+      paint(buffer);
+      filterLog(curFilter, document.querySelector('.tab-active'));
+      scrollBottom();
+    }, 2600);
+    function togglePause() {
+      paused = !paused;
+      const b = document.getElementById('pause-btn');
+      b.innerHTML = paused ? '<i class="fa-solid fa-play"></i> 继续' : '<i class="fa-solid fa-pause"></i> 暂停';
+    }
+
+    // ── 步骤详情抽屉 ──
+    function openDrawer(k) {
+      const s = STEPS[k]; const m = ST[s.state];
+      const logs = LOG.concat(buffer.slice(LOG.length)).filter((e) => e.step === s.id);
+      const logHtml = logs.length ? logs.map((e) =>
+        `<div><span class="text-faint">${e.t}</span> <span class="${LV_COLOR[e.lv] || 'text-muted'}">log.${e.lv}</span> ${e.body}</div>`).join('')
+        : '<div class="text-faint">该步暂无日志</div>';
+
+      let body = '';
+      if (s.state === 'failed') {
+        body = `
+          <div class="grid grid-cols-[80px_1fr] gap-y-2 text-sm">
+            <span class="text-muted">状态</span><span class="text-failed font-medium"><i class="fa-solid fa-circle-xmark"></i> failed</span>
+            <span class="text-muted">失败分类</span><span><code class="text-failed">failureKind = ${s.failureKind}</code> <span class="text-faint">(plugin/resource/internal)</span></span>
+            <span class="text-muted">资源</span><span class="font-mono">${s.res}</span>
+          </div>
+          <div class="mt-4">
+            <div class="text-xs text-muted mb-1.5">插件返回 (pluginResult)</div>
+            <pre class="bg-panel border border-line rounded-ctrl p-3 text-xs font-mono text-ink/90 overflow-auto">{
+  "success": false,
+  "code": "PLUGIN_EXECUTION_ERROR",
+  "message": "AssertionError: expected 200, got 503"
+}</pre>
+          </div>`;
+      } else if (s.state === 'skipped') {
+        body = `<div class="grid grid-cols-[80px_1fr] gap-y-2 text-sm">
+            <span class="text-muted">状态</span><span class="text-skipped font-medium"><i class="fa-solid fa-circle-minus"></i> skipped</span>
+            <span class="text-muted">跳过原因</span><span><code class="text-skipped">${s.skipReason}</code></span>
+            <span class="text-muted">说明</span><span class="text-muted">上游步骤 c 失败,该步依赖未满足被跳过。</span>
+          </div>`;
+      } else if (s.state === 'queued') {
+        body = `<div class="grid grid-cols-[80px_1fr] gap-y-2 text-sm">
+            <span class="text-muted">状态</span><span class="text-queued font-medium"><i class="fa-solid fa-hourglass-half"></i> queued</span>
+            <span class="text-muted">等待资源</span><span class="font-mono">${s.waitFor}</span>
+          </div>
+          <div class="mt-3 text-sm bg-queued/10 border border-queued/30 rounded-ctrl p-3 text-queued">
+            <i class="fa-solid fa-circle-info"></i> 资源不足而挂起排队(非失败)。去 <a href="resources.html" class="underline">资源与调度</a> 看 gpu 池瓶颈。
+          </div>`;
+      } else {
+        body = `<div class="grid grid-cols-[80px_1fr] gap-y-2 text-sm">
+            <span class="text-muted">状态</span><span class="${m.ic} font-medium"><i class="fa-solid ${m.icon}"></i> ${s.state}</span>
+            <span class="text-muted">资源</span><span class="font-mono">${s.res}</span>
+          </div>`;
+      }
+
+      document.getElementById('drawer-panel').innerHTML = `
+        <div class="h-14 flex items-center justify-between px-5 border-b border-line sticky top-0 bg-surface">
+          <div class="flex items-center gap-2">
+            <span class="text-xs font-mono text-faint">#${s.id}</span>
+            <h3 class="font-medium">${s.name}</h3>
+          </div>
+          <button onclick="closeDrawer()" class="text-muted hover:text-ink"><i class="fa-solid fa-xmark"></i></button>
+        </div>
+        <div class="p-5 space-y-1">
+          <div class="text-xs text-muted mb-2">插件 <code class="text-ink">${s.plugin}</code></div>
+          ${body}
+          <div class="mt-5">
+            <div class="text-xs text-muted mb-1.5">该步日志 (plugin:log)</div>
+            <div class="bg-panel border border-line rounded-ctrl p-3 text-xs font-mono space-y-0.5">${logHtml}</div>
+          </div>
+          <div class="flex gap-2 pt-4">
+            <button onclick="copyText('#${s.id} ${s.name}','步骤信息')" class="h-9 px-3 rounded-ctrl border border-line text-sm hover:bg-raised"><i class="fa-regular fa-copy mr-1"></i>复制</button>
+            <button onclick="toast('日志已过滤到步骤 ${s.id}','ok');closeDrawer()" class="h-9 px-3 rounded-ctrl border border-line text-sm hover:bg-raised"><i class="fa-solid fa-filter mr-1"></i>仅看此步</button>
+          </div>
+        </div>`;
+      document.getElementById('drawer').classList.remove('hidden');
+    }
+    function closeDrawer() { document.getElementById('drawer').classList.add('hidden'); }
+
+    // ── 顶栏 ws 状态联动:重连中→置只读提示 ──
+    document.addEventListener('ws-change', (e) => {
+      const banner = document.getElementById('ws-banner');
+      banner.classList.toggle('hidden', e.detail.key === 'connected');
+      if (e.detail.key === 'down') {
+        banner.innerHTML = '<i class="fa-solid fa-plug-circle-xmark"></i> WebSocket 已断开,页面只读。<button onclick="cycleWs()" class="underline ml-1">重试连接</button>';
+      } else if (e.detail.key === 'reconnect') {
+        banner.innerHTML = '<i class="fa-solid fa-plug-circle-exclamation"></i> WebSocket 重连中,页面已置为只读,实时刷新暂停。';
+      }
+    });
+  </script>
+
+</body>
+</html>

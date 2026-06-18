@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>工作流 · MONAI DevOps</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="assets/theme.js"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.5.2/css/all.min.css" />
+  <link rel="stylesheet" href="assets/console.css" />
+</head>
+<body class="bg-canvas text-ink antialiased" data-page="workflows" data-crumb="<span>工作流</span> <i class='fa-solid fa-angle-right text-xs mx-1 text-faint'></i> <span class='text-ink'>列表</span>">
+  <div class="flex min-h-screen">
+    <div id="side-nav"></div>
+    <div class="flex-1 flex flex-col min-w-0">
+      <div id="top-bar"></div>
+      <main class="flex-1 p-6 overflow-auto">
+
+        <div class="flex items-center justify-between mb-6">
+          <div>
+            <h1 class="text-lg font-semibold tracking-tight">工作流</h1>
+            <p class="text-sm text-muted mt-0.5">把插件按依赖串成 DAG,一键发起运行。共 8 个工作流。</p>
+          </div>
+          <div class="flex items-center gap-3">
+            <div class="relative w-64">
+              <i class="fa-solid fa-magnifying-glass absolute left-3 top-1/2 -translate-y-1/2 text-faint text-sm"></i>
+              <input id="wf-search" type="text" oninput="filterWf(this.value)" placeholder="按名称搜索…"
+                class="w-full h-9 pl-9 pr-3 rounded-ctrl bg-surface border border-line text-sm placeholder:text-faint focus:outline-none focus:border-brand focus:ring-2 focus:ring-brand/20" />
+            </div>
+            <a href="workflow-editor.html" class="inline-flex items-center gap-2 h-9 px-4 rounded-ctrl bg-brand text-white text-sm font-medium hover:bg-brand-hover transition-colors">
+              <i class="fa-solid fa-plus"></i> 新建工作流
+            </a>
+          </div>
+        </div>
+
+        <div class="bg-surface rounded-card shadow-card border border-line overflow-hidden">
+          <table class="w-full text-sm">
+            <thead>
+              <tr class="text-left text-muted bg-panel/60 border-b border-line">
+                <th class="font-medium px-5 py-3">名称</th>
+                <th class="font-medium px-4 py-3">步骤数</th>
+                <th class="font-medium px-4 py-3">最近运行</th>
+                <th class="font-medium px-4 py-3">最近状态</th>
+                <th class="font-medium px-4 py-3 text-right">操作</th>
+              </tr>
+            </thead>
+            <tbody id="wf-tbody" class="divide-y divide-line-soft">
+              <!-- 行由脚本渲染,保证数据一致且支持搜索过滤 -->
+            </tbody>
+          </table>
+          <div class="flex items-center justify-between px-5 py-3 border-t border-line text-sm text-muted">
+            <span id="wf-count">共 8 条</span>
+            <div class="flex items-center gap-1">
+              <button class="w-8 h-8 rounded-ctrl hover:bg-raised disabled:opacity-40" disabled><i class="fa-solid fa-angle-left text-xs"></i></button>
+              <button class="w-8 h-8 rounded-ctrl bg-brand text-white">1</button>
+              <button class="w-8 h-8 rounded-ctrl hover:bg-raised">2</button>
+              <button class="w-8 h-8 rounded-ctrl hover:bg-raised">3</button>
+              <button class="w-8 h-8 rounded-ctrl hover:bg-raised"><i class="fa-solid fa-angle-right text-xs"></i></button>
+            </div>
+          </div>
+        </div>
+
+        <!-- 空状态(演示):搜索无结果时显示 -->
+        <div id="wf-empty" class="hidden flex-col items-center justify-center py-20 text-center">
+          <i class="fa-regular fa-folder-open text-5xl text-line mb-4"></i>
+          <p class="font-medium">没有匹配的工作流</p>
+          <p class="text-sm text-muted mt-1">换个关键词,或新建一个工作流开始编排。</p>
+          <a href="workflow-editor.html" class="mt-4 inline-flex items-center gap-2 h-9 px-4 rounded-ctrl bg-brand text-white text-sm"><i class="fa-solid fa-plus"></i> 新建工作流</a>
+        </div>
+
+      </main>
+    </div>
+  </div>
+
+  <!-- 行内 ⋮ 菜单(单例,定位到点击位置) -->
+  <div id="row-menu" class="hidden fixed z-50 w-40 bg-raised border border-line rounded-ctrl shadow-pop py-1 text-sm">
+    <button onclick="toast('已复制工作流为副本','ok');hideMenu()" class="w-full text-left px-3 py-2 hover:bg-surface flex items-center gap-2"><i class="fa-regular fa-copy w-4 text-center text-muted"></i> 复制</button>
+    <button onclick="toast('已导出 workflow.json','ok');hideMenu()" class="w-full text-left px-3 py-2 hover:bg-surface flex items-center gap-2"><i class="fa-solid fa-file-export w-4 text-center text-muted"></i> 导出 JSON</button>
+    <div class="my-1 border-t border-line-soft"></div>
+    <button onclick="delWf()" class="w-full text-left px-3 py-2 hover:bg-failed/10 text-failed flex items-center gap-2"><i class="fa-solid fa-trash w-4 text-center"></i> 删除</button>
+  </div>
+
+  <script src="assets/app.js"></script>
+  <script>
+    const WORKFLOWS = [
+      { name: 'Demo Pipeline',   steps: 3, last: '2 分钟前',  status: 'completed' },
+      { name: 'Build & Deploy',  steps: 6, last: '1 小时前',  status: 'failed' },
+      { name: 'Nightly E2E',     steps: 4, last: '昨天 02:00', status: 'skipped' },
+      { name: 'Image Bake',      steps: 5, last: '3 小时前',  status: 'completed' },
+      { name: 'Data Sync',       steps: 2, last: '刚刚',      status: 'running' },
+      { name: 'Release v2.3',    steps: 7, last: '2 天前',    status: 'completed' },
+      { name: 'Lint & Audit',    steps: 3, last: '5 小时前',  status: 'completed' },
+      { name: 'Infra Provision', steps: 4, last: '昨天 18:40', status: 'failed' },
+    ];
+    const BADGE = {
+      completed: { icon: 'fa-circle-check',        cls: 'bg-completed/10 text-completed', label: '成功' },
+      failed:    { icon: 'fa-circle-xmark',        cls: 'bg-failed/10 text-failed',       label: '失败' },
+      skipped:   { icon: 'fa-circle-minus',        cls: 'bg-skipped/10 text-skipped',     label: '部分跳过' },
+      running:   { icon: 'fa-circle-notch fa-spin',cls: 'bg-running/10 text-running',     label: '运行中' },
+    };
+    function statusBadge(s) {
+      const b = BADGE[s];
+      return `<span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-pill text-xs ${b.cls}"><i class="fa-solid ${b.icon} text-[11px]"></i> ${b.label}</span>`;
+    }
+    function renderWf(list) {
+      const tb = document.getElementById('wf-tbody');
+      tb.innerHTML = list.map((w) => `
+        <tr class="hover:bg-raised/40 transition-colors">
+          <td class="px-5 py-3.5">
+            <a href="workflow-editor.html" class="font-medium hover:text-brand transition-colors">${w.name}</a>
+          </td>
+          <td class="px-4 py-3.5 text-muted font-mono">${w.steps}</td>
+          <td class="px-4 py-3.5 text-muted">${w.last}</td>
+          <td class="px-4 py-3.5">${statusBadge(w.status)}</td>
+          <td class="px-4 py-3.5">
+            <div class="flex items-center justify-end gap-1.5">
+              <button onclick="runWf('${w.name}')" class="inline-flex items-center gap-1.5 h-8 px-3 rounded-ctrl bg-brand/15 text-brand text-xs font-medium hover:bg-brand hover:text-white transition-colors"><i class="fa-solid fa-play text-[10px]"></i> 运行</button>
+              <a href="workflow-editor.html" class="inline-flex items-center gap-1.5 h-8 px-3 rounded-ctrl border border-line text-xs hover:border-brand hover:text-brand transition-colors"><i class="fa-solid fa-sitemap text-[10px]"></i> 编排</a>
+              <button onclick="showMenu(event)" class="w-8 h-8 rounded-ctrl text-muted hover:bg-raised hover:text-ink"><i class="fa-solid fa-ellipsis-vertical"></i></button>
+            </div>
+          </td>
+        </tr>`).join('');
+      document.getElementById('wf-count').textContent = `共 ${list.length} 条`;
+      document.getElementById('wf-empty').classList.toggle('hidden', list.length > 0);
+      document.getElementById('wf-empty').classList.toggle('flex', list.length === 0);
+    }
+    function filterWf(q) {
+      const k = q.trim().toLowerCase();
+      renderWf(WORKFLOWS.filter((w) => w.name.toLowerCase().includes(k)));
+    }
+    function runWf(name) {
+      toast(`已发起运行 <b>${name}</b>,正在建立 WebSocket…`, 'ok');
+      setTimeout(() => { location.href = 'run-detail.html'; }, 900);
+    }
+    // ⋮ 菜单
+    function showMenu(e) {
+      e.stopPropagation();
+      const m = document.getElementById('row-menu');
+      m.style.top = e.clientY + 8 + 'px';
+      m.style.left = Math.min(e.clientX, window.innerWidth - 170) + 'px';
+      m.classList.remove('hidden');
+    }
+    function hideMenu() { document.getElementById('row-menu').classList.add('hidden'); }
+    function delWf() { hideMenu(); confirmDanger('确定删除该工作流?此操作不可恢复。', () => toast('工作流已删除', 'err')); }
+    document.addEventListener('click', hideMenu);
+    renderWf(WORKFLOWS);
+  </script>
+</body>
+</html>

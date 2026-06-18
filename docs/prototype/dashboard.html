@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>概览 · MONAI DevOps</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="assets/theme.js"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.5.2/css/all.min.css" />
+  <link rel="stylesheet" href="assets/console.css" />
+</head>
+<body class="bg-canvas text-ink antialiased" data-page="dashboard" data-crumb="<span class='text-ink'>概览</span>">
+  <div class="flex min-h-screen">
+    <div id="side-nav"></div>
+    <div class="flex-1 flex flex-col min-w-0">
+      <div id="top-bar"></div>
+      <main class="flex-1 p-6 overflow-auto space-y-6">
+
+        <div class="flex items-center justify-between">
+          <div>
+            <h1 class="text-lg font-semibold tracking-tight">概览</h1>
+            <p class="text-sm text-muted mt-0.5">平台健康度快照 · 最近 24 小时</p>
+          </div>
+          <span class="text-xs text-faint flex items-center gap-1.5"><span class="w-1.5 h-1.5 rounded-full bg-completed live-dot"></span> 实时刷新中</span>
+        </div>
+
+        <!-- KPI -->
+        <section class="grid grid-cols-2 lg:grid-cols-4 gap-4">
+          <a href="runs.html" class="group bg-surface border border-line rounded-card p-5 hover:border-running/60 transition-colors">
+            <div class="flex items-center justify-between mb-3"><span class="text-sm text-muted">进行中运行</span><i class="fa-solid fa-circle-notch fa-spin text-running"></i></div>
+            <div class="text-3xl font-semibold font-mono">2</div>
+            <div class="text-xs text-muted mt-1">Build &amp; Deploy · Data Sync</div>
+          </a>
+          <div class="bg-surface border border-line rounded-card p-5">
+            <div class="flex items-center justify-between mb-3"><span class="text-sm text-muted">今日成功率</span><i class="fa-solid fa-arrow-trend-up text-completed"></i></div>
+            <div class="text-3xl font-semibold font-mono text-completed">86<span class="text-lg">%</span></div>
+            <div class="text-xs text-muted mt-1">较昨日 +4%</div>
+          </div>
+          <a href="resources.html" class="group bg-surface border border-line rounded-card p-5 hover:border-queued/60 transition-colors">
+            <div class="flex items-center justify-between mb-3"><span class="text-sm text-muted">排队步骤</span><i class="fa-solid fa-hourglass-half text-queued"></i></div>
+            <div class="text-3xl font-semibold font-mono text-queued">3</div>
+            <div class="text-xs text-muted mt-1">均等待 <span class="font-mono">gpu</span> 资源</div>
+          </a>
+          <a href="plugins.html" class="group bg-surface border border-line rounded-card p-5 hover:border-brand/60 transition-colors">
+            <div class="flex items-center justify-between mb-3"><span class="text-sm text-muted">已注册插件</span><i class="fa-solid fa-puzzle-piece text-brand"></i></div>
+            <div class="text-3xl font-semibold font-mono">7</div>
+            <div class="text-xs text-muted mt-1">echo · build · test · …</div>
+          </a>
+        </section>
+
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          <!-- 成功率趋势 -->
+          <section class="lg:col-span-2 bg-surface border border-line rounded-card p-5">
+            <div class="flex items-center justify-between mb-4">
+              <h2 class="font-medium">运行结果趋势 <span class="text-xs text-faint font-normal">· 近 12 小时</span></h2>
+              <div class="flex items-center gap-3 text-xs">
+                <span class="inline-flex items-center gap-1.5"><span class="w-2 h-2 rounded-full bg-completed"></span> 成功</span>
+                <span class="inline-flex items-center gap-1.5"><span class="w-2 h-2 rounded-full bg-failed"></span> 失败</span>
+              </div>
+            </div>
+            <svg viewBox="0 0 600 160" class="w-full h-40">
+              <defs>
+                <linearGradient id="fill" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stop-color="#16A34A" stop-opacity="0.22"></stop>
+                  <stop offset="100%" stop-color="#16A34A" stop-opacity="0"></stop>
+                </linearGradient>
+              </defs>
+              <polyline fill="url(#fill)" stroke="none" points="0,120 50,90 100,100 150,70 200,80 250,55 300,60 350,40 400,50 450,35 500,45 550,30 600,38 600,160 0,160"></polyline>
+              <polyline fill="none" stroke="#16A34A" stroke-width="2.5" points="0,120 50,90 100,100 150,70 200,80 250,55 300,60 350,40 400,50 450,35 500,45 550,30 600,38"></polyline>
+              <polyline fill="none" stroke="#E11D48" stroke-width="2" stroke-dasharray="4 4" points="0,150 50,148 100,140 150,145 200,138 250,142 300,135 350,140 400,132 450,138 500,130 550,136 600,128"></polyline>
+            </svg>
+          </section>
+
+          <!-- 资源占用快照 -->
+          <section class="bg-surface border border-line rounded-card p-5">
+            <div class="flex items-center justify-between mb-4">
+              <h2 class="font-medium">资源占用</h2>
+              <a href="resources.html" class="text-xs text-brand hover:underline">查看详情</a>
+            </div>
+            <div class="space-y-4 text-sm">
+              <div>
+                <div class="flex justify-between mb-1.5"><span class="font-mono">default</span><span class="text-muted">4/5</span></div>
+                <div class="h-2 rounded-full bg-raised overflow-hidden"><div class="h-full bg-running rounded-full" style="width:80%"></div></div>
+              </div>
+              <div>
+                <div class="flex justify-between mb-1.5"><span class="font-mono">gpu <span class="text-[10px] text-failed">瓶颈</span></span><span class="text-failed">3/3</span></div>
+                <div class="h-2 rounded-full bg-raised overflow-hidden"><div class="h-full bg-failed rounded-full" style="width:100%"></div></div>
+              </div>
+              <div>
+                <div class="flex justify-between mb-1.5"><span class="font-mono">cpu</span><span class="text-muted">1/4</span></div>
+                <div class="h-2 rounded-full bg-raised overflow-hidden"><div class="h-full bg-completed rounded-full" style="width:25%"></div></div>
+              </div>
+            </div>
+          </section>
+        </div>
+
+        <!-- 进行中 / 近期运行 -->
+        <section class="bg-surface border border-line rounded-card overflow-hidden">
+          <div class="flex items-center justify-between px-5 py-4 border-b border-line">
+            <h2 class="font-medium">近期运行</h2>
+            <a href="runs.html" class="text-xs text-brand hover:underline">全部运行 <i class="fa-solid fa-angle-right text-[10px]"></i></a>
+          </div>
+          <table class="w-full text-sm">
+            <tbody class="divide-y divide-line-soft">
+              <tr onclick="location.href='run-detail.html'" class="hover:bg-raised/40 cursor-pointer bg-running/[0.04]">
+                <td class="px-5 py-3"><span class="inline-flex items-center gap-1.5 text-running text-xs"><i class="fa-solid fa-circle-notch fa-spin"></i> 运行中</span></td>
+                <td class="px-4 py-3 font-medium">Build &amp; Deploy</td>
+                <td class="px-4 py-3 font-mono text-xs text-muted">a1b2c3…</td>
+                <td class="px-4 py-3 text-muted text-xs">刚刚</td>
+              </tr>
+              <tr onclick="location.href='run-detail.html'" class="hover:bg-raised/40 cursor-pointer">
+                <td class="px-5 py-3"><span class="inline-flex items-center gap-1.5 text-completed text-xs"><i class="fa-solid fa-circle-check"></i> 成功</span></td>
+                <td class="px-4 py-3 font-medium">Demo Pipeline</td>
+                <td class="px-4 py-3 font-mono text-xs text-muted">550e84…</td>
+                <td class="px-4 py-3 text-muted text-xs">2 分钟前</td>
+              </tr>
+              <tr onclick="location.href='run-detail.html'" class="hover:bg-raised/40 cursor-pointer">
+                <td class="px-5 py-3"><span class="inline-flex items-center gap-1.5 text-failed text-xs"><i class="fa-solid fa-circle-xmark"></i> 失败</span></td>
+                <td class="px-4 py-3 font-medium">Infra Provision</td>
+                <td class="px-4 py-3 font-mono text-xs text-muted">b9e1d2…</td>
+                <td class="px-4 py-3 text-muted text-xs">昨天 18:40</td>
+              </tr>
+            </tbody>
+          </table>
+        </section>
+
+      </main>
+    </div>
+  </div>
+  <script src="assets/app.js"></script>
+</body>
+</html>
