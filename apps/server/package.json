@@ -6,6 +6,7 @@
   "private": true,
   "license": "UNLICENSED",
   "scripts": {
+    "prebuild": "node ../../scripts/sync-plugin-registry.mjs",
     "build": "nest build",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
@@ -31,8 +32,9 @@
     "@nestjs/websockets": "^11.1.24",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.1",
-    "test-plugin": "workspace:*",
-    "ws": "^8.21.0"
+    "@monai-devops/test-plugin": "workspace:*",
+    "ws": "^8.21.0",
+    "@monai-devops/model-call-plugin": "workspace:*"
   },
   "devDependencies": {
     "@nestjs/cli": "^11.0.0",

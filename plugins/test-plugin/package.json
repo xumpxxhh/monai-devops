@@ -1,5 +1,5 @@
 {
-  "name": "test-plugin",
+  "name": "@monai-devops/test-plugin",
   "version": "1.0.0",
   "description": "Example plugin for monai-devops (unit / integration / e2e simulation)",
   "private": true,

@@ -10,7 +10,7 @@ import {
   type WorkflowRunResult,
   type WorkflowStep,
 } from '@monai-devops/core-engine';
-import { testPlugin } from 'test-plugin';
+import { registeredPlugins } from '../plugins/plugin-registry.js';
 import { validateWorkflowDefinition } from '../common/validation/validate-workflow.js';
 
 type EngineInstance = ReturnType<typeof createEngine>;
@@ -31,7 +31,7 @@ export class EngineService implements OnModuleInit, OnModuleDestroy {
     const resourcePoolSize = this.config.get<number>('RESOURCE_POOL_SIZE', 5);
 
     this.engine = createEngine({
-      plugins: [testPlugin],
+      plugins: registeredPlugins,
       maxParallelSteps,
       defaultPoolSize: resourcePoolSize,
       observer: {

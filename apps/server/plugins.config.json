@@ -1,0 +1,3 @@
+{
+  "plugins": ["test-plugin", "model-call-plugin"]
+}
