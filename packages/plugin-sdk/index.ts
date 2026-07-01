@@ -27,6 +27,11 @@ export {
   type PluginExecuteFn,
 } from './base/index.js';
 
-export type { PluginLogLevel, PluginLogStream, PluginLogEntry, PluginLogger } from './logger/index.js';
+export type {
+  PluginLogLevel,
+  PluginLogStream,
+  PluginLogEntry,
+  PluginLogger,
+} from './logger/index.js';
 
 export { PluginContextKeys, noopLogger, getLogger } from './logger/index.js';
