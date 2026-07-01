@@ -1,0 +1,154 @@
+import { Global, Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import type { PluginConfig } from '@monai-devops/plugin-sdk';
+import {
+  createEngine,
+  type ExecutionContext,
+  type ExecutionResult,
+  type WorkflowDefinition,
+  type WorkflowLifecycleEvent,
+  type WorkflowRunResult,
+  type WorkflowStep,
+} from '@monai-devops/core-engine';
+import { testPlugin } from 'test-plugin';
+import { validateWorkflowDefinition } from '../common/validation/validate-workflow.js';
+
+type EngineInstance = ReturnType<typeof createEngine>;
+type EventHandler = (event: WorkflowLifecycleEvent) => void | Promise<void>;
+
+@Global()
+@Injectable()
+export class EngineService implements OnModuleInit, OnModuleDestroy {
+  private readonly logger = new Logger(EngineService.name);
+  private engine!: EngineInstance;
+  private ready = false;
+  private readonly eventHandlers = new Set<EventHandler>();
+
+  constructor(private readonly config: ConfigService) {}
+
+  onModuleInit(): void {
+    const maxParallelSteps = this.config.get<number>('MAX_PARALLEL_STEPS', 1);
+    const resourcePoolSize = this.config.get<number>('RESOURCE_POOL_SIZE', 5);
+
+    this.engine = createEngine({
+      plugins: [testPlugin],
+      maxParallelSteps,
+      defaultPoolSize: resourcePoolSize,
+      observer: {
+        onEvent: async (event) => {
+          for (const handler of this.eventHandlers) {
+            await handler(event);
+          }
+        },
+      },
+    });
+
+    this.ready = true;
+    this.logger.log(
+      `Engine initialized (maxParallelSteps=${maxParallelSteps}, resourcePoolSize=${resourcePoolSize})`,
+    );
+  }
+
+  onModuleDestroy(): void {
+    if (this.engine) {
+      this.engine.destroy();
+      this.ready = false;
+      this.logger.log('Engine destroyed');
+    }
+  }
+
+  isReady(): boolean {
+    return this.ready;
+  }
+
+  onEvent(handler: EventHandler): () => void {
+    this.eventHandlers.add(handler);
+    return () => this.eventHandlers.delete(handler);
+  }
+
+  validateWorkflow(workflow: WorkflowDefinition): void {
+    validateWorkflowDefinition(workflow);
+  }
+
+  runWorkflow(
+    workflow: WorkflowDefinition,
+    context: Partial<ExecutionContext> = {},
+  ): Promise<WorkflowRunResult> {
+    return this.engine.runWorkflow(workflow, context);
+  }
+
+  dryRunPlugin(
+    pluginName: string,
+    config: PluginConfig,
+    context: Partial<ExecutionContext> = {},
+  ): Promise<ExecutionResult> {
+    const step: WorkflowStep = {
+      id: 'dry-run',
+      name: 'Dry Run',
+      plugin: pluginName,
+      config,
+    };
+
+    const runId = typeof context.runId === 'string' ? context.runId : 'dry-run';
+    const traceId = typeof context.traceId === 'string' ? context.traceId : undefined;
+
+    const executionContext: ExecutionContext = {
+      workflowId: 'dry-run',
+      stepId: step.id,
+      runId,
+      traceId,
+      priority: context.priority,
+      previousResults: context.previousResults,
+      artifacts: context.artifacts,
+    };
+
+    return this.engine.getExecutor().executeStep(step, executionContext, {
+      runId,
+      workflowId: 'dry-run',
+      traceId,
+      context: executionContext,
+    });
+  }
+
+  getPlugins() {
+    return this.engine.getPlugins().map((plugin) => ({
+      name: plugin.name,
+      version: plugin.version,
+      description: plugin.description,
+    }));
+  }
+
+  getPlugin(name: string) {
+    const plugin = this.engine.getPlugin(name);
+    if (!plugin) return undefined;
+    return {
+      name: plugin.name,
+      version: plugin.version,
+      description: plugin.description,
+    };
+  }
+
+  getResources() {
+    return this.engine
+      .getResourceManager()
+      .getAllResources()
+      .map((resource) => ({
+        id: resource.id,
+        type: resource.type,
+        name: resource.name,
+        status: resource.status,
+      }));
+  }
+
+  getQueueStatus() {
+    return this.engine.getResourceScheduler().getQueueStatus();
+  }
+
+  cancelQueuedSteps(runId: string): number {
+    return this.engine.getResourceScheduler().cancelByRunId(runId);
+  }
+
+  getPluginCount(): number {
+    return this.engine.getPlugins().length;
+  }
+}

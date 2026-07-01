@@ -68,7 +68,7 @@ describe('AppController (e2e)', () => {
                     id: 'integration-step',
                     name: 'Integration Test',
                     plugin: 'test-plugin',
-                    config: { type: 'runner' },
+                    config: { type: 'integration' },
                   },
                 ],
               },

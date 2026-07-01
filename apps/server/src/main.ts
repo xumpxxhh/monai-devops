@@ -4,6 +4,7 @@ import { NestFactory } from '@nestjs/core';
 import { ConfigService } from '@nestjs/config';
 import { WsAdapter } from '@nestjs/platform-ws';
 import { AppModule } from './app.module.js';
+import { AllExceptionsFilter } from './common/filters/all-exceptions.filter.js';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
@@ -17,8 +18,13 @@ async function bootstrap() {
     );
     process.exit(1);
   }
+
   app.setGlobalPrefix(globalApiPrefix);
   app.enableCors();
-  await app.listen(config.get<number>('PORT', 3000));
+  app.useGlobalFilters(new AllExceptionsFilter());
+  app.enableShutdownHooks();
+
+  const port = config.get<number>('PORT', 3000);
+  await app.listen(port);
 }
 void bootstrap();
