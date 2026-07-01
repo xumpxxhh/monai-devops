@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>MONAI DevOps 控制台 · 原型总览</title>
+  <title>概览 · MONAI DevOps</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="assets/theme.js"></script>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -11,139 +11,124 @@
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.5.2/css/all.min.css" />
   <link rel="stylesheet" href="assets/console.css" />
 </head>
-<body class="bg-canvas text-ink antialiased min-h-screen">
-  <!-- 背景光斑 -->
-  <div class="pointer-events-none fixed inset-0 overflow-hidden">
-    <div class="absolute -top-40 -left-40 w-[36rem] h-[36rem] rounded-full bg-brand/10 blur-3xl"></div>
-    <div class="absolute top-1/3 -right-40 w-[32rem] h-[32rem] rounded-full bg-running/10 blur-3xl"></div>
-  </div>
+<body class="bg-canvas text-ink antialiased" data-page="dashboard" data-crumb="<span class='text-ink'>概览</span>">
+  <div class="flex min-h-screen">
+    <div id="side-nav"></div>
+    <div class="flex-1 flex flex-col min-w-0">
+      <div id="top-bar"></div>
+      <main class="flex-1 p-6 overflow-auto space-y-6">
 
-  <div class="relative max-w-6xl mx-auto px-6 py-12">
-    <!-- 头部 -->
-    <header class="flex items-center justify-between mb-12">
-      <div class="flex items-center gap-3">
-        <span class="grid place-items-center w-11 h-11 rounded-xl bg-brand/20 text-brand text-xl"><i class="fa-solid fa-diagram-project"></i></span>
-        <div>
-          <h1 class="text-xl font-semibold tracking-tight">MONAI <span class="text-brand">DevOps</span> 控制台</h1>
-          <p class="text-sm text-muted">插件化工作流编排平台 · 高保真原型</p>
+        <div class="flex items-center justify-between">
+          <div>
+            <h1 class="text-lg font-semibold tracking-tight">概览</h1>
+            <p class="text-sm text-muted mt-0.5">平台健康度快照 · 最近 24 小时</p>
+          </div>
+          <span class="text-xs text-faint flex items-center gap-1.5"><span class="w-1.5 h-1.5 rounded-full bg-completed live-dot"></span> 实时刷新中</span>
         </div>
-      </div>
-      <span class="inline-flex items-center gap-2 text-xs px-3 py-1.5 rounded-pill bg-surface border border-line">
-        <span class="w-2 h-2 rounded-full bg-completed live-dot"></span>
-        <span class="text-completed font-medium">已连接 ws</span>
-        <span class="text-faint">·</span> <span class="font-mono text-muted">env: local</span>
-      </span>
-    </header>
 
-    <!-- Hero -->
-    <section class="mb-12">
-      <h2 class="text-3xl font-semibold tracking-tight leading-tight max-w-2xl">
-        把内核的 <span class="text-brand">DAG 编排</span>、<span class="text-running">实时调度</span> 与
-        <span class="text-completed">结构化事件</span>,变成人能看懂、点得动的控制台。
-      </h2>
-      <p class="mt-4 text-muted max-w-2xl leading-relaxed">
-        编排 → 运行 → 观测 → 排障,形成闭环。下方按真实信息架构进入各视图;核心是
-        <a href="run-detail.html" class="text-running hover:underline">运行详情</a>——把
-        <code class="text-xs px-1 py-0.5 rounded bg-raised">workflow:* / step:* / plugin:log</code>
-        事件流渲染成实时 DAG 状态视图与日志流。
-      </p>
-      <div class="mt-6 flex flex-wrap gap-3">
-        <a href="workflows.html" class="inline-flex items-center gap-2 h-10 px-5 rounded-ctrl bg-brand text-white text-sm font-medium hover:bg-brand-hover transition-colors">
-          <i class="fa-solid fa-diagram-project"></i> 进入工作流
-        </a>
-        <a href="run-detail.html" class="inline-flex items-center gap-2 h-10 px-5 rounded-ctrl bg-surface border border-line text-sm hover:border-running hover:text-running transition-colors">
-          <i class="fa-solid fa-satellite-dish"></i> 看实时运行详情
-        </a>
-      </div>
-    </section>
-
-    <!-- 视图卡片 -->
-    <section>
-      <div class="flex items-center gap-2 mb-4 text-xs uppercase tracking-wider text-faint">
-        <i class="fa-solid fa-grip"></i> 全部视图 · 7 个
-      </div>
-      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-        <!-- 卡片宏:这里逐个手写 -->
-        <a href="dashboard.html" class="group bg-surface border border-line rounded-card p-5 hover:border-brand/60 hover:shadow-card transition-all">
-          <div class="flex items-center justify-between mb-3">
-            <span class="grid place-items-center w-10 h-10 rounded-ctrl bg-raised text-brand"><i class="fa-solid fa-gauge-high"></i></span>
-            <span class="text-[10px] font-medium px-2 py-0.5 rounded-pill bg-skipped/15 text-skipped">V2</span>
+        <!-- KPI -->
+        <section class="grid grid-cols-2 lg:grid-cols-4 gap-4">
+          <a href="runs.html" class="group bg-surface border border-line rounded-card p-5 hover:border-running/60 transition-colors">
+            <div class="flex items-center justify-between mb-3"><span class="text-sm text-muted">进行中运行</span><i class="fa-solid fa-circle-notch fa-spin text-running"></i></div>
+            <div class="text-3xl font-semibold font-mono">2</div>
+            <div class="text-xs text-muted mt-1">Build &amp; Deploy · Data Sync</div>
+          </a>
+          <div class="bg-surface border border-line rounded-card p-5">
+            <div class="flex items-center justify-between mb-3"><span class="text-sm text-muted">今日成功率</span><i class="fa-solid fa-arrow-trend-up text-completed"></i></div>
+            <div class="text-3xl font-semibold font-mono text-completed">86<span class="text-lg">%</span></div>
+            <div class="text-xs text-muted mt-1">较昨日 +4%</div>
           </div>
-          <h3 class="font-medium group-hover:text-brand transition-colors">概览 Dashboard</h3>
-          <p class="text-sm text-muted mt-1 leading-relaxed">平台健康度快照:进行中运行、成功率、资源占用。</p>
-        </a>
+          <a href="resources.html" class="group bg-surface border border-line rounded-card p-5 hover:border-queued/60 transition-colors">
+            <div class="flex items-center justify-between mb-3"><span class="text-sm text-muted">排队步骤</span><i class="fa-solid fa-hourglass-half text-queued"></i></div>
+            <div class="text-3xl font-semibold font-mono text-queued">3</div>
+            <div class="text-xs text-muted mt-1">均等待 <span class="font-mono">gpu</span> 资源</div>
+          </a>
+          <a href="plugins.html" class="group bg-surface border border-line rounded-card p-5 hover:border-brand/60 transition-colors">
+            <div class="flex items-center justify-between mb-3"><span class="text-sm text-muted">已注册插件</span><i class="fa-solid fa-puzzle-piece text-brand"></i></div>
+            <div class="text-3xl font-semibold font-mono">7</div>
+            <div class="text-xs text-muted mt-1">echo · build · test · …</div>
+          </a>
+        </section>
 
-        <a href="workflows.html" class="group bg-surface border border-line rounded-card p-5 hover:border-brand/60 hover:shadow-card transition-all">
-          <div class="flex items-center justify-between mb-3">
-            <span class="grid place-items-center w-10 h-10 rounded-ctrl bg-raised text-brand"><i class="fa-solid fa-diagram-project"></i></span>
-            <span class="text-[10px] font-medium px-2 py-0.5 rounded-pill bg-completed/15 text-completed">P0</span>
-          </div>
-          <h3 class="font-medium group-hover:text-brand transition-colors">工作流列表</h3>
-          <p class="text-sm text-muted mt-1 leading-relaxed">管理工作流,搜索、一键运行、进编排器。</p>
-        </a>
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          <!-- 成功率趋势 -->
+          <section class="lg:col-span-2 bg-surface border border-line rounded-card p-5">
+            <div class="flex items-center justify-between mb-4">
+              <h2 class="font-medium">运行结果趋势 <span class="text-xs text-faint font-normal">· 近 12 小时</span></h2>
+              <div class="flex items-center gap-3 text-xs">
+                <span class="inline-flex items-center gap-1.5"><span class="w-2 h-2 rounded-full bg-completed"></span> 成功</span>
+                <span class="inline-flex items-center gap-1.5"><span class="w-2 h-2 rounded-full bg-failed"></span> 失败</span>
+              </div>
+            </div>
+            <svg viewBox="0 0 600 160" class="w-full h-40">
+              <defs>
+                <linearGradient id="fill" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stop-color="#16A34A" stop-opacity="0.22"></stop>
+                  <stop offset="100%" stop-color="#16A34A" stop-opacity="0"></stop>
+                </linearGradient>
+              </defs>
+              <polyline fill="url(#fill)" stroke="none" points="0,120 50,90 100,100 150,70 200,80 250,55 300,60 350,40 400,50 450,35 500,45 550,30 600,38 600,160 0,160"></polyline>
+              <polyline fill="none" stroke="#16A34A" stroke-width="2.5" points="0,120 50,90 100,100 150,70 200,80 250,55 300,60 350,40 400,50 450,35 500,45 550,30 600,38"></polyline>
+              <polyline fill="none" stroke="#E11D48" stroke-width="2" stroke-dasharray="4 4" points="0,150 50,148 100,140 150,145 200,138 250,142 300,135 350,140 400,132 450,138 500,130 550,136 600,128"></polyline>
+            </svg>
+          </section>
 
-        <a href="workflow-editor.html" class="group bg-surface border border-line rounded-card p-5 hover:border-brand/60 hover:shadow-card transition-all">
-          <div class="flex items-center justify-between mb-3">
-            <span class="grid place-items-center w-10 h-10 rounded-ctrl bg-raised text-brand"><i class="fa-solid fa-sitemap"></i></span>
-            <span class="text-[10px] font-medium px-2 py-0.5 rounded-pill bg-completed/15 text-completed">P0</span>
-          </div>
-          <h3 class="font-medium group-hover:text-brand transition-colors">工作流编排器</h3>
-          <p class="text-sm text-muted mt-1 leading-relaxed">三栏可视化 DAG 编辑 + 实时环检测 + 发起运行。</p>
-        </a>
-
-        <a href="runs.html" class="group bg-surface border border-line rounded-card p-5 hover:border-brand/60 hover:shadow-card transition-all">
-          <div class="flex items-center justify-between mb-3">
-            <span class="grid place-items-center w-10 h-10 rounded-ctrl bg-raised text-brand"><i class="fa-solid fa-play"></i></span>
-            <span class="text-[10px] font-medium px-2 py-0.5 rounded-pill bg-completed/15 text-completed">P0</span>
-          </div>
-          <h3 class="font-medium group-hover:text-brand transition-colors">运行列表</h3>
-          <p class="text-sm text-muted mt-1 leading-relaxed">筛选状态/工作流/时间,进行中置顶并实时刷新。</p>
-        </a>
-
-        <a href="run-detail.html" class="group bg-surface border border-running/40 rounded-card p-5 hover:border-running hover:shadow-card transition-all relative overflow-hidden">
-          <span class="absolute top-0 right-0 text-[10px] font-medium px-2 py-1 bg-running/15 text-running rounded-bl-card">核心 ★</span>
-          <div class="flex items-center justify-between mb-3">
-            <span class="grid place-items-center w-10 h-10 rounded-ctrl bg-running/15 text-running node-running"><i class="fa-solid fa-satellite-dish"></i></span>
-          </div>
-          <h3 class="font-medium group-hover:text-running transition-colors">运行详情</h3>
-          <p class="text-sm text-muted mt-1 leading-relaxed">实时 DAG 状态视图 + 事件/日志流 + 单步下钻排障。</p>
-        </a>
-
-        <a href="plugins.html" class="group bg-surface border border-line rounded-card p-5 hover:border-brand/60 hover:shadow-card transition-all">
-          <div class="flex items-center justify-between mb-3">
-            <span class="grid place-items-center w-10 h-10 rounded-ctrl bg-raised text-brand"><i class="fa-solid fa-puzzle-piece"></i></span>
-            <span class="text-[10px] font-medium px-2 py-0.5 rounded-pill bg-queued/15 text-queued">P1</span>
-          </div>
-          <h3 class="font-medium group-hover:text-brand transition-colors">插件管理 + 单步试运行</h3>
-          <p class="text-sm text-muted mt-1 leading-relaxed">已注册插件列表,填 config 单步试运行验证返回。</p>
-        </a>
-
-        <a href="resources.html" class="group bg-surface border border-line rounded-card p-5 hover:border-brand/60 hover:shadow-card transition-all">
-          <div class="flex items-center justify-between mb-3">
-            <span class="grid place-items-center w-10 h-10 rounded-ctrl bg-raised text-brand"><i class="fa-solid fa-server"></i></span>
-            <span class="text-[10px] font-medium px-2 py-0.5 rounded-pill bg-queued/15 text-queued">P1</span>
-          </div>
-          <h3 class="font-medium group-hover:text-brand transition-colors">资源与调度</h3>
-          <p class="text-sm text-muted mt-1 leading-relaxed">资源池占用 + 调度队列,解释「为什么排队」。</p>
-        </a>
-      </div>
-    </section>
-
-    <!-- 设计基调说明 -->
-    <section class="mt-12 bg-surface/60 border border-line rounded-card p-6">
-      <h3 class="text-sm font-medium mb-3 flex items-center gap-2"><i class="fa-solid fa-palette text-brand"></i> 设计基调:Mission Control</h3>
-      <div class="grid sm:grid-cols-2 gap-x-8 gap-y-3 text-sm text-muted leading-relaxed">
-        <p>暗色任务控制中心主题,等宽字体承载 runId / 日志 / JSON。状态色直接映射内核语义,签名元素是<span class="text-ink">带发光状态环的 DAG 节点</span>与类终端的实时日志流。</p>
-        <div class="flex flex-wrap items-center gap-2 text-xs">
-          <span class="inline-flex items-center gap-1.5 px-2 py-1 rounded-pill bg-raised"><span class="w-2 h-2 rounded-full bg-completed"></span> 完成</span>
-          <span class="inline-flex items-center gap-1.5 px-2 py-1 rounded-pill bg-raised"><span class="w-2 h-2 rounded-full bg-running"></span> 运行中</span>
-          <span class="inline-flex items-center gap-1.5 px-2 py-1 rounded-pill bg-raised"><span class="w-2 h-2 rounded-full bg-queued"></span> 排队</span>
-          <span class="inline-flex items-center gap-1.5 px-2 py-1 rounded-pill bg-raised"><span class="w-2 h-2 rounded-full bg-failed"></span> 失败</span>
-          <span class="inline-flex items-center gap-1.5 px-2 py-1 rounded-pill bg-raised"><span class="w-2 h-2 rounded-full bg-skipped"></span> 跳过</span>
-          <span class="inline-flex items-center gap-1.5 px-2 py-1 rounded-pill bg-raised"><span class="w-2 h-2 rounded-full bg-brand"></span> 品牌/动作</span>
+          <!-- 资源占用快照 -->
+          <section class="bg-surface border border-line rounded-card p-5">
+            <div class="flex items-center justify-between mb-4">
+              <h2 class="font-medium">资源占用</h2>
+              <a href="resources.html" class="text-xs text-brand hover:underline">查看详情</a>
+            </div>
+            <div class="space-y-4 text-sm">
+              <div>
+                <div class="flex justify-between mb-1.5"><span class="font-mono">default</span><span class="text-muted">4/5</span></div>
+                <div class="h-2 rounded-full bg-raised overflow-hidden"><div class="h-full bg-running rounded-full" style="width:80%"></div></div>
+              </div>
+              <div>
+                <div class="flex justify-between mb-1.5"><span class="font-mono">gpu <span class="text-[10px] text-failed">瓶颈</span></span><span class="text-failed">3/3</span></div>
+                <div class="h-2 rounded-full bg-raised overflow-hidden"><div class="h-full bg-failed rounded-full" style="width:100%"></div></div>
+              </div>
+              <div>
+                <div class="flex justify-between mb-1.5"><span class="font-mono">cpu</span><span class="text-muted">1/4</span></div>
+                <div class="h-2 rounded-full bg-raised overflow-hidden"><div class="h-full bg-completed rounded-full" style="width:25%"></div></div>
+              </div>
+            </div>
+          </section>
         </div>
-      </div>
-    </section>
+
+        <!-- 进行中 / 近期运行 -->
+        <section class="bg-surface border border-line rounded-card overflow-hidden">
+          <div class="flex items-center justify-between px-5 py-4 border-b border-line">
+            <h2 class="font-medium">近期运行</h2>
+            <a href="runs.html" class="text-xs text-brand hover:underline">全部运行 <i class="fa-solid fa-angle-right text-[10px]"></i></a>
+          </div>
+          <table class="w-full text-sm">
+            <tbody class="divide-y divide-line-soft">
+              <tr onclick="location.href='run-detail.html'" class="hover:bg-raised/40 cursor-pointer bg-running/[0.04]">
+                <td class="px-5 py-3"><span class="inline-flex items-center gap-1.5 text-running text-xs"><i class="fa-solid fa-circle-notch fa-spin"></i> 运行中</span></td>
+                <td class="px-4 py-3 font-medium">Build &amp; Deploy</td>
+                <td class="px-4 py-3 font-mono text-xs text-muted">a1b2c3…</td>
+                <td class="px-4 py-3 text-muted text-xs">刚刚</td>
+              </tr>
+              <tr onclick="location.href='run-detail.html'" class="hover:bg-raised/40 cursor-pointer">
+                <td class="px-5 py-3"><span class="inline-flex items-center gap-1.5 text-completed text-xs"><i class="fa-solid fa-circle-check"></i> 成功</span></td>
+                <td class="px-4 py-3 font-medium">Demo Pipeline</td>
+                <td class="px-4 py-3 font-mono text-xs text-muted">550e84…</td>
+                <td class="px-4 py-3 text-muted text-xs">2 分钟前</td>
+              </tr>
+              <tr onclick="location.href='run-detail.html'" class="hover:bg-raised/40 cursor-pointer">
+                <td class="px-5 py-3"><span class="inline-flex items-center gap-1.5 text-failed text-xs"><i class="fa-solid fa-circle-xmark"></i> 失败</span></td>
+                <td class="px-4 py-3 font-medium">Infra Provision</td>
+                <td class="px-4 py-3 font-mono text-xs text-muted">b9e1d2…</td>
+                <td class="px-4 py-3 text-muted text-xs">昨天 18:40</td>
+              </tr>
+            </tbody>
+          </table>
+        </section>
+
+      </main>
+    </div>
   </div>
+  <script src="assets/app.js"></script>
 </body>
 </html>

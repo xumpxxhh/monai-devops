@@ -1,7 +1,7 @@
 /* MONAI DevOps 控制台原型 · 共享外壳注入 + 轻量演示交互 */
 
 const NAV = [
-  { id: 'dashboard', label: '概览',      icon: 'fa-gauge-high',      href: 'dashboard.html' },
+  { id: 'dashboard', label: '概览',      icon: 'fa-gauge-high',      href: 'index.html' },
   { id: 'workflows', label: '工作流',    icon: 'fa-diagram-project', href: 'workflows.html' },
   { id: 'runs',      label: '运行',      icon: 'fa-play',            href: 'runs.html' },
   { id: 'plugins',   label: '插件',      icon: 'fa-puzzle-piece',    href: 'plugins.html' },
