@@ -90,24 +90,26 @@ HTTP 异常统一由 `AllExceptionsFilter` 返回：
 
 **GET /workflows** Query：`search`、`page`、`pageSize`
 
-**POST /workflows** / **PUT /workflows/:id** 请求体（`WorkflowDefinition`）：
+**POST /workflows** / **PUT /workflows/:id** 请求体（`WorkflowDraft`）：
+
+`id` 与 `step.id` 可省略，由服务端生成 UUID。草稿编排阶段可用 `clientRef` 表达步骤间依赖（`dependsOn` 引用 `clientRef` 或已有 `step.id`）。
 
 ```json
 {
-  "id": "my-workflow",
   "name": "示例工作流",
   "steps": [
     {
-      "id": "step-1",
+      "clientRef": "draft-a",
       "name": "步骤一",
       "plugin": "test-plugin",
       "config": { "type": "integration" },
-      "dependsOn": [],
-      "priority": 0
+      "dependsOn": []
     }
   ]
 }
 ```
+
+更新已保存工作流时，已有步骤携带 `id` 将保留；新增步骤省略 `id` 并可选 `clientRef`。
 
 **POST /workflows/validate** 响应：
 
