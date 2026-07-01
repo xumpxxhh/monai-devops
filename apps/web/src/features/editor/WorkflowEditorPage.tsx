@@ -130,7 +130,8 @@ export default function WorkflowEditorPage() {
     if (!isNew && id) {
       workflowsApi
         .get(id)
-        .then((wf) => {
+        .then((record) => {
+          const wf = record.definition;
           setWorkflowId(wf.id);
           setWorkflowName(wf.name);
           const flow = stepsToFlow(wf.steps);

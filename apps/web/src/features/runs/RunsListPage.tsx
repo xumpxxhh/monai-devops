@@ -48,7 +48,7 @@ export default function RunsListPage() {
           <Input
             type="search"
             placeholder="搜索 runId / 工作流…"
-            className="w-56 bg-surface"
+            className="w-64 bg-surface"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             aria-label="搜索运行"
@@ -56,7 +56,7 @@ export default function RunsListPage() {
           <Select
             value={statusFilter || '__all__'}
             onValueChange={(v) => setStatusFilter(v === '__all__' ? '' : v)}
-            triggerClassName="w-36 bg-surface"
+            triggerClassName="w-48 bg-surface"
             aria-label="筛选状态"
             options={[
               { value: '__all__', label: '全部状态' },
