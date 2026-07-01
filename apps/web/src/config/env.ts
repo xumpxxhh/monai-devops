@@ -1,6 +1,5 @@
 /// <reference types="vite/client" />
 
-/** 前端路由 basename：去掉末尾 `/`，根路径为 `""` */
 function toRouterBasename(basePath: string): string {
   if (!basePath || basePath === '/') return '';
   return basePath.replace(/\/$/, '');
@@ -8,24 +7,30 @@ function toRouterBasename(basePath: string): string {
 
 const rawBasePath = import.meta.env.DEVOPS_BASE_PATH ?? '/';
 
-/** 供 React Router 使用的路由基地址（非 API、非静态资源 base） */
 export const routerBasename = toRouterBasename(rawBasePath);
 
-/** 后端 API 基地址（含 GLOBAL_API_PREFIX） */
 export const apiBaseUrl = import.meta.env.DEVOPS_API_BASE_URL ?? '';
 
-/** test-devops WebSocket 地址（由 API 基地址推导） */
-export function getTestDevopsWsUrl(): string {
+function buildWsUrl(pathSuffix: string): string {
   if (!apiBaseUrl) return '';
-
   try {
     const url = new URL(apiBaseUrl);
     url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
-    url.pathname = `${url.pathname.replace(/\/$/, '')}/test-devops/ws`;
+    url.pathname = `${url.pathname.replace(/\/$/, '')}${pathSuffix}`;
     url.search = '';
     url.hash = '';
     return url.toString();
   } catch {
     return '';
   }
+}
+
+/** 主运行 WebSocket 通道 */
+export function getRunsWsUrl(): string {
+  return buildWsUrl('/runs/ws');
+}
+
+/** 兼容旧 test-devops WebSocket */
+export function getTestDevopsWsUrl(): string {
+  return buildWsUrl('/test-devops/ws');
 }

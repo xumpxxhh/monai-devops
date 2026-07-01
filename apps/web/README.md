@@ -1,73 +1,51 @@
-# React + TypeScript + Vite
+# MONAI DevOps 控制台 (apps/web)
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+基于 Vite + React 19 的 DevOps 控制台前端，对接 `apps/server` REST / WebSocket API。
 
-Currently, two official plugins are available:
+## 环境变量
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+在 `apps/web/.env` 或根目录 `.env` 中配置（`DEVOPS_` 前缀）：
 
-## React Compiler
+| 变量 | 说明 | 示例 |
+| --- | --- | --- |
+| `DEVOPS_API_BASE_URL` | 后端 API 基址（含全局前缀） | `http://localhost:3000/api/v1/devops` |
+| `DEVOPS_BASE_PATH` | 前端路由 basename | `/` |
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+## 启动
 
-## Expanding the ESLint configuration
+```bash
+# 根目录：同时启动 server + web
+pnpm dev
 
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
-
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
-
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-]);
+# 仅前端
+pnpm dev:web
 ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+请确保 `apps/server` 已启动且 `DEVOPS_API_BASE_URL` 指向正确地址。
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x';
-import reactDom from 'eslint-plugin-react-dom';
+## 页面路由
 
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-]);
+| 路由 | 功能 |
+| --- | --- |
+| `/` | 概览 Dashboard |
+| `/workflows` | 工作流列表 |
+| `/workflows/new` · `/workflows/:id/edit` | DAG 编排器 |
+| `/runs` | 运行列表 |
+| `/runs/:runId` | 运行详情（WebSocket 实时） |
+| `/plugins` | 插件管理 + 单步试运行 |
+| `/resources` | 资源池与调度队列 |
+| `/test` | 旧版集成测试页（保留） |
+
+## 脚本
+
+```bash
+pnpm build    # 类型检查 + 生产构建
+pnpm test     # Vitest（含 run-state reducer 单测）
+pnpm lint     # ESLint
 ```
+
+## 与后端联调
+
+- HTTP：工作流 CRUD、运行列表/详情、插件、资源、统计均走 REST（见 `docs/dev-logs/api-list.md`）
+- WebSocket：`/runs/ws`，支持 `subscribe` / `run` 消息
+- 运行详情页对进行中的 Run 自动订阅；刷新后可从 `GET /runs/:runId` 回放已缓冲事件
