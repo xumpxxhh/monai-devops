@@ -1,19 +1,19 @@
 import type { WorkflowDefinition } from '@monai-devops/core-engine';
 import { apiDelete, apiGet, apiPost, apiPut } from './http';
-import type { PaginatedResponse } from '../types';
+import type { PaginatedResponse, WorkflowRecord } from '../types';
 
 export const workflowsApi = {
   list(params?: { search?: string; page?: number; pageSize?: number }) {
-    return apiGet<PaginatedResponse<WorkflowDefinition>>('/workflows', params);
+    return apiGet<PaginatedResponse<WorkflowRecord>>('/workflows', params);
   },
   get(id: string) {
-    return apiGet<WorkflowDefinition>(`/workflows/${id}`);
+    return apiGet<WorkflowRecord>(`/workflows/${id}`);
   },
   create(definition: WorkflowDefinition) {
-    return apiPost<WorkflowDefinition>('/workflows', definition);
+    return apiPost<WorkflowRecord>('/workflows', definition);
   },
   update(id: string, definition: WorkflowDefinition) {
-    return apiPut<WorkflowDefinition>(`/workflows/${id}`, definition);
+    return apiPut<WorkflowRecord>(`/workflows/${id}`, definition);
   },
   remove(id: string) {
     return apiDelete<{ id: string; deleted: boolean }>(`/workflows/${id}`);

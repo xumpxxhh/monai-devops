@@ -85,6 +85,13 @@ export interface PaginatedResponse<T> {
   pageSize: number;
 }
 
+export interface WorkflowRecord {
+  id: string;
+  definition: import('@monai-devops/core-engine').WorkflowDefinition;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface PluginInfo {
   name: string;
   version: string;
