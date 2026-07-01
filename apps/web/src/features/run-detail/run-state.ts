@@ -19,13 +19,16 @@ export interface StepView {
   pluginResult?: unknown;
 }
 
+export type PluginLogStream = 'stdout' | 'stderr';
+
 export interface LogLine {
   id: string;
   ts: string;
-  kind: 'event' | 'log' | 'error';
+  kind: 'event' | 'log' | 'stream' | 'error';
   eventType?: string;
   stepId?: string;
   level?: string;
+  stream?: PluginLogStream;
   message: string;
   raw?: unknown;
 }
@@ -111,6 +114,18 @@ function formatTs() {
 
 function eventToLog(event: SerializedWorkflowLifecycleEvent, id: string): LogLine {
   if (event.type === 'plugin:log') {
+    const stream = event.log?.stream as PluginLogStream | undefined;
+    if (stream) {
+      return {
+        id,
+        ts: formatTs(),
+        kind: 'stream',
+        stepId: event.step?.id,
+        stream,
+        message: event.log?.message ?? '',
+        raw: event,
+      };
+    }
     return {
       id,
       ts: formatTs(),
@@ -133,9 +148,27 @@ function eventToLog(event: SerializedWorkflowLifecycleEvent, id: string): LogLin
   };
 }
 
+function appendLogLine(logs: LogLine[], line: LogLine): LogLine[] {
+  const last = logs.at(-1);
+  if (
+    line.kind === 'stream' &&
+    last?.kind === 'stream' &&
+    last.stream === line.stream &&
+    last.stepId === line.stepId
+  ) {
+    const merged = [...logs];
+    merged[merged.length - 1] = {
+      ...last,
+      message: last.message + line.message,
+    };
+    return merged;
+  }
+  return [...logs, line];
+}
+
 export function applyRunEvent(state: RunState, event: SerializedWorkflowLifecycleEvent): RunState {
   const logId = `${state.logs.length + 1}`;
-  const logs = [...state.logs, eventToLog(event, logId)];
+  const logs = appendLogLine(state.logs, eventToLog(event, logId));
   const steps = { ...state.steps };
   let { runId, workflowName, workflowId, status, finalResult, startedAt } = state;
 

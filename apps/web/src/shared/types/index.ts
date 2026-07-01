@@ -41,7 +41,7 @@ export type SerializedWorkflowLifecycleEvent = {
   result?: unknown;
   resourceType?: string;
   priority?: number;
-  log?: { level?: string; message: string; data?: unknown };
+  log?: { level?: string; message: string; data?: unknown; stream?: 'stdout' | 'stderr' };
 };
 
 export type WsOutboundMessage =

@@ -41,6 +41,23 @@ describe('run-state reducer', () => {
     expect(state.logs.some((l) => l.kind === 'log' && l.message === 'hello')).toBe(true);
 
     state = applyRunEvent(state, {
+      type: 'plugin:log',
+      meta: { runId: 'run-1', workflowId: 'wf-1' },
+      step: { id: 'step-1', name: 'Step 1', plugin: 'test-plugin' },
+      log: { message: 'line1\n', level: 'info', stream: 'stdout' },
+    });
+    state = applyRunEvent(state, {
+      type: 'plugin:log',
+      meta: { runId: 'run-1', workflowId: 'wf-1' },
+      step: { id: 'step-1', name: 'Step 1', plugin: 'test-plugin' },
+      log: { message: 'line2\n', level: 'info', stream: 'stdout' },
+    });
+    const streamLogs = state.logs.filter((l) => l.kind === 'stream');
+    expect(streamLogs).toHaveLength(1);
+    expect(streamLogs[0].message).toBe('line1\nline2\n');
+    expect(streamLogs[0].stream).toBe('stdout');
+
+    state = applyRunEvent(state, {
       type: 'step:finished',
       meta: { runId: 'run-1', workflowId: 'wf-1' },
       step: { id: 'step-1', name: 'Step 1', plugin: 'test-plugin' },

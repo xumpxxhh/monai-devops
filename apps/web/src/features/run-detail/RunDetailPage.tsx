@@ -108,15 +108,24 @@ export default function RunDetailPage() {
     };
   }, [runId, subscribe, close]);
 
+  const lastLogMessage = runState?.logs.at(-1)?.message;
+
   useEffect(() => {
     if (autoScroll && !paused) {
       logEndRef.current?.scrollIntoView({ behavior: 'smooth' });
     }
-  }, [runState?.logs.length, autoScroll, paused]);
+  }, [runState?.logs.length, lastLogMessage, autoScroll, paused]);
 
   const filteredLogs = (runState?.logs ?? []).filter((log) => {
-    if (logFilter === 'logs') return log.kind === 'log';
-    if (logFilter === 'errors') return log.kind === 'error' || log.eventType?.includes('failed');
+    if (logFilter === 'logs') return log.kind === 'log' || log.kind === 'stream';
+    if (logFilter === 'errors') {
+      return (
+        log.kind === 'error' ||
+        log.eventType?.includes('failed') ||
+        (log.kind === 'stream' && log.stream === 'stderr') ||
+        log.level === 'error'
+      );
+    }
     return true;
   });
 
@@ -224,22 +233,32 @@ export default function RunDetailPage() {
             </div>
           </div>
           <div className="flex-1 overflow-auto p-4 font-mono text-xs bg-panel">
-            {filteredLogs.map((log) => (
-              <div key={log.id} className="log-line">
-                <span className="text-faint">{log.ts}</span>{' '}
-                <span className={log.kind === 'log' ? 'text-running' : 'text-muted'}>
-                  [{log.eventType ?? log.kind}]
-                </span>{' '}
-                {log.stepId && <span className="text-brand">{log.stepId}</span>}{' '}
-                <span className="text-ink">{log.message}</span>
-              </div>
-            ))}
+            {filteredLogs.map((log) =>
+              log.kind === 'stream' ? (
+                <pre
+                  key={log.id}
+                  className={`whitespace-pre-wrap break-words ${
+                    log.stream === 'stderr' ? 'text-failed' : 'text-ink'
+                  }`}
+                >
+                  {log.message}
+                </pre>
+              ) : (
+                <div key={log.id} className="log-line">
+                  <span className="text-faint">{log.ts}</span>{' '}
+                  <span className={log.kind === 'log' ? 'text-running' : 'text-muted'}>
+                    [{log.eventType ?? log.kind}]
+                  </span>{' '}
+                  {log.stepId && <span className="text-brand">{log.stepId}</span>}{' '}
+                  <span className="text-ink">{log.message}</span>
+                </div>
+              ),
+            )}
             {recordStatus === 'running' && (
               <div ref={logEndRef} className="cursor-blink text-faint">
                 等待事件…
               </div>
             )}
-            {!paused && recordStatus === 'running' && <div ref={logEndRef} />}
           </div>
         </div>
       </div>
