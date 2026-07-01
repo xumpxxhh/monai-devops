@@ -4,17 +4,18 @@ import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faEllipsisVertical, faPlay, faPlus } from '@fortawesome/free-solid-svg-icons';
 import type { WorkflowDefinition } from '@monai-devops/core-engine';
 import { workflowsApi } from '../../shared/api/workflows';
+import { DropdownMenu } from '../../shared/ui/DropdownMenu';
 import { EmptyState } from '../../shared/ui/EmptyState';
 import { Input } from '../../shared/ui/form';
 import { Modal } from '../../shared/ui/Modal';
+import type { WorkflowRecord } from '../../shared/types';
 
 export default function WorkflowsListPage() {
   const navigate = useNavigate();
-  const [workflows, setWorkflows] = useState<WorkflowDefinition[]>([]);
+  const [workflows, setWorkflows] = useState<WorkflowRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [deleteId, setDeleteId] = useState<string | null>(null);
-  const [menuOpen, setMenuOpen] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -39,7 +40,7 @@ export default function WorkflowsListPage() {
   const handleCopy = async (wf: WorkflowDefinition) => {
     const copy: WorkflowDefinition = {
       ...wf,
-      id: `${wf.id}-copy-${Date.now()}`,
+      id: `${wf.id}-copy-${crypto.randomUUID()}`,
       name: `${wf.name} (副本)`,
     };
     await workflowsApi.create(copy);
@@ -71,7 +72,7 @@ export default function WorkflowsListPage() {
           <Input
             type="search"
             placeholder="搜索工作流…"
-            className="w-56 bg-surface"
+            className="w-64 bg-surface"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             aria-label="搜索工作流"
@@ -110,68 +111,45 @@ export default function WorkflowsListPage() {
               </tr>
             </thead>
             <tbody>
-              {workflows.map((wf) => (
-                <tr key={wf.id} className="border-b border-line-soft hover:bg-raised/50">
+              {workflows.map((record) => (
+                <tr key={record.id} className="border-b border-line-soft hover:bg-raised/50">
                   <td className="px-4 py-3 font-medium">
-                    <Link to={`/workflows/${wf.id}/edit`} className="hover:text-brand">
-                      {wf.name}
+                    <Link to={`/workflows/${record.id}/edit`} className="hover:text-brand">
+                      {record.definition.name}
                     </Link>
                   </td>
-                  <td className="px-4 py-3 font-mono text-muted text-xs">{wf.id}</td>
-                  <td className="px-4 py-3 text-muted">{wf.steps.length}</td>
+                  <td className="px-4 py-3 font-mono text-muted text-xs">{record.id}</td>
+                  <td className="px-4 py-3 text-muted">{record.definition.steps?.length}</td>
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-1">
                       <button
                         type="button"
-                        onClick={() => handleRun(wf.id)}
+                        onClick={() => handleRun(record.id)}
                         className="p-2 rounded-ctrl hover:bg-brand-soft text-brand"
                         title="运行"
                       >
                         <FontAwesomeIcon icon={faPlay} />
                       </button>
-                      <div className="relative">
-                        <button
-                          type="button"
-                          onClick={() => setMenuOpen(menuOpen === wf.id ? null : wf.id)}
-                          className="p-2 rounded-ctrl hover:bg-raised text-muted"
-                        >
-                          <FontAwesomeIcon icon={faEllipsisVertical} />
-                        </button>
-                        {menuOpen === wf.id && (
-                          <div className="absolute right-0 top-full mt-1 z-10 bg-surface border border-line rounded-ctrl shadow-pop py-1 min-w-[120px]">
-                            <button
-                              type="button"
-                              className="w-full text-left px-3 py-1.5 text-sm hover:bg-raised"
-                              onClick={() => {
-                                handleCopy(wf);
-                                setMenuOpen(null);
-                              }}
-                            >
-                              复制
-                            </button>
-                            <button
-                              type="button"
-                              className="w-full text-left px-3 py-1.5 text-sm hover:bg-raised"
-                              onClick={() => {
-                                handleExport(wf);
-                                setMenuOpen(null);
-                              }}
-                            >
-                              导出 JSON
-                            </button>
-                            <button
-                              type="button"
-                              className="w-full text-left px-3 py-1.5 text-sm hover:bg-raised text-failed"
-                              onClick={() => {
-                                setDeleteId(wf.id);
-                                setMenuOpen(null);
-                              }}
-                            >
-                              删除
-                            </button>
-                          </div>
-                        )}
-                      </div>
+                      <DropdownMenu
+                        trigger={
+                          <button
+                            type="button"
+                            className="p-2 rounded-ctrl hover:bg-raised text-muted"
+                            aria-label="更多操作"
+                          >
+                            <FontAwesomeIcon icon={faEllipsisVertical} />
+                          </button>
+                        }
+                        items={[
+                          { label: '复制', onSelect: () => handleCopy(record.definition) },
+                          { label: '导出 JSON', onSelect: () => handleExport(record.definition) },
+                          {
+                            label: '删除',
+                            onSelect: () => setDeleteId(record.id),
+                            destructive: true,
+                          },
+                        ]}
+                      />
                     </div>
                   </td>
                 </tr>
