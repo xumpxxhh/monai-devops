@@ -1,4 +1,4 @@
-/** DAG 环检测与 id 唯一性校验 */
+/** DAG 环检测与节点引用唯一性校验 */
 export function validateDag(steps: Array<{ id: string; dependsOn?: string[] }>): {
   valid: boolean;
   errors: string[];
@@ -43,14 +43,4 @@ export function validateDag(steps: Array<{ id: string; dependsOn?: string[] }>):
   }
 
   return { valid: errors.length === 0, errors };
-}
-
-export function generateStepId(existing: string[]): string {
-  let i = existing.length + 1;
-  let id = `step-${i}`;
-  while (existing.includes(id)) {
-    i += 1;
-    id = `step-${i}`;
-  }
-  return id;
 }

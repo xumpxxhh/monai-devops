@@ -1,6 +1,17 @@
-import type { WorkflowDefinition } from '@monai-devops/core-engine';
+import type { WorkflowStep } from '@monai-devops/core-engine';
 import { apiDelete, apiGet, apiPost, apiPut } from './http';
 import type { PaginatedResponse, WorkflowRecord } from '../types';
+
+export type WorkflowDraftStep = Omit<WorkflowStep, 'id'> & {
+  id?: string;
+  clientRef?: string;
+};
+
+export type WorkflowDraft = {
+  id?: string;
+  name: string;
+  steps: WorkflowDraftStep[];
+};
 
 export const workflowsApi = {
   list(params?: { search?: string; page?: number; pageSize?: number }) {
@@ -9,17 +20,17 @@ export const workflowsApi = {
   get(id: string) {
     return apiGet<WorkflowRecord>(`/workflows/${id}`);
   },
-  create(definition: WorkflowDefinition) {
-    return apiPost<WorkflowRecord>('/workflows', definition);
+  create(draft: WorkflowDraft) {
+    return apiPost<WorkflowRecord>('/workflows', draft);
   },
-  update(id: string, definition: WorkflowDefinition) {
-    return apiPut<WorkflowRecord>(`/workflows/${id}`, definition);
+  update(id: string, draft: WorkflowDraft) {
+    return apiPut<WorkflowRecord>(`/workflows/${id}`, draft);
   },
   remove(id: string) {
     return apiDelete<{ id: string; deleted: boolean }>(`/workflows/${id}`);
   },
-  validate(definition: WorkflowDefinition) {
-    return apiPost<{ valid: boolean }>('/workflows/validate', definition);
+  validate(draft: WorkflowDraft) {
+    return apiPost<{ valid: boolean }>('/workflows/validate', draft);
   },
   run(
     id: string,

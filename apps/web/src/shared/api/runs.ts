@@ -1,4 +1,4 @@
-import type { WorkflowDefinition } from '@monai-devops/core-engine';
+import type { WorkflowDraft } from './workflows';
 import { apiDelete, apiGet, apiPost } from './http';
 import type { PaginatedResponse, RunRecord, SerializedWorkflowLifecycleEvent } from '../types';
 
@@ -15,7 +15,7 @@ export const runsApi = {
   get(runId: string) {
     return apiGet<RunRecord>(`/runs/${runId}`);
   },
-  submit(workflow: WorkflowDefinition, options?: { priority?: number; traceId?: string }) {
+  submit(workflow: WorkflowDraft, options?: { priority?: number; traceId?: string }) {
     return apiPost<{ runId: string; status: string }>('/runs', { workflow, ...options });
   },
   getEvents(runId: string) {

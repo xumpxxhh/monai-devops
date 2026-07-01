@@ -15,21 +15,26 @@ import {
   Position,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
-import type { WorkflowDefinition, WorkflowStep } from '@monai-devops/core-engine';
+import type { WorkflowDefinition } from '@monai-devops/core-engine';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faPlay, faSave } from '@fortawesome/free-solid-svg-icons';
-import { workflowsApi } from '../../shared/api/workflows';
+import { workflowsApi, type WorkflowDraft } from '../../shared/api/workflows';
 import { runsApi } from '../../shared/api/runs';
+import { ApiError } from '../../shared/api/http';
 import { pluginsApi } from '../../shared/api/misc';
 import type { PluginInfo } from '../../shared/types';
-import { validateDag, generateStepId } from './dag-utils';
+import { validateDag } from './dag-utils';
 import { FullscreenLayout } from '../../layouts/FullscreenLayout';
 import { Field, Input, Textarea, Select, Checkbox } from '../../shared/ui/form';
+import { toast } from 'sonner';
 
 interface StepNodeData {
   label: string;
   plugin: string;
-  status?: string;
+  clientRef: string;
+  stepId?: string;
+  config?: Record<string, unknown>;
+  priority?: number;
   [key: string]: unknown;
 }
 
@@ -46,66 +51,107 @@ function StepNode({ data }: { data: StepNodeData }) {
 
 const nodeTypes = { step: StepNode };
 
-function stepsToFlow(steps: WorkflowStep[]): { nodes: Node[]; edges: Edge[] } {
-  const nodes: Node[] = steps.map((step, i) => ({
+function createClientRef() {
+  return crypto.randomUUID();
+}
+
+function definitionToFlow(definition: WorkflowDefinition): {
+  nodes: Node<StepNodeData>[];
+  edges: Edge[];
+} {
+  const nodes: Node[] = definition.steps.map((step, i) => ({
     id: step.id,
     type: 'step',
     position: { x: 120 + (i % 3) * 200, y: 80 + Math.floor(i / 3) * 120 },
-    data: { label: step.name, plugin: step.plugin },
+    data: {
+      label: step.name,
+      plugin: step.plugin,
+      clientRef: step.id,
+      stepId: step.id,
+      config: step.config,
+      priority: step.priority,
+    } satisfies StepNodeData,
   }));
   const edges: Edge[] = [];
-  for (const step of steps) {
+  for (const step of definition.steps) {
     for (const dep of step.dependsOn ?? []) {
       edges.push({ id: `${dep}->${step.id}`, source: dep, target: step.id, animated: false });
     }
   }
-  return { nodes, edges };
+  return { nodes: nodes as Node<StepNodeData>[], edges };
 }
 
-function flowToSteps(nodes: Node[], edges: Edge[]): WorkflowStep[] {
-  const depsMap = new Map<string, string[]>();
-  for (const edge of edges) {
-    const list = depsMap.get(edge.target) ?? [];
-    list.push(edge.source);
-    depsMap.set(edge.target, list);
+function resolveNodeRef(node: Node<StepNodeData>): string {
+  const data = node.data;
+  return data.stepId ?? data.clientRef ?? node.id;
+}
+
+function buildDraft(
+  nodes: Node<StepNodeData>[],
+  edges: Edge[],
+  workflowName: string,
+  workflowId: string | null,
+  selectedNodeId: string | null,
+  configJson: string,
+): WorkflowDraft {
+  const nodeById = new Map(nodes.map((n) => [n.id, n]));
+
+  return {
+    ...(workflowId ? { id: workflowId } : {}),
+    name: workflowName,
+    steps: nodes.map((node) => {
+      const data = node.data;
+      let config = data.config ?? { type: 'integration' };
+      if (node.id === selectedNodeId) {
+        try {
+          config = JSON.parse(configJson) as Record<string, unknown>;
+        } catch {
+          // keep existing config when JSON invalid
+        }
+      }
+
+      const deps = edges
+        .filter((e) => e.target === node.id)
+        .map((e) => {
+          const source = nodeById.get(e.source);
+          return source ? resolveNodeRef(source) : e.source;
+        });
+
+      return {
+        clientRef: data.clientRef ?? node.id,
+        ...(data.stepId ? { id: data.stepId } : {}),
+        name: data.label,
+        plugin: data.plugin,
+        config,
+        dependsOn: deps,
+        priority: data.priority,
+      };
+    }),
+  };
+}
+
+function validateWorkflowName(name: string): string | undefined {
+  if (!name.trim()) {
+    return '工作流名称不能为空';
   }
-  return nodes.map((node) => {
-    const extra = node.data as StepNodeData & {
-      config?: Record<string, unknown>;
-      priority?: number;
-    };
-    return {
-      id: node.id,
-      name: extra.label ?? node.id,
-      plugin: extra.plugin ?? 'test-plugin',
-      config: extra.config ?? { type: 'integration' },
-      dependsOn: depsMap.get(node.id) ?? [],
-      priority: extra.priority,
-    };
-  });
+  return undefined;
 }
 
-const DEFAULT_WORKFLOW: WorkflowDefinition = {
-  id: 'new-workflow',
-  name: '新工作流',
-  steps: [
-    {
-      id: 'step-1',
-      name: '集成测试',
-      plugin: 'test-plugin',
-      config: { type: 'integration' },
-      dependsOn: [],
-    },
-  ],
-};
+function dagStepsFromNodes(nodes: Node<StepNodeData>[], edges: Edge[]) {
+  return nodes.map((node) => ({
+    id: node.id,
+    dependsOn: edges.filter((e) => e.target === node.id).map((e) => e.source),
+  }));
+}
 
 export default function WorkflowEditorPage() {
   const { id } = useParams();
   const navigate = useNavigate();
   const isNew = !id || id === 'new';
 
-  const [workflowId, setWorkflowId] = useState('new-workflow');
-  const [workflowName, setWorkflowName] = useState('新工作流');
+  const [workflowId, setWorkflowId] = useState<string | null>(null);
+  const [workflowName, setWorkflowName] = useState('');
+  const [workflowNameError, setWorkflowNameError] = useState('');
   const [plugins, setPlugins] = useState<PluginInfo[]>([]);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [configJson, setConfigJson] = useState('{"type":"integration"}');
@@ -115,15 +161,28 @@ export default function WorkflowEditorPage() {
   const [failFast, setFailFast] = useState(true);
   const [maxParallel, setMaxParallel] = useState(1);
 
-  const initial = useMemo(() => stepsToFlow(DEFAULT_WORKFLOW.steps), []);
-  const [nodes, setNodes, onNodesChange] = useNodesState(initial.nodes);
-  const [edges, setEdges, onEdgesChange] = useEdgesState(initial.edges);
+  const [nodes, setNodes, onNodesChange] = useNodesState<Node<StepNodeData>>([]);
+  const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
+
+  const syncFlowFromDefinition = useCallback(
+    (definition: WorkflowDefinition) => {
+      const flow = definitionToFlow(definition);
+      setNodes(flow.nodes);
+      setEdges(flow.edges);
+      setWorkflowId(definition.id);
+      setWorkflowName(definition.name);
+    },
+    [setNodes, setEdges],
+  );
 
   useEffect(() => {
     pluginsApi
       .list()
       .then(setPlugins)
-      .catch(() => setPlugins([{ name: 'test-plugin', version: '1.0.0' }]));
+      .catch(() => {
+        toast.warning('加载插件列表失败，使用本地兜底数据');
+        setPlugins([{ name: 'test-plugin', version: '1.0.0' }]);
+      });
   }, []);
 
   useEffect(() => {
@@ -131,108 +190,111 @@ export default function WorkflowEditorPage() {
       workflowsApi
         .get(id)
         .then((record) => {
-          const wf = record.definition;
-          setWorkflowId(wf.id);
-          setWorkflowName(wf.name);
-          const flow = stepsToFlow(wf.steps);
-          setNodes(flow.nodes);
-          setEdges(flow.edges);
+          syncFlowFromDefinition(record.definition);
         })
-        .catch(() => {});
+        .catch((e) => {
+          toast.error(e instanceof Error ? e.message : '加载工作流失败');
+        });
     }
-  }, [id, isNew, setNodes, setEdges]);
+  }, [id, isNew, syncFlowFromDefinition]);
 
   const onConnect = useCallback(
     (connection: Connection) => setEdges((eds) => addEdge(connection, eds)),
     [setEdges],
   );
 
-  const steps = useMemo(() => flowToSteps(nodes, edges), [nodes, edges]);
-  const dagValidation = useMemo(() => validateDag(steps), [steps]);
+  const dagValidation = useMemo(() => validateDag(dagStepsFromNodes(nodes, edges)), [nodes, edges]);
   const validationErrors = dagValidation.errors;
 
-  const selectedStep = selectedNodeId ? steps.find((s) => s.id === selectedNodeId) : null;
+  const selectedNode = selectedNodeId ? nodes.find((n) => n.id === selectedNodeId) : null;
+  const selectedStepId = selectedNode?.data.stepId;
 
   const selectNode = (nodeId: string) => {
     setSelectedNodeId(nodeId);
-    const step = steps.find((s) => s.id === nodeId);
-    if (step) {
-      setConfigJson(JSON.stringify(step.config ?? {}, null, 2));
+    const node = nodes.find((n) => n.id === nodeId);
+    if (node) {
+      const config = (node.data as StepNodeData).config ?? { type: 'integration' };
+      setConfigJson(JSON.stringify(config, null, 2));
       setConfigError('');
     }
   };
 
   const addStep = (plugin: string) => {
-    const ids = nodes.map((n) => n.id);
-    const newId = generateStepId(ids);
-    const newNode: Node = {
-      id: newId,
+    const clientRef = createClientRef();
+    const newNode: Node<StepNodeData> = {
+      id: clientRef,
       type: 'step',
       position: { x: 120 + nodes.length * 40, y: 200 },
-      data: { label: `步骤 ${nodes.length + 1}`, plugin, config: { type: 'integration' } },
+      data: {
+        label: `步骤 ${nodes.length + 1}`,
+        plugin,
+        clientRef,
+        config: { type: 'integration' },
+      },
     };
     setNodes((nds) => [...nds, newNode]);
-    setSelectedNodeId(newId);
+    setSelectedNodeId(clientRef);
     setConfigJson(JSON.stringify({ type: 'integration' }, null, 2));
     setConfigError('');
   };
 
-  const updateSelected = (patch: Partial<WorkflowStep>) => {
+  const updateSelected = (
+    patch: Partial<Pick<StepNodeData, 'label' | 'plugin' | 'config' | 'priority'>>,
+  ) => {
     if (!selectedNodeId) return;
     setNodes((nds) =>
       nds.map((n) =>
         n.id === selectedNodeId
           ? {
               ...n,
-              id: patch.id ?? n.id,
               data: {
                 ...n.data,
-                label: patch.name ?? (n.data as StepNodeData).label,
-                plugin: patch.plugin ?? (n.data as StepNodeData).plugin,
-                config: patch.config ?? (n.data as StepNodeData).config,
+                label: patch.label ?? n.data.label,
+                plugin: patch.plugin ?? n.data.plugin,
+                config: patch.config ?? n.data.config,
                 priority: patch.priority,
               },
             }
           : n,
       ),
     );
-    if (patch.id && patch.id !== selectedNodeId) {
-      setEdges((eds) =>
-        eds.map((e) => ({
-          ...e,
-          source: e.source === selectedNodeId ? patch.id! : e.source,
-          target: e.target === selectedNodeId ? patch.id! : e.target,
-          id: e.id.replace(selectedNodeId, patch.id!),
-        })),
-      );
-      setSelectedNodeId(patch.id);
-    }
   };
 
-  const buildWorkflow = (): WorkflowDefinition => ({
-    id: workflowId,
-    name: workflowName,
-    steps: flowToSteps(nodes, edges).map((s) => {
-      if (s.id === selectedNodeId) {
-        try {
-          return { ...s, config: JSON.parse(configJson) as Record<string, unknown> };
-        } catch {
-          return s;
-        }
-      }
-      return s;
-    }),
-  });
+  const buildCurrentDraft = () =>
+    buildDraft(nodes, edges, workflowName, workflowId, selectedNodeId, configJson);
+
+  const isWorkflowNameValid = !validateWorkflowName(workflowName);
 
   const handleSave = async () => {
+    const nameError = validateWorkflowName(workflowName);
+    if (nameError) {
+      toast.warning(nameError);
+      return;
+    }
+    if (nodes.length === 0) {
+      toast.warning('请至少添加一个步骤');
+      return;
+    }
+    setWorkflowNameError('');
+
     setSaving(true);
     try {
-      const wf = buildWorkflow();
+      const draft = buildCurrentDraft();
       if (isNew) {
-        const created = await workflowsApi.create(wf);
+        const created = await workflowsApi.create(draft);
+        syncFlowFromDefinition(created.definition);
+        toast.success('工作流已保存');
         navigate(`/workflows/${created.id}/edit`, { replace: true });
+      } else if (workflowId) {
+        const updated = await workflowsApi.update(workflowId, draft);
+        syncFlowFromDefinition(updated.definition);
+        toast.success('工作流已保存');
+      }
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 409) {
+        setWorkflowNameError(error.message);
       } else {
-        await workflowsApi.update(workflowId, wf);
+        toast.error(error instanceof Error ? error.message : '保存工作流失败');
       }
     } finally {
       setSaving(false);
@@ -240,12 +302,19 @@ export default function WorkflowEditorPage() {
   };
 
   const handleRun = async () => {
-    if (!dagValidation.valid) return;
+    const nameError = validateWorkflowName(workflowName);
+    if (nameError) {
+      setWorkflowNameError(nameError);
+      return;
+    }
+    if (!dagValidation.valid || nodes.length === 0) return;
     setRunning(true);
     try {
-      const wf = buildWorkflow();
-      const { runId } = await runsApi.submit(wf, { traceId: `web-${Date.now()}` });
+      const draft = buildCurrentDraft();
+      const { runId } = await runsApi.submit(draft, { traceId: `web-${Date.now()}` });
       navigate(`/runs/${runId}`);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : '运行工作流失败');
     } finally {
       setRunning(false);
     }
@@ -265,7 +334,7 @@ export default function WorkflowEditorPage() {
       <button
         type="button"
         onClick={handleRun}
-        disabled={!dagValidation.valid || running}
+        disabled={!dagValidation.valid || running || nodes.length === 0 || !isWorkflowNameValid}
         title={validationErrors.join('; ') || undefined}
         className="inline-flex items-center gap-2 h-9 px-4 rounded-ctrl bg-brand text-white text-sm font-medium hover:bg-brand-hover disabled:opacity-50"
       >
@@ -276,7 +345,12 @@ export default function WorkflowEditorPage() {
   );
 
   return (
-    <FullscreenLayout backTo="/workflows" backLabel="工作流" title={workflowName} actions={actions}>
+    <FullscreenLayout
+      backTo="/workflows"
+      backLabel="工作流"
+      title={workflowName.trim() || '未命名工作流'}
+      actions={actions}
+    >
       <div className="flex h-full">
         <aside className="w-56 shrink-0 border-r border-line bg-surface p-4 overflow-auto">
           <h3 className="text-xs font-medium text-faint uppercase tracking-wider mb-3">插件库</h3>
@@ -310,6 +384,11 @@ export default function WorkflowEditorPage() {
             <Controls />
             <MiniMap />
           </ReactFlow>
+          {nodes.length === 0 && (
+            <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+              <p className="text-sm text-faint">从左侧插件库添加步骤开始编排</p>
+            </div>
+          )}
           {validationErrors.length > 0 && (
             <div className="absolute bottom-4 left-4 right-4 bg-failed/10 border border-failed/30 text-failed text-sm px-4 py-2 rounded-ctrl">
               {validationErrors.join(' · ')}
@@ -323,15 +402,27 @@ export default function WorkflowEditorPage() {
             <Input
               id="workflow-id"
               mono
-              value={workflowId}
-              onChange={(e) => setWorkflowId(e.target.value)}
+              readOnly
+              value={workflowId ?? ''}
+              placeholder="保存后生成"
             />
           </Field>
-          <Field label="名称" htmlFor="workflow-name" className="mb-4">
+          <Field
+            label="名称"
+            htmlFor="workflow-name"
+            className="mb-4"
+            error={workflowNameError || undefined}
+          >
             <Input
               id="workflow-name"
               value={workflowName}
-              onChange={(e) => setWorkflowName(e.target.value)}
+              placeholder="请输入工作流名称"
+              onChange={(e) => {
+                setWorkflowName(e.target.value);
+                if (workflowNameError) {
+                  setWorkflowNameError(validateWorkflowName(e.target.value) ?? '');
+                }
+              }}
             />
           </Field>
 
@@ -342,7 +433,7 @@ export default function WorkflowEditorPage() {
               onCheckedChange={setFailFast}
               label="failFast"
             />
-            <label className="flex items-center gap-2 text-muted">
+            <label className="flex items-center gap-2 text-muted whitespace-nowrap">
               并行
               <Input
                 type="number"
@@ -354,7 +445,7 @@ export default function WorkflowEditorPage() {
             </label>
           </div>
 
-          {selectedStep ? (
+          {selectedNode ? (
             <>
               <h3 className="text-xs font-medium text-faint uppercase tracking-wider mb-3 mt-6">
                 步骤属性
@@ -363,21 +454,22 @@ export default function WorkflowEditorPage() {
                 <Input
                   id="step-id"
                   mono
-                  value={selectedStep.id}
-                  onChange={(e) => updateSelected({ id: e.target.value })}
+                  readOnly
+                  value={selectedStepId ?? ''}
+                  placeholder="保存后生成"
                 />
               </Field>
               <Field label="名称" htmlFor="step-name">
                 <Input
                   id="step-name"
-                  value={selectedStep.name}
-                  onChange={(e) => updateSelected({ name: e.target.value })}
+                  value={selectedNode.data.label}
+                  onChange={(e) => updateSelected({ label: e.target.value })}
                 />
               </Field>
               <Field label="插件" htmlFor="step-plugin">
                 <Select
                   id="step-plugin"
-                  value={selectedStep.plugin}
+                  value={selectedNode.data.plugin}
                   onValueChange={(plugin) => updateSelected({ plugin })}
                   options={plugins.map((p) => ({ value: p.name, label: p.name }))}
                 />
