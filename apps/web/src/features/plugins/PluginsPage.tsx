@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { toast } from 'sonner';
 import { pluginsApi } from '../../shared/api/misc';
 import type { ExecutionResultSerialized, PluginInfo } from '../../shared/types';
 import { StatusBadge } from '../../shared/ui/StatusBadge';
@@ -21,7 +22,9 @@ export default function PluginsPage() {
         setPlugins(list);
         if (list[0]) setSelected(list[0]);
       })
-      .catch(() => {});
+      .catch((e) => {
+        toast.error(e instanceof Error ? e.message : '加载插件列表失败');
+      });
   }, []);
 
   const handleDryRun = async () => {
@@ -38,8 +41,11 @@ export default function PluginsPage() {
       if (result.pluginResult?.message) {
         setLogs((l) => [...l, `plugin: ${result.pluginResult!.message}`]);
       }
+      toast.success('试运行完成');
     } catch (e) {
-      setDryRunError(e instanceof Error ? e.message : '试运行失败');
+      const message = e instanceof Error ? e.message : '试运行失败';
+      setDryRunError(message);
+      toast.error(message);
     } finally {
       setRunning(false);
     }

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
+import { toast } from 'sonner';
 import { runsApi } from '../../shared/api/runs';
 import type { RunRecord } from '../../shared/types';
 import { RUN_STATUS_META } from '../../shared/types/status';
@@ -13,25 +14,32 @@ export default function RunsListPage() {
   const [statusFilter, setStatusFilter] = useState('');
   const [search, setSearch] = useState('');
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    try {
-      const res = await runsApi.list({
-        status: statusFilter || undefined,
-        search: search || undefined,
-        pageSize: 50,
-      });
-      setRuns(res.items);
-    } finally {
-      setLoading(false);
-    }
-  }, [statusFilter, search]);
+  const load = useCallback(
+    async (opts?: { silent?: boolean }) => {
+      setLoading(true);
+      try {
+        const res = await runsApi.list({
+          status: statusFilter || undefined,
+          search: search || undefined,
+          pageSize: 50,
+        });
+        setRuns(res.items);
+      } catch (e) {
+        if (!opts?.silent) {
+          toast.error(e instanceof Error ? e.message : '加载运行列表失败');
+        }
+      } finally {
+        setLoading(false);
+      }
+    },
+    [statusFilter, search],
+  );
 
   useEffect(() => {
     // 列表轮询：在 effect 中触发数据拉取
     // eslint-disable-next-line react-hooks/set-state-in-effect -- 合法的客户端数据同步
     void load();
-    const timer = setInterval(() => void load(), 5000);
+    const timer = setInterval(() => void load({ silent: true }), 5000);
     return () => clearInterval(timer);
   }, [load]);
 

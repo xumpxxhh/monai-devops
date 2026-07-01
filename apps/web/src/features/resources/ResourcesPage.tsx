@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
+import { toast } from 'sonner';
 import { resourcesApi } from '../../shared/api/misc';
 import type { QueueStatus, ResourceSlot } from '../../shared/types';
 
@@ -14,7 +15,9 @@ export default function ResourcesPage() {
         setResources(res);
         setQueue(q);
       })
-      .catch(() => {})
+      .catch((e) => {
+        toast.error(e instanceof Error ? e.message : '加载资源数据失败');
+      })
       .finally(() => setLoading(false));
 
     const timer = setInterval(() => {

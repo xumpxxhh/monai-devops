@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
+import { toast } from 'sonner';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faCopy, faBan } from '@fortawesome/free-solid-svg-icons';
 import { runsApi } from '../../shared/api/runs';
@@ -97,9 +98,10 @@ export default function RunDetailPage() {
       }
     }
 
-    load().catch(() => {
+    load().catch((e) => {
       setRunState(createInitialRunState(runId!, undefined));
       setWsBanner('无法加载运行详情');
+      toast.error(e instanceof Error ? e.message : '无法加载运行详情');
     });
 
     return () => {

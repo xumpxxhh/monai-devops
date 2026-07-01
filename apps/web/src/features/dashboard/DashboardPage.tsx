@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
+import { toast } from 'sonner';
 import { statsApi } from '../../shared/api/misc';
 import { runsApi } from '../../shared/api/runs';
 import type { RunRecord, StatsOverview } from '../../shared/types';
@@ -35,11 +36,15 @@ export default function DashboardPage() {
     statsApi
       .overview()
       .then(setStats)
-      .catch(() => {});
+      .catch((e) => {
+        toast.error(e instanceof Error ? e.message : '加载统计数据失败');
+      });
     runsApi
       .list({ pageSize: 5 })
       .then((r) => setRecentRuns(r.items))
-      .catch(() => {});
+      .catch((e) => {
+        toast.error(e instanceof Error ? e.message : '加载近期运行失败');
+      });
 
     const timer = setInterval(() => {
       statsApi

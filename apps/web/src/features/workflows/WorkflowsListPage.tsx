@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
+import { toast } from 'sonner';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faEllipsisVertical, faPlay, faPlus } from '@fortawesome/free-solid-svg-icons';
 import type { WorkflowDefinition } from '@monai-devops/core-engine';
-import { workflowsApi } from '../../shared/api/workflows';
+import { workflowsApi, type WorkflowDraft } from '../../shared/api/workflows';
 import { DropdownMenu } from '../../shared/ui/DropdownMenu';
 import { EmptyState } from '../../shared/ui/EmptyState';
 import { Input } from '../../shared/ui/form';
@@ -22,6 +23,8 @@ export default function WorkflowsListPage() {
     try {
       const res = await workflowsApi.list({ search: search || undefined, pageSize: 50 });
       setWorkflows(res.items);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : '加载工作流列表失败');
     } finally {
       setLoading(false);
     }
@@ -33,18 +36,35 @@ export default function WorkflowsListPage() {
   }, [load]);
 
   const handleRun = async (id: string) => {
-    const { runId } = await workflowsApi.run(id);
-    navigate(`/runs/${runId}`);
+    try {
+      const { runId } = await workflowsApi.run(id);
+      navigate(`/runs/${runId}`);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : '运行工作流失败');
+    }
   };
 
   const handleCopy = async (wf: WorkflowDefinition) => {
-    const copy: WorkflowDefinition = {
-      ...wf,
-      id: `${wf.id}-copy-${crypto.randomUUID()}`,
+    const refByStepId = new Map(wf.steps.map((step, i) => [step.id, `copy-${i}`]));
+    const copy: WorkflowDraft = {
       name: `${wf.name} (副本)`,
+      steps: wf.steps.map((step, i) => ({
+        clientRef: `copy-${i}`,
+        name: step.name,
+        plugin: step.plugin,
+        config: step.config,
+        dependsOn: step.dependsOn?.map((dep) => refByStepId.get(dep) ?? dep),
+        priority: step.priority,
+        condition: step.condition,
+      })),
     };
-    await workflowsApi.create(copy);
-    load();
+    try {
+      await workflowsApi.create(copy);
+      toast.success('工作流已复制');
+      await load();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : '复制工作流失败');
+    }
   };
 
   const handleExport = (wf: WorkflowDefinition) => {
@@ -59,9 +79,14 @@ export default function WorkflowsListPage() {
 
   const handleDelete = async () => {
     if (!deleteId) return;
-    await workflowsApi.remove(deleteId);
-    setDeleteId(null);
-    load();
+    try {
+      await workflowsApi.remove(deleteId);
+      setDeleteId(null);
+      toast.success('工作流已删除');
+      await load();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : '删除工作流失败');
+    }
   };
 
   return (
@@ -79,7 +104,7 @@ export default function WorkflowsListPage() {
           />
           <Link
             to="/workflows/new"
-            className="inline-flex items-center gap-2 h-9 px-4 rounded-ctrl bg-brand text-white text-sm font-medium hover:bg-brand-hover"
+            className="inline-flex w-32 items-center gap-2 h-9 px-4 rounded-ctrl bg-brand text-white text-sm font-medium hover:bg-brand-hover"
           >
             <FontAwesomeIcon icon={faPlus} />
             新建
