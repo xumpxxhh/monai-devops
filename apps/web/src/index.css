@@ -152,6 +152,17 @@ samp,
   animation: toast-in 0.18s ease-out;
 }
 
+@keyframes toast-out {
+  from {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+}
+
 .log-line {
   padding: 2px 0;
 }
