@@ -8,8 +8,8 @@ import {
   Put,
   Query,
 } from '@nestjs/common';
-import type { WorkflowDefinition } from '@monai-devops/core-engine';
 import { parsePagination } from '../common/dto/pagination.dto.js';
+import type { WorkflowDraft } from '../common/validation/normalize-workflow-ids.js';
 import type { SubmitRunOptions } from '../runs/run-manager.service.js';
 import { WorkflowsService } from './workflows.service.js';
 
@@ -28,13 +28,13 @@ export class WorkflowsController {
   }
 
   @Post()
-  create(@Body() definition: WorkflowDefinition) {
-    return this.workflowsService.create(definition);
+  create(@Body() draft: WorkflowDraft) {
+    return this.workflowsService.create(draft);
   }
 
   @Post('validate')
-  validate(@Body() definition: WorkflowDefinition) {
-    return this.workflowsService.validate(definition);
+  validate(@Body() draft: WorkflowDraft) {
+    return this.workflowsService.validate(draft);
   }
 
   @Get(':id')
@@ -43,8 +43,8 @@ export class WorkflowsController {
   }
 
   @Put(':id')
-  update(@Param('id') id: string, @Body() definition: WorkflowDefinition) {
-    return this.workflowsService.update(id, definition);
+  update(@Param('id') id: string, @Body() draft: WorkflowDraft) {
+    return this.workflowsService.update(id, draft);
   }
 
   @Delete(':id')

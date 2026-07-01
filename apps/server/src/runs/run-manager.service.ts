@@ -19,6 +19,10 @@ import {
   serializeWorkflowEvent,
   serializeWorkflowRunResult,
 } from '../common/serialization/serialize-workflow-event.js';
+import {
+  normalizeWorkflowIds,
+  type WorkflowDraft,
+} from '../common/validation/normalize-workflow-ids.js';
 import { validateWorkflowDefinition } from '../common/validation/validate-workflow.js';
 import { EngineService } from '../engine/engine.service.js';
 import { RunStreamService } from './run-stream.service.js';
@@ -51,7 +55,7 @@ export class RunManagerService implements OnModuleInit {
     this.engineService.onEvent((event) => this.handleEngineEvent(event));
   }
 
-  async submitRun(workflow: WorkflowDefinition, options: SubmitRunOptions = {}) {
+  async submitRun(workflow: WorkflowDefinition | WorkflowDraft, options: SubmitRunOptions = {}) {
     const maxActiveRuns = this.config.get<number>('MAX_ACTIVE_RUNS', 50);
     const activeCount = await this.runRepository.countActive();
     if (activeCount >= maxActiveRuns) {
@@ -66,8 +70,10 @@ export class RunManagerService implements OnModuleInit {
       );
     }
 
+    const normalized = normalizeWorkflowIds(workflow);
+
     try {
-      validateWorkflowDefinition(workflow);
+      validateWorkflowDefinition(normalized);
     } catch (error) {
       if (error instanceof WorkflowValidationError) {
         throw error;
@@ -80,19 +86,19 @@ export class RunManagerService implements OnModuleInit {
 
     const record: RunRecord = {
       runId,
-      workflowId: workflow.id,
-      workflowSnapshot: structuredClone(workflow),
+      workflowId: normalized.id,
+      workflowSnapshot: structuredClone(normalized),
       status: 'queued',
       traceId,
-      counts: this.initialCounts(workflow),
+      counts: this.initialCounts(normalized),
       createdAt: new Date(),
       events: [],
     };
 
     await this.runRepository.save(record);
-    this.logger.log(`Run ${runId} queued (workflow=${workflow.id}, traceId=${traceId})`);
+    this.logger.log(`Run ${runId} queued (workflow=${normalized.id}, traceId=${traceId})`);
 
-    void this.executeRun(runId, workflow, {
+    void this.executeRun(runId, normalized, {
       runId,
       traceId,
       priority: options.priority,

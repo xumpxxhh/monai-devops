@@ -20,6 +20,18 @@ export class InMemoryWorkflowRepository implements WorkflowRepository {
     return record ? structuredClone(record) : undefined;
   }
 
+  async findByName(name: string): Promise<WorkflowRecord | undefined> {
+    const normalized = name.trim().toLowerCase();
+    if (!normalized) return undefined;
+
+    for (const record of this.records.values()) {
+      if (record.definition.name.trim().toLowerCase() === normalized) {
+        return structuredClone(record);
+      }
+    }
+    return undefined;
+  }
+
   async list(filter: WorkflowListFilter) {
     let items = Array.from(this.records.values());
 

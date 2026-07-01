@@ -9,13 +9,13 @@ import {
   Post,
   Query,
 } from '@nestjs/common';
-import type { WorkflowDefinition } from '@monai-devops/core-engine';
+import type { WorkflowDraft } from '../common/validation/normalize-workflow-ids.js';
 import { parsePagination } from '../common/dto/pagination.dto.js';
 import { RunManagerService, type SubmitRunOptions } from './run-manager.service.js';
 import type { RunStatus } from './runs.repository.js';
 
 interface InlineRunBody extends SubmitRunOptions {
-  workflow: WorkflowDefinition;
+  workflow: WorkflowDraft;
 }
 
 @Controller('runs')

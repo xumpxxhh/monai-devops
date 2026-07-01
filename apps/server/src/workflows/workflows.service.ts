@@ -1,5 +1,8 @@
 import { HttpException, HttpStatus, Inject, Injectable } from '@nestjs/common';
-import type { WorkflowDefinition } from '@monai-devops/core-engine';
+import {
+  normalizeWorkflowIds,
+  type WorkflowDraft,
+} from '../common/validation/normalize-workflow-ids.js';
 import { EngineService } from '../engine/engine.service.js';
 import { RunManagerService, type SubmitRunOptions } from '../runs/run-manager.service.js';
 import {
@@ -17,8 +20,14 @@ export class WorkflowsService {
     private readonly runManager: RunManagerService,
   ) {}
 
-  async create(definition: WorkflowDefinition): Promise<WorkflowRecord> {
+  async create(draft: WorkflowDraft): Promise<WorkflowRecord> {
+    const definition = normalizeWorkflowIds(draft);
     this.engineService.validateWorkflow(definition);
+
+    const nameConflict = await this.workflowRepository.findByName(definition.name);
+    if (nameConflict) {
+      throw new HttpException(`工作流名称「${definition.name}」已存在`, HttpStatus.CONFLICT);
+    }
 
     const existing = await this.workflowRepository.findById(definition.id);
     if (existing) {
@@ -48,7 +57,14 @@ export class WorkflowsService {
     return record;
   }
 
-  async update(id: string, definition: WorkflowDefinition): Promise<WorkflowRecord> {
+  async update(id: string, draft: WorkflowDraft): Promise<WorkflowRecord> {
+    const existing = await this.workflowRepository.findById(id);
+    if (!existing) {
+      throw new HttpException('Workflow 不存在', HttpStatus.NOT_FOUND);
+    }
+
+    const knownStepIds = new Set(existing.definition.steps.map((s) => s.id));
+    const definition = normalizeWorkflowIds(draft, { workflowId: id, knownStepIds });
     if (definition.id !== id) {
       throw new HttpException('路径 id 与 body.id 不一致', HttpStatus.BAD_REQUEST);
     }
@@ -68,7 +84,8 @@ export class WorkflowsService {
     }
   }
 
-  validate(definition: WorkflowDefinition) {
+  validate(draft: WorkflowDraft) {
+    const definition = normalizeWorkflowIds(draft);
     this.engineService.validateWorkflow(definition);
     return { valid: true };
   }
