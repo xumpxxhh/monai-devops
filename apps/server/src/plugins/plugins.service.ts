@@ -18,6 +18,14 @@ export class PluginsService {
     return plugin;
   }
 
+  getConfigSchema(name: string) {
+    const schema = this.engineService.getPluginConfigJsonSchema(name);
+    if (!schema) {
+      throw new HttpException('插件不存在或未声明 configSchema', HttpStatus.NOT_FOUND);
+    }
+    return { name, configJsonSchema: schema };
+  }
+
   dryRun(name: string, config: PluginConfig) {
     if (!this.engineService.getPlugin(name)) {
       throw new HttpException('插件不存在', HttpStatus.NOT_FOUND);

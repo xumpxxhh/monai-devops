@@ -16,6 +16,7 @@
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "test": "node --experimental-vm-modules node_modules/jest/bin/jest.js",
+    "test:plugins": "node scripts/run-plugin-tests.mjs",
     "test:watch": "jest --watch",
     "test:cov": "jest --coverage",
     "test:debug": "node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/.bin/jest --runInBand",
@@ -32,6 +33,7 @@
     "@nestjs/websockets": "^11.1.24",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.1",
+    "zod-to-json-schema": "^3.24.0",
     "@monai-devops/test-plugin": "workspace:*",
     "ws": "^8.21.0",
     "@monai-devops/model-call-plugin": "workspace:*"

@@ -11,6 +11,7 @@ import {
   type WorkflowStep,
 } from '@monai-devops/core-engine';
 import { registeredPlugins } from '../plugins/plugin-registry.js';
+import { toPluginConfigJsonSchema } from '../plugins/plugin-config-schema.js';
 import { validateWorkflowDefinition } from '../common/validation/validate-workflow.js';
 
 type EngineInstance = ReturnType<typeof createEngine>;
@@ -115,6 +116,7 @@ export class EngineService implements OnModuleInit, OnModuleDestroy {
       name: plugin.name,
       version: plugin.version,
       description: plugin.description,
+      hasConfigSchema: Boolean(plugin.configSchema),
     }));
   }
 
@@ -125,7 +127,14 @@ export class EngineService implements OnModuleInit, OnModuleDestroy {
       name: plugin.name,
       version: plugin.version,
       description: plugin.description,
+      hasConfigSchema: Boolean(plugin.configSchema),
     };
+  }
+
+  getPluginConfigJsonSchema(name: string): Record<string, unknown> | undefined {
+    const plugin = this.engine.getPlugin(name);
+    if (!plugin?.configSchema) return undefined;
+    return toPluginConfigJsonSchema(plugin.configSchema);
   }
 
   getResources() {
