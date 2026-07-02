@@ -142,10 +142,11 @@ engine.destroy();
 
 | 导出 | 用途 |
 |------|------|
-| `createPlugin` | 创建插件定义，可选编排 `beforeExecute` / `afterExecute` / `onError` 钩子 |
-| `getConfig` / `getContext` | 读取步骤配置与运行时上下文 |
+| `createPlugin` | 创建插件定义，通过 `configSchema`（Zod）声明 config 结构，可选编排生命周期钩子 |
+| `z` / `formatZodError` | Zod 与校验错误格式化（从 SDK re-export） |
+| `getConfig` / `getContext` | 读取步骤配置与运行时上下文（无 schema 时的向后兼容） |
 | `getLogger` | 获取步骤级日志器（经 observer 发出 `plugin:log` 事件） |
-| `PluginFailureCodes` | 插件失败错误码常量 |
+| `PluginFailureCodes` | 插件失败错误码常量（含 `PLUGIN_CONFIG_INVALID`） |
 
 插件层约定：**业务失败返回 `{ success: false }`，不 throw**。
 
@@ -154,15 +155,19 @@ engine.destroy();
 在 `plugins/` 下新建包，依赖 `@monai-devops/plugin-sdk`，参考 `plugins/test-plugin`：
 
 ```ts
-import { createPlugin, getConfig, getLogger } from '@monai-devops/plugin-sdk';
+import { createPlugin, getLogger, z } from '@monai-devops/plugin-sdk';
+
+const configSchema = z.object({
+  type: z.enum(['unit', 'integration', 'e2e']),
+});
 
 export const myPlugin = createPlugin({
   name: 'my-plugin',
   version: '1.0.0',
+  configSchema,
   execute: async (config, context) => {
     const log = getLogger(context);
-    const type = getConfig<string>(config, 'type');
-    log.info('开始执行', { type });
+    log.info('开始执行', { type: config.type });
     return { success: true, message: '完成' };
   },
 });

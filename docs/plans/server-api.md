@@ -221,8 +221,9 @@ API 是领域模型的 HTTP/WS 投影，按服务资源边界归组。
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
 | `GET` | `/healthz` | 存活与 engine 就绪 |
-| `GET` | `/plugins` | 插件注册表（`name / version / description`） |
-| `GET` | `/plugins/:name` | 单插件详情 |
+| `GET` | `/plugins` | 插件注册表（`name / version / description / hasConfigSchema`） |
+| `GET` | `/plugins/:name` | 单插件详情（含 `hasConfigSchema`） |
+| `GET` | `/plugins/:name/config-schema` | 插件 config 的 JSON Schema，响应 `{ name, configJsonSchema }` |
 | `POST` | `/plugins/:name/dry-run` | 单步试运行，body `{ config }` → `ExecutionResult` |
 
 ### 7.2 Workflows（定义 CRUD + 校验 + 触发）

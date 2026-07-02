@@ -56,15 +56,42 @@ HTTP 异常统一由 `AllExceptionsFilter` 返回：
 | --- | --- | --- |
 | GET | `/plugins` | 插件注册表列表 |
 | GET | `/plugins/:name` | 单个插件详情 |
+| GET | `/plugins/:name/config-schema` | 插件 config 的 JSON Schema（供前端表单渲染） |
 | POST | `/plugins/:name/dry-run` | 单步试运行 |
 
 **GET /plugins** 响应示例：
 
 ```json
 [
-  { "name": "test-plugin", "version": "1.0.0", "description": "..." }
+  {
+    "name": "test-plugin",
+    "version": "1.0.0",
+    "description": "...",
+    "hasConfigSchema": true
+  }
 ]
 ```
+
+**GET /plugins/:name/config-schema** 响应示例：
+
+```json
+{
+  "name": "test-plugin",
+  "configJsonSchema": {
+    "type": "object",
+    "properties": {
+      "type": {
+        "type": "string",
+        "enum": ["unit", "integration", "e2e"]
+      }
+    },
+    "required": ["type"],
+    "additionalProperties": false
+  }
+}
+```
+
+插件不存在或未声明 `configSchema` 时返回 `404`。
 
 **POST /plugins/:name/dry-run** 请求体：
 
@@ -309,21 +336,22 @@ HTTP 异常统一由 `AllExceptionsFilter` 返回：
 | 2 | GET | `/healthz` | 健康 |
 | 3 | GET | `/plugins` | 插件 |
 | 4 | GET | `/plugins/:name` | 插件 |
-| 5 | POST | `/plugins/:name/dry-run` | 插件 |
-| 6 | GET | `/workflows` | 工作流 |
-| 7 | POST | `/workflows` | 工作流 |
-| 8 | POST | `/workflows/validate` | 工作流 |
-| 9 | GET | `/workflows/:id` | 工作流 |
-| 10 | PUT | `/workflows/:id` | 工作流 |
-| 11 | DELETE | `/workflows/:id` | 工作流 |
-| 12 | POST | `/workflows/:id/run` | 工作流 |
-| 13 | GET | `/runs` | 运行 |
-| 14 | POST | `/runs` | 运行 |
-| 15 | GET | `/runs/:runId` | 运行 |
-| 16 | GET | `/runs/:runId/events` | 运行 |
-| 17 | POST | `/runs/:runId/cancel` | 运行 |
-| 18 | DELETE | `/runs/:runId` | 运行 |
-| 19 | GET | `/resources` | 资源 |
+| 5 | GET | `/plugins/:name/config-schema` | 插件 |
+| 6 | POST | `/plugins/:name/dry-run` | 插件 |
+| 7 | GET | `/workflows` | 工作流 |
+| 8 | POST | `/workflows` | 工作流 |
+| 9 | POST | `/workflows/validate` | 工作流 |
+| 10 | GET | `/workflows/:id` | 工作流 |
+| 11 | PUT | `/workflows/:id` | 工作流 |
+| 12 | DELETE | `/workflows/:id` | 工作流 |
+| 13 | POST | `/workflows/:id/run` | 工作流 |
+| 14 | GET | `/runs` | 运行 |
+| 15 | POST | `/runs` | 运行 |
+| 16 | GET | `/runs/:runId` | 运行 |
+| 17 | GET | `/runs/:runId/events` | 运行 |
+| 18 | POST | `/runs/:runId/cancel` | 运行 |
+| 19 | DELETE | `/runs/:runId` | 运行 |
+| 20 | GET | `/resources` | 资源 |
 | 20 | GET | `/resources/queue` | 资源 |
 | 21 | GET | `/stats/overview` | 统计 |
 | 22 | GET | `/test-devops` | 兼容 |
