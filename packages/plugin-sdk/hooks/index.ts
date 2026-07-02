@@ -14,12 +14,12 @@ import type { PluginConfig, PluginContext, PluginResult } from '../types/index.j
  * - `execute` / `beforeExecute` 抛异常 → 调用 `onError` → 返回 `{ success: false, message }`
  * - `execute` 返回 `{ success: false }` → 业务失败，仍调用 `afterExecute`，不调用 `onError`
  */
-export interface PluginHooks {
-  beforeExecute?: (config: PluginConfig, context: PluginContext) => Promise<void> | void;
+export interface PluginHooks<TConfig = PluginConfig> {
+  beforeExecute?: (config: TConfig, context: PluginContext) => Promise<void> | void;
   afterExecute?: (
     result: PluginResult,
-    config: PluginConfig,
+    config: TConfig,
     context: PluginContext,
   ) => Promise<void> | void;
-  onError?: (error: Error, config: PluginConfig, context: PluginContext) => Promise<void> | void;
+  onError?: (error: Error, config: TConfig, context: PluginContext) => Promise<void> | void;
 }

@@ -3,11 +3,14 @@
  * @module base
  */
 
+import type { z } from 'zod';
 import type { PluginManifest, PluginConfig, PluginContext, PluginResult } from '../types/index.js';
+import { PluginFailureCodes } from '../types/index.js';
 import type { PluginHooks } from '../hooks/index.js';
+import { formatZodError } from '../validation/index.js';
 
 /**
- * 插件执行函数类型
+ * 插件执行函数类型（引擎边界）
  */
 export type PluginExecuteFn = (
   config: PluginConfig,
@@ -21,46 +24,101 @@ export interface PluginDefinition extends PluginManifest {
   execute: PluginExecuteFn;
   /** 声明的生命周期钩子；有 hooks 时由 createPlugin 编排进 execute */
   hooks?: PluginHooks;
+  /** 插件 config schema；有则 createPlugin 在 execute 前校验 */
+  configSchema?: z.ZodType;
 }
 
 /**
- * createPlugin 入参
+ * createPlugin 入参（带 configSchema）
  */
-export interface CreatePluginOptions extends PluginManifest {
+export interface CreatePluginOptionsWithSchema<T extends z.ZodType> extends PluginManifest {
+  configSchema: T;
+  execute: (config: z.infer<T>, context: PluginContext) => Promise<PluginResult>;
+  hooks?: PluginHooks<z.infer<T>>;
+}
+
+/**
+ * createPlugin 入参（无 configSchema，向后兼容）
+ */
+export interface CreatePluginOptionsWithoutSchema extends PluginManifest {
   execute: PluginExecuteFn;
   hooks?: PluginHooks;
 }
 
-/**
- * 创建插件配置的辅助函数。
- * 传入 hooks 时，对外暴露的 execute 会自动编排 beforeExecute / afterExecute / onError。
- */
-export function createPlugin({
-  name,
-  version,
-  description,
-  execute,
-  hooks,
-}: CreatePluginOptions): PluginDefinition {
+export type CreatePluginOptions<T extends z.ZodType = z.ZodType> =
+  | CreatePluginOptionsWithSchema<T>
+  | CreatePluginOptionsWithoutSchema;
+
+function wrapWithHooks<TConfig>(
+  execute: (config: TConfig, context: PluginContext) => Promise<PluginResult>,
+  hooks: PluginHooks<TConfig> | undefined,
+): (config: TConfig, context: PluginContext) => Promise<PluginResult> {
+  if (!hooks) {
+    return execute;
+  }
+
+  return async (config, context) => {
+    try {
+      await hooks.beforeExecute?.(config, context);
+      const result = await execute(config, context);
+      await hooks.afterExecute?.(result, config, context);
+      return result;
+    } catch (error) {
+      const err = error instanceof Error ? error : new Error(String(error));
+      await hooks.onError?.(err, config, context);
+      return { success: false, message: err.message };
+    }
+  };
+}
+
+export function createPlugin<T extends z.ZodType>(
+  options: CreatePluginOptionsWithSchema<T>,
+): PluginDefinition;
+export function createPlugin(options: CreatePluginOptionsWithoutSchema): PluginDefinition;
+export function createPlugin<T extends z.ZodType>(
+  options: CreatePluginOptionsWithSchema<T> | CreatePluginOptionsWithoutSchema,
+): PluginDefinition {
+  const { name, version, description, execute, hooks } = options;
+
+  if ('configSchema' in options && options.configSchema) {
+    const { configSchema } = options;
+    const typedExecute = execute as (
+      config: z.infer<T>,
+      context: PluginContext,
+    ) => Promise<PluginResult>;
+    const wrappedExecute = wrapWithHooks(
+      typedExecute,
+      hooks as PluginHooks<z.infer<T>> | undefined,
+    );
+
+    return {
+      name,
+      version,
+      description,
+      hooks,
+      configSchema,
+      execute: async (rawConfig, context) => {
+        const parsed = configSchema.safeParse(rawConfig);
+        if (!parsed.success) {
+          return {
+            success: false,
+            code: PluginFailureCodes.PLUGIN_CONFIG_INVALID,
+            message: formatZodError(parsed.error),
+          };
+        }
+        return wrappedExecute(parsed.data, context);
+      },
+    };
+  }
+
+  const legacyExecute = execute as PluginExecuteFn;
+
   return {
     name,
     version,
     description,
     hooks,
-    execute: hooks
-      ? async (config, context) => {
-          try {
-            await hooks.beforeExecute?.(config, context);
-            const result = await execute(config, context);
-            await hooks.afterExecute?.(result, config, context);
-            return result;
-          } catch (error) {
-            const err = error instanceof Error ? error : new Error(String(error));
-            await hooks.onError?.(err, config, context);
-            return { success: false, message: err.message };
-          }
-        }
-      : execute,
+    execute: wrapWithHooks(legacyExecute, hooks),
   };
 }
 

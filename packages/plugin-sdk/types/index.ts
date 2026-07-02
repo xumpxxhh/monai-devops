@@ -3,6 +3,7 @@
  * @module types
  */
 
+import type { z } from 'zod';
 /**
  * 插件注册元数据
  */
@@ -13,11 +14,14 @@ export interface PluginManifest {
 }
 
 /**
- * 单次 execute 入参
+ * 引擎/工作流边界：来自 JSON 的原始 config
  */
-export interface PluginConfig {
-  [key: string]: unknown;
-}
+export type PluginConfig = Record<string, unknown>;
+
+/**
+ * 由插件 configSchema 推断出的强类型 config
+ */
+export type InferPluginConfig<T extends z.ZodType> = z.infer<T>;
 
 /**
  * 单次 execute 运行时上下文（编排器可注入任意扩展字段）
@@ -31,6 +35,7 @@ export interface PluginContext {
  */
 export const PluginFailureCodes = {
   PLUGIN_NOT_FOUND: 'PLUGIN_NOT_FOUND',
+  PLUGIN_CONFIG_INVALID: 'PLUGIN_CONFIG_INVALID',
   PLUGIN_EXECUTION_ERROR: 'PLUGIN_EXECUTION_ERROR',
 } as const;
 

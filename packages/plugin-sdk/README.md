@@ -26,15 +26,23 @@
 
 ### PluginConfig
 
-单次 `execute` 的入参，来自工作流步骤的 `config` 字段，索引签名 `[key: string]: unknown`。推荐用 `getConfig(config, 'key')` 读取。
+引擎/工作流边界类型：`Record<string, unknown>`。来自工作流步骤的 `config` 字段，由引擎原样透传给插件。
 
 常见约定（由引擎解释，非 SDK 强制）：
 
-- `resourceType?: string` — 声明所需资源类型，由 engine 自动分配/释放
+- `resourceType?: string` — 声明所需资源类型，由 engine 在 execute 之前读取并分配/释放
+
+**推荐**：插件通过 `configSchema`（Zod）声明自己的业务 config 结构，`createPlugin` 在 `execute` 前统一校验并收窄类型。插件 `execute` 内应使用 `z.infer<typeof configSchema>`，而非直接操作原始 `PluginConfig`。
+
+若插件业务逻辑需要读取 `resourceType`，在 schema 中显式声明 `resourceType: z.string().optional()` 即可（默认 `z.object()` 会 strip 未知字段）。
+
+### InferPluginConfig
+
+工具类型，从 Zod schema 推断插件 config 类型：`InferPluginConfig<typeof configSchema>`。
 
 ### PluginContext
 
-单次 `execute` 的运行时上下文，索引签名。引擎可在步骤执行期注入扩展字段；**典型插件只需 `getLogger(context)`**，业务入参从 `getConfig` 读取即可（见 [`plugins/test-plugin`](../../plugins/test-plugin)）。若将来确需读取编排字段，用 `getContext(context, 'stepId')` 等字符串键，键名约定见 [core-engine README](../core-engine/README.md#executioncontext-与-workflowcontextkeys)。
+单次 `execute` 的运行时上下文，索引签名。引擎可在步骤执行期注入扩展字段；**典型插件只需 `getLogger(context)`**，业务入参从已校验的 `config` 读取即可（见 [`plugins/test-plugin`](../../plugins/test-plugin)）。若将来确需读取编排字段，用 `getContext(context, 'stepId')` 等字符串键，键名约定见 [core-engine README](../core-engine/README.md#executioncontext-与-workflowcontextkeys)。
 
 ### PluginResult
 
@@ -62,11 +70,49 @@ return { success: false, message: '参数 type 无效' };
 | 常量                     | 含义                                                                      |
 | ------------------------ | ------------------------------------------------------------------------- |
 | `PLUGIN_NOT_FOUND`       | 插件未注册                                                                |
+| `PLUGIN_CONFIG_INVALID`  | config 未通过 `configSchema` 校验（由 `createPlugin` 填充）               |
 | `PLUGIN_EXECUTION_ERROR` | `execute` 抛出未捕获异常（经 `createPlugin` hooks 包装后也会转为 Result） |
 
 ## createPlugin
 
 `createPlugin(options)` 返回 `PluginDefinition`，供 `createEngine({ plugins: [...] })` 注册。
+
+### 推荐：带 configSchema
+
+```ts
+import {
+  createPlugin,
+  getLogger,
+  z,
+  type PluginContext,
+  type PluginResult,
+} from '@monai-devops/plugin-sdk';
+
+const configSchema = z.object({
+  type: z.enum(['unit', 'integration', 'e2e']),
+});
+
+async function execute(
+  config: z.infer<typeof configSchema>,
+  context: PluginContext,
+): Promise<PluginResult> {
+  const log = getLogger(context);
+  log.info('开始执行', { type: config.type });
+  return { success: true, message: `${config.type} 执行成功` };
+}
+
+export const myPlugin = createPlugin({
+  name: 'my-plugin',
+  version: '1.0.0',
+  description: '示例插件',
+  configSchema,
+  execute,
+});
+```
+
+校验失败时返回 `{ success: false, code: PLUGIN_CONFIG_INVALID, message }`，**不调用** `execute` 与 hooks。
+
+### 向后兼容：无 configSchema
 
 ```ts
 import {
@@ -81,20 +127,13 @@ import {
 async function execute(config: PluginConfig, context: PluginContext): Promise<PluginResult> {
   const type = getConfig<string>(config, 'type');
   const log = getLogger(context);
-
-  log.info('开始执行', { type });
-
-  if (!type) {
-    return { success: false, message: '缺少 config.type' };
-  }
-
-  return { success: true, message: `${type} 执行成功` };
+  // ...
+  return { success: true };
 }
 
 export const myPlugin = createPlugin({
   name: 'my-plugin',
   version: '1.0.0',
-  description: '示例插件',
   execute,
 });
 ```
@@ -127,12 +166,16 @@ beforeExecute → execute → afterExecute
 
 ### getConfig / getContext
 
-类型安全的字典读取，避免硬编码索引：
+类型安全的字典读取，用于**无 configSchema 的向后兼容场景**：
 
 ```ts
 const branch = getConfig<string>(config, 'branch');
 const custom = getContext<string>(context, 'someKey'); // 仅在有约定扩展字段时使用
 ```
+
+### formatZodError / z
+
+`z` 从本包 re-export，插件无需单独依赖 zod。`formatZodError` 将 Zod 校验错误格式化为人类可读字符串。
 
 ## 步骤日志（PluginLogger）
 
@@ -162,7 +205,7 @@ log.append('[build] compiling...\n', 'stdout'); // stream: 'stdout' | 'stderr'
 ## 编写约定
 
 1. **业务失败用 Result，不用 throw** — 便于 executor 统一归类为插件失败
-2. **配置与上下文用 `getConfig` / `getContext`** — 保持类型明确、键名集中
+2. **用 `configSchema` 声明 config 结构** — 编译期类型安全 + 运行时统一校验
 3. **日志用 `getLogger`** — 不要 `console.log`，以便调用层聚合与展示
 4. **插件包只 production 依赖 SDK** — 不依赖 core-engine，保持可独立发布与测试
 5. **`name` 与工作流 `step.plugin` 一致** — 注册名即调用名
@@ -207,16 +250,20 @@ const engine = createEngine({ plugins: [myPlugin] });
 
 | 模块       | 导出                                                                                                                  |
 | ---------- | --------------------------------------------------------------------------------------------------------------------- |
-| `./types`  | `PluginManifest`、`PluginConfig`、`PluginContext`、`PluginResult`、`PluginFailureCodes`、`PluginFailureCode`          |
-| `./base`   | `createPlugin`、`getConfig`、`getContext`、`PluginDefinition`、`PluginExecuteFn`、`CreatePluginOptions`               |
+| `./types`  | `PluginManifest`、`PluginConfig`、`InferPluginConfig`、`PluginContext`、`PluginResult`、`PluginFailureCodes`、`PluginFailureCode` |
+| `./base`   | `createPlugin`、`getConfig`、`getContext`、`PluginDefinition`、`PluginExecuteFn`、`CreatePluginOptions`、`CreatePluginOptionsWithSchema`、`CreatePluginOptionsWithoutSchema` |
 | `./hooks`  | `PluginHooks`                                                                                                         |
-| `./logger` | `PluginLogger`、`PluginLogEntry`、`PluginLogLevel`、`PluginLogStream`、`PluginContextKeys`、`getLogger`、`noopLogger` |
+| `./validation` | `formatZodError`                                                                                                  |
+| `./logger` | `PluginLogger`、`PluginLogEntry`、`PluginLogLevel`、`PluginLogStream`、`PluginContextKeys`、`getLogger`、`noopLogger`、`z` |
 
 ## 开发与构建
 
 ```bash
 # 类型检查
 pnpm --filter @monai-devops/plugin-sdk check-types
+
+# 单元测试
+pnpm --filter @monai-devops/plugin-sdk test
 
 # 构建（输出 dist/）
 pnpm --filter @monai-devops/plugin-sdk build
@@ -226,7 +273,7 @@ pnpm --filter @monai-devops/plugin-sdk lint
 pnpm --filter @monai-devops/plugin-sdk format
 ```
 
-本包无独立测试目录；契约行为由 `core-engine` 集成测试与 `plugins/test-plugin` 验证。
+本包单元测试位于 `__tests__/`；端到端契约行为由 `core-engine` 集成测试与 `plugins/test-plugin` 验证。
 
 ## 相关文档
 

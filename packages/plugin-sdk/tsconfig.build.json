@@ -3,6 +3,6 @@
   "compilerOptions": {
     "composite": false
   },
-  "include": ["index.ts", "base/**/*.ts", "hooks/**/*.ts", "types/**/*.ts"],
+  "include": ["index.ts", "base/**/*.ts", "hooks/**/*.ts", "types/**/*.ts", "validation/**/*.ts"],
   "exclude": ["dist", "node_modules"]
 }
