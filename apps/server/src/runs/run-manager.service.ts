@@ -126,7 +126,11 @@ export class RunManagerService implements OnModuleInit {
       throw new HttpException('Run 不存在', HttpStatus.NOT_FOUND);
     }
 
-    if (record.status === 'finished' || record.status === 'failed' || record.status === 'rejected') {
+    if (
+      record.status === 'finished' ||
+      record.status === 'failed' ||
+      record.status === 'rejected'
+    ) {
       return { runId, status: record.status, cancelled: undefined };
     }
 
@@ -193,7 +197,10 @@ export class RunManagerService implements OnModuleInit {
       }
 
       const message = error instanceof Error ? error.message : '工作流执行失败';
-      this.logger.error(`Run ${runId} failed: ${message}`, error instanceof Error ? error.stack : undefined);
+      this.logger.error(
+        `Run ${runId} failed: ${message}`,
+        error instanceof Error ? error.stack : undefined,
+      );
       await this.runRepository.update(runId, {
         status: 'failed',
         finishedAt: new Date(),
