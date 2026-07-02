@@ -251,7 +251,11 @@ export default function RunDetailPage() {
                   <span className={log.kind === 'log' ? 'text-running' : 'text-muted'}>
                     [{log.eventType ?? log.kind}]
                   </span>{' '}
-                  {log.stepId && <span className="text-brand">{log.stepId}</span>}{' '}
+                  {log.stepId && (
+                    <span className="text-brand">
+                      {log.stepName ?? runState?.steps[log.stepId]?.name ?? log.stepId}
+                    </span>
+                  )}{' '}
                   <span className="text-ink">{log.message}</span>
                 </div>
               ),

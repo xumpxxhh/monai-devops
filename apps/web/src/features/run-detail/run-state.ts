@@ -27,6 +27,7 @@ export interface LogLine {
   kind: 'event' | 'log' | 'stream' | 'error';
   eventType?: string;
   stepId?: string;
+  stepName?: string;
   level?: string;
   stream?: PluginLogStream;
   message: string;
@@ -121,6 +122,7 @@ function eventToLog(event: SerializedWorkflowLifecycleEvent, id: string): LogLin
         ts: formatTs(),
         kind: 'stream',
         stepId: event.step?.id,
+        stepName: event.step?.name,
         stream,
         message: event.log?.message ?? '',
         raw: event,
@@ -132,6 +134,7 @@ function eventToLog(event: SerializedWorkflowLifecycleEvent, id: string): LogLin
       kind: 'log',
       eventType: event.type,
       stepId: event.step?.id,
+      stepName: event.step?.name,
       level: event.log?.level,
       message: event.log?.message ?? '',
       raw: event,
@@ -143,6 +146,7 @@ function eventToLog(event: SerializedWorkflowLifecycleEvent, id: string): LogLin
     kind: 'event',
     eventType: event.type,
     stepId: event.step?.id,
+    stepName: event.step?.name,
     message: event.type,
     raw: event,
   };
