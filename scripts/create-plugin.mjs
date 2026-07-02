@@ -92,18 +92,22 @@ function createTsconfig() {
 function createIndexTs(pluginName, exportName) {
   const executeFnName = `execute${exportName.charAt(0).toUpperCase()}${exportName.slice(1)}`;
 
-  return `import { createPlugin, getConfig, getLogger } from '@monai-devops/plugin-sdk';
-import type { PluginConfig, PluginContext, PluginResult } from '@monai-devops/plugin-sdk';
+  return `import { createPlugin, getLogger, z } from '@monai-devops/plugin-sdk';
+import type { PluginContext, PluginResult } from '@monai-devops/plugin-sdk';
+
+const configSchema = z.object({
+  message: z.string().default('Hello from ${pluginName}'),
+});
 
 /**
  * ${pluginName} 插件执行函数
  */
 async function ${executeFnName}(
-  config: PluginConfig,
+  config: z.infer<typeof configSchema>,
   context: PluginContext,
 ): Promise<PluginResult> {
   const log = getLogger(context);
-  const message = getConfig<string>(config, 'message') ?? 'Hello from ${pluginName}';
+  const { message } = config;
 
   log.info('开始执行插件', { plugin: '${pluginName}', message });
 
@@ -126,6 +130,7 @@ async function ${executeFnName}(
 export const ${exportName} = createPlugin({
   name: '${pluginName}',
   version: '1.0.0',
+  configSchema,
   execute: ${executeFnName},
   hooks: {
     beforeExecute: async () => {},

@@ -1,23 +1,29 @@
-import { createPlugin, getConfig, getLogger } from '@monai-devops/plugin-sdk';
-import type { PluginConfig, PluginContext, PluginResult } from '@monai-devops/plugin-sdk';
+import { createPlugin, getLogger, z } from '@monai-devops/plugin-sdk';
+import type { PluginContext, PluginResult } from '@monai-devops/plugin-sdk';
 import { ChatOpenAI } from '@langchain/openai';
 
-export const openAIModel = new ChatOpenAI({
-  configuration: {
-    baseURL: 'https://api.deepseek.com',
-  },
-  model: 'deepseek-v4-flash',
+const configSchema = z.object({
+  message: z.string().default('Hello from model-call-plugin'),
+  apiKey: z.string().min(1, 'apiKey is required'),
 });
 
 /**
  * model-call-plugin 插件执行函数
  */
 async function executeModelCallPlugin(
-  config: PluginConfig,
+  config: z.infer<typeof configSchema>,
   context: PluginContext,
 ): Promise<PluginResult> {
   const log = getLogger(context);
-  const message = getConfig<string>(config, 'message') ?? 'Hello from model-call-plugin';
+  const { message, apiKey } = config;
+
+  const openAIModel = new ChatOpenAI({
+    configuration: {
+      baseURL: 'https://api.deepseek.com',
+      apiKey,
+    },
+    model: 'deepseek-v4-flash',
+  });
 
   log.info('开始执行插件', { plugin: 'model-call-plugin', message });
 
@@ -46,6 +52,8 @@ async function executeModelCallPlugin(
 export const modelCallPlugin = createPlugin({
   name: 'model-call-plugin',
   version: '1.0.0',
+  description: '这是一个调用模型插件',
+  configSchema,
   execute: executeModelCallPlugin,
   hooks: {
     beforeExecute: async () => {},
