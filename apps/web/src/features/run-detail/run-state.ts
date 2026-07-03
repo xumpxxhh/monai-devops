@@ -170,6 +170,14 @@ function appendLogLine(logs: LogLine[], line: LogLine): LogLine[] {
   return [...logs, line];
 }
 
+export function appendPluginLogEvent(
+  logs: LogLine[],
+  event: SerializedWorkflowLifecycleEvent,
+): LogLine[] {
+  if (event.type !== 'plugin:log') return logs;
+  return appendLogLine(logs, eventToLog(event, `${logs.length + 1}`));
+}
+
 export function applyRunEvent(state: RunState, event: SerializedWorkflowLifecycleEvent): RunState {
   const logId = `${state.logs.length + 1}`;
   const logs = appendLogLine(state.logs, eventToLog(event, logId));

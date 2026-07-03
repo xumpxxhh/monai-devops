@@ -1,11 +1,18 @@
-import { apiGet, apiPost } from './http';
+import { apiGet, apiPostSse } from './http';
 import type {
   ExecutionResultSerialized,
+  PluginConfigSchemaResponse,
+  PluginDryRunSseMessage,
   PluginInfo,
   QueueStatus,
   ResourceSlot,
+  SerializedWorkflowLifecycleEvent,
   StatsOverview,
 } from '../types';
+
+export interface DryRunOptions {
+  onLog?: (event: SerializedWorkflowLifecycleEvent) => void;
+}
 
 export const pluginsApi = {
   list() {
@@ -14,8 +21,35 @@ export const pluginsApi = {
   get(name: string) {
     return apiGet<PluginInfo>(`/plugins/${name}`);
   },
-  dryRun(name: string, config: Record<string, unknown>) {
-    return apiPost<ExecutionResultSerialized>(`/plugins/${name}/dry-run`, { config });
+  getConfigSchema(name: string) {
+    return apiGet<PluginConfigSchemaResponse>(`/plugins/${name}/config-schema`);
+  },
+  dryRun(name: string, config: Record<string, unknown>, options: DryRunOptions = {}) {
+    return new Promise<ExecutionResultSerialized>((resolve, reject) => {
+      let settled = false;
+
+      void apiPostSse<PluginDryRunSseMessage>(`/plugins/${name}/dry-run`, { config }, (message) => {
+        if (message.type === 'log') {
+          options.onLog?.(message.event);
+          return;
+        }
+
+        if (message.type === 'done') {
+          settled = true;
+          resolve(message.result);
+          return;
+        }
+
+        if (message.type === 'error') {
+          settled = true;
+          reject(new Error(message.message));
+        }
+      }).catch((error: unknown) => {
+        if (!settled) {
+          reject(error instanceof Error ? error : new Error('试运行失败'));
+        }
+      });
+    });
   },
 };
 

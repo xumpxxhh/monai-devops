@@ -44,6 +44,11 @@ export type SerializedWorkflowLifecycleEvent = {
   log?: { level?: string; message: string; data?: unknown; stream?: 'stdout' | 'stderr' };
 };
 
+export type PluginDryRunSseMessage =
+  | { type: 'log'; event: SerializedWorkflowLifecycleEvent }
+  | { type: 'done'; result: ExecutionResultSerialized }
+  | { type: 'error'; message: string };
+
 export type WsOutboundMessage =
   | { type: 'event'; event: SerializedWorkflowLifecycleEvent }
   | { type: 'done'; result: WorkflowRunResultSerialized }
@@ -96,6 +101,26 @@ export interface PluginInfo {
   name: string;
   version: string;
   description?: string;
+  hasConfigSchema?: boolean;
+}
+
+export interface PluginConfigSchemaResponse {
+  name: string;
+  configJsonSchema: {
+    type?: string;
+    properties?: Record<
+      string,
+      {
+        type?: string;
+        enum?: Array<string | number | boolean>;
+        default?: unknown;
+        minLength?: number;
+        description?: string;
+      }
+    >;
+    required?: string[];
+    additionalProperties?: boolean;
+  };
 }
 
 export interface ResourceSlot {

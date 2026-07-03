@@ -25,6 +25,51 @@ async function parseResponse<T>(response: Response): Promise<T> {
   return data;
 }
 
+export async function apiPostSse<TMessage>(
+  path: string,
+  body: unknown,
+  onMessage: (message: TMessage) => void,
+): Promise<void> {
+  const response = await fetch(`${apiBaseUrl}${path}`, {
+    method: 'POST',
+    headers: {
+      Accept: 'text/event-stream',
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(body),
+  });
+
+  if (!response.ok) {
+    await parseResponse<never>(response);
+    return;
+  }
+
+  const reader = response.body?.getReader();
+  if (!reader) {
+    throw new ApiError('响应体不可读', response.status);
+  }
+
+  const decoder = new TextDecoder();
+  let buffer = '';
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+
+    buffer += decoder.decode(value, { stream: true });
+    const chunks = buffer.split('\n\n');
+    buffer = chunks.pop() ?? '';
+
+    for (const chunk of chunks) {
+      const dataLine = chunk.split('\n').find((line) => line.startsWith('data: '));
+      if (!dataLine) continue;
+
+      const payload = JSON.parse(dataLine.slice(6)) as TMessage;
+      onMessage(payload);
+    }
+  }
+}
+
 export async function apiGet<T>(
   path: string,
   params?: Record<string, string | number | undefined>,
