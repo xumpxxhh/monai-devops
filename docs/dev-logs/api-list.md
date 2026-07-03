@@ -5,6 +5,13 @@
 
 **Base URL**：`http://localhost:3000/api/v1/devops`
 
+**已注册插件**（`plugin-registry.ts`，运行 `pnpm sync:plugins` 同步）：
+
+| 插件名 | 版本 | 说明 | configSchema |
+| --- | --- | --- | --- |
+| `test-plugin` | 1.0.0 | 测试插件（unit / integration / e2e） | 有 |
+| `model-call-plugin` | 1.0.0 | 调用 DeepSeek 模型 | 有 |
+
 ---
 
 ## 通用说明
@@ -23,11 +30,16 @@ HTTP 异常统一由 `AllExceptionsFilter` 返回：
 }
 ```
 
-- DAG 校验失败：`400`，`error: "WorkflowValidationError"`
-- 活跃 Run 超限：`429`，`code: "MAX_ACTIVE_RUNS_EXCEEDED"`
-- 资源不存在：`404`
+| 场景 | HTTP | error / code |
+| --- | --- | --- |
+| DAG 校验失败 | `400` | `error: "WorkflowValidationError"`，`code: "WORKFLOW_VALIDATION_ERROR"` |
+| 活跃 Run 超限 | `429` | `code: "MAX_ACTIVE_RUNS_EXCEEDED"` |
+| 资源不存在 | `404` | — |
+| 工作流名称或 ID 冲突 | `409` | 如「工作流名称「xxx」已存在」 |
+| 删除进行中的 Run | `409` | 「无法删除进行中的 Run」 |
+| 路径 id 与 body.id 不一致 | `400` | — |
 
-### 分页参数
+### 分页参数与响应
 
 列表类接口通用 Query：
 
@@ -36,6 +48,17 @@ HTTP 异常统一由 `AllExceptionsFilter` 返回：
 | `page` | number | `1` | 页码（从 1 开始） |
 | `pageSize` | number | `20` | 每页条数（最大 100） |
 | `search` | string | — | 关键词搜索 |
+
+分页响应统一结构：
+
+```json
+{
+  "items": [],
+  "total": 0,
+  "page": 1,
+  "pageSize": 20
+}
+```
 
 ---
 
@@ -56,7 +79,7 @@ HTTP 异常统一由 `AllExceptionsFilter` 返回：
 | --- | --- | --- |
 | GET | `/plugins` | 插件注册表列表 |
 | GET | `/plugins/:name` | 单个插件详情 |
-| GET | `/plugins/:name/config-schema` | 插件 config 的 JSON Schema（供前端表单渲染） |
+| GET | `/plugins/:name/config-schema` | 插件 config 的 JSON Schema（Zod → JSON Schema，供前端表单渲染） |
 | POST | `/plugins/:name/dry-run` | 单步试运行 |
 
 **GET /plugins** 响应示例：
@@ -66,13 +89,21 @@ HTTP 异常统一由 `AllExceptionsFilter` 返回：
   {
     "name": "test-plugin",
     "version": "1.0.0",
-    "description": "...",
+    "description": "这是一个测试插件",
+    "hasConfigSchema": true
+  },
+  {
+    "name": "model-call-plugin",
+    "version": "1.0.0",
+    "description": "这是一个调用模型插件",
     "hasConfigSchema": true
   }
 ]
 ```
 
-**GET /plugins/:name/config-schema** 响应示例：
+**GET /plugins/:name** 响应字段与列表项相同；插件不存在时返回 `404`。
+
+**GET /plugins/:name/config-schema** 响应示例（`test-plugin`）：
 
 ```json
 {
@@ -91,6 +122,23 @@ HTTP 异常统一由 `AllExceptionsFilter` 返回：
 }
 ```
 
+`model-call-plugin` 示例：
+
+```json
+{
+  "name": "model-call-plugin",
+  "configJsonSchema": {
+    "type": "object",
+    "properties": {
+      "message": { "type": "string", "default": "Hello from model-call-plugin" },
+      "apiKey": { "type": "string", "minLength": 1 }
+    },
+    "required": ["apiKey"],
+    "additionalProperties": false
+  }
+}
+```
+
 插件不存在或未声明 `configSchema` 时返回 `404`。
 
 **POST /plugins/:name/dry-run** 请求体：
@@ -99,7 +147,15 @@ HTTP 异常统一由 `AllExceptionsFilter` 返回：
 { "config": { "type": "integration" } }
 ```
 
-响应为 `ExecutionResult`（步骤执行结果，含 `stepId`、`status`、`success`、`pluginResult` 等）。
+响应为 `ExecutionResult`（步骤执行结果）：
+
+| 字段 | 说明 |
+| --- | --- |
+| `stepId` | 固定为 `"dry-run"` |
+| `status` | 步骤状态 |
+| `success` | 是否成功 |
+| `pluginResult` | 插件返回的 `PluginResult`（含 `success`、`message` 等） |
+| `error` / `failureKind` / `skipReason` | 失败或跳过时可选 |
 
 ---
 
@@ -107,7 +163,7 @@ HTTP 异常统一由 `AllExceptionsFilter` 返回：
 
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
-| GET | `/workflows` | 工作流列表 |
+| GET | `/workflows` | 工作流列表（按 `updatedAt` 降序） |
 | POST | `/workflows` | 创建工作流 |
 | POST | `/workflows/validate` | DAG 校验（不持久化） |
 | GET | `/workflows/:id` | 工作流详情 |
@@ -116,6 +172,15 @@ HTTP 异常统一由 `AllExceptionsFilter` 返回：
 | POST | `/workflows/:id/run` | 触发已保存工作流运行 |
 
 **GET /workflows** Query：`search`、`page`、`pageSize`
+
+**WorkflowRecord** 响应结构（列表项 / 详情 / 创建 / 更新）：
+
+| 字段 | 说明 |
+| --- | --- |
+| `id` | 工作流 ID |
+| `definition` | 规范化后的 `WorkflowDefinition` |
+| `createdAt` | 创建时间 |
+| `updatedAt` | 更新时间 |
 
 **POST /workflows** / **PUT /workflows/:id** 请求体（`WorkflowDraft`）：
 
@@ -137,6 +202,8 @@ HTTP 异常统一由 `AllExceptionsFilter` 返回：
 ```
 
 更新已保存工作流时，已有步骤携带 `id` 将保留；新增步骤省略 `id` 并可选 `clientRef`。
+
+**POST /workflows** 冲突：`409`（名称重复或指定 id 已存在）。
 
 **POST /workflows/validate** 响应：
 
@@ -185,6 +252,8 @@ HTTP 异常统一由 `AllExceptionsFilter` 返回：
 | `search` | 搜索 runId / workflowId / workflow 名称 |
 | `page`、`pageSize` | 分页 |
 
+排序规则：`queued` / `running` 状态优先，同组内按 `createdAt` 降序。
+
 **POST /runs** 请求体：
 
 ```json
@@ -194,6 +263,8 @@ HTTP 异常统一由 `AllExceptionsFilter` 返回：
   "traceId": "trace-xxx"
 }
 ```
+
+`workflow` 为必填；省略 `traceId` 时服务端自动生成。
 
 **GET /runs/:runId** 响应字段：
 
@@ -210,11 +281,36 @@ HTTP 异常统一由 `AllExceptionsFilter` 返回：
 | `events` | 已缓冲的生命周期事件数组 |
 | `cancelled` | 取消时为 `"best-effort"` |
 
+**GET /runs/:runId/events** 响应：
+
+```json
+{
+  "runId": "uuid",
+  "events": []
+}
+```
+
 **POST /runs/:runId/cancel** 响应：
+
+已终态（`finished` / `failed` / `rejected`）时返回当前状态，`cancelled` 为 `undefined`：
+
+```json
+{ "runId": "uuid", "status": "finished" }
+```
+
+可取消时：
 
 ```json
 { "runId": "uuid", "status": "cancelled", "cancelled": "best-effort" }
 ```
+
+**DELETE /runs/:runId** 响应：
+
+```json
+{ "runId": "uuid", "deleted": true }
+```
+
+`queued` / `running` 状态返回 `409`；不存在返回 `404`。
 
 ---
 
@@ -259,10 +355,12 @@ HTTP 异常统一由 `AllExceptionsFilter` 返回：
   "finishedRuns": 5,
   "failedRuns": 1,
   "successRate": 0.833,
-  "pluginCount": 1,
+  "pluginCount": 2,
   "queue": { "byType": { ... } }
 }
 ```
+
+`successRate`：有终态 Run（`finished` + `failed` > 0）时为 `finished / (finished + failed)`，否则为 `null`。
 
 ---
 
@@ -308,7 +406,7 @@ HTTP 异常统一由 `AllExceptionsFilter` 返回：
 
 **生命周期事件类型**：`workflow:start`、`workflow:finished`、`step:queued`、`step:start`、`step:finished`、`plugin:log`
 
-连接断开仅退订，Run 继续执行。
+连接断开仅退订，Run 继续执行。订阅时若 Run 已终态，会立即推送 `done`。
 
 ---
 
@@ -352,11 +450,11 @@ HTTP 异常统一由 `AllExceptionsFilter` 返回：
 | 18 | POST | `/runs/:runId/cancel` | 运行 |
 | 19 | DELETE | `/runs/:runId` | 运行 |
 | 20 | GET | `/resources` | 资源 |
-| 20 | GET | `/resources/queue` | 资源 |
-| 21 | GET | `/stats/overview` | 统计 |
-| 22 | GET | `/test-devops` | 兼容 |
-| 23 | WS | `/runs/ws` | WebSocket |
-| 24 | WS | `/test-devops/ws` | WebSocket |
+| 21 | GET | `/resources/queue` | 资源 |
+| 22 | GET | `/stats/overview` | 统计 |
+| 23 | GET | `/test-devops` | 兼容 |
+| 24 | WS | `/runs/ws` | WebSocket |
+| 25 | WS | `/test-devops/ws` | WebSocket |
 
 ---
 

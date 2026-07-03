@@ -30,13 +30,17 @@ async function executeModelCallPlugin(
   try {
     const response = await openAIModel.stream(message);
 
+    let fullResponse = '';
+
     for await (const chunk of response) {
       log.append(chunk.content.toString(), 'stdout');
+      fullResponse += chunk.content.toString();
     }
 
     return {
       success: true,
       message: `插件执行成功: ${message}`,
+      data: fullResponse,
     };
   } catch (error) {
     return {
