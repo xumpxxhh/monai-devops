@@ -14,6 +14,7 @@ import {
   WorkflowValidationError,
 } from '../errors.js';
 import type { WorkflowLifecycleEvent, WorkflowRunMeta } from '../observer/index.js';
+import { WorkflowEventTypes } from '../observer/event-types.js';
 import { createContextLogger } from '../plugin/create-context-logger.js';
 import {
   buildCompletedResult,
@@ -198,7 +199,7 @@ export function createWorkflowExecutor(options: ExecutorOptions = {}) {
     onStepComplete?.(step, executionResult, context);
     if (meta) {
       await emit({
-        type: 'step:finished',
+        type: WorkflowEventTypes.STEP_FINISHED,
         meta,
         step,
         result: executionResult,
@@ -233,7 +234,7 @@ export function createWorkflowExecutor(options: ExecutorOptions = {}) {
     try {
       await onStepStart?.(step, context, meta);
       if (meta) {
-        await emit({ type: 'step:start', meta, step });
+        await emit({ type: WorkflowEventTypes.STEP_START, meta, step });
       }
 
       let pluginResult: PluginResult;
@@ -244,7 +245,7 @@ export function createWorkflowExecutor(options: ExecutorOptions = {}) {
 
         if (meta) {
           const { logger, flush } = createContextLogger({
-            emit: (log) => emit({ type: 'plugin:log', meta, step, log }),
+            emit: (log) => emit({ type: WorkflowEventTypes.PLUGIN_LOG, meta, step, log }),
           });
           flushLogs = flush;
           pluginContext = { ...context, [PluginContextKeys.logger]: logger };
@@ -376,7 +377,7 @@ export function createWorkflowExecutor(options: ExecutorOptions = {}) {
       ...(runMeta.traceId !== undefined ? { traceId: runMeta.traceId } : {}),
     };
 
-    await emit({ type: 'workflow:start', meta: runMeta, workflow });
+    await emit({ type: WorkflowEventTypes.WORKFLOW_START, meta: runMeta, workflow });
 
     const results = new Map<string, ExecutionResult>();
     const inDegree = new Map(graph.inDegree);
@@ -488,7 +489,7 @@ export function createWorkflowExecutor(options: ExecutorOptions = {}) {
     };
 
     await emit({
-      type: 'workflow:finished',
+      type: WorkflowEventTypes.WORKFLOW_FINISHED,
       meta: runMeta,
       result: runResult,
     });

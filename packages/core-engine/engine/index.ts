@@ -24,6 +24,7 @@ import {
 } from '../resource/index.js';
 import { createResourceStepScheduler } from '../resource-scheduler/index.js';
 import type { WorkflowObserver } from '../observer/index.js';
+import { WorkflowEventTypes } from '../observer/event-types.js';
 
 export interface EngineOptions {
   plugins?: PluginDefinition[];
@@ -104,7 +105,7 @@ export function createEngine(options: EngineOptions = {}) {
         onQueued: meta
           ? () =>
               options.observer?.onEvent?.({
-                type: 'step:queued',
+                type: WorkflowEventTypes.STEP_QUEUED,
                 meta,
                 step,
                 resourceType,

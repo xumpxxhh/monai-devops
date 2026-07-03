@@ -11,6 +11,7 @@ import type {
   WorkflowStep,
 } from '../executor/types.js';
 import type { PluginLogEntry } from '@monai-devops/plugin-sdk';
+import { WorkflowEventTypes } from './event-types.js';
 
 /**
  * 单次工作流运行的元数据
@@ -28,35 +29,35 @@ export interface WorkflowRunMeta {
  */
 export type WorkflowLifecycleEvent =
   | {
-      type: 'workflow:start';
+      type: typeof WorkflowEventTypes.WORKFLOW_START;
       meta: WorkflowRunMeta;
       workflow: WorkflowDefinition;
     }
   | {
-      type: 'workflow:finished';
+      type: typeof WorkflowEventTypes.WORKFLOW_FINISHED;
       meta: WorkflowRunMeta;
       result: WorkflowRunResult;
     }
   | {
-      type: 'step:queued';
+      type: typeof WorkflowEventTypes.STEP_QUEUED;
       meta: WorkflowRunMeta;
       step: WorkflowStep;
       resourceType: string;
       priority: number;
     }
   | {
-      type: 'step:start';
+      type: typeof WorkflowEventTypes.STEP_START;
       meta: WorkflowRunMeta;
       step: WorkflowStep;
     }
   | {
-      type: 'step:finished';
+      type: typeof WorkflowEventTypes.STEP_FINISHED;
       meta: WorkflowRunMeta;
       step: WorkflowStep;
       result: ExecutionResult;
     }
   | {
-      type: 'plugin:log';
+      type: typeof WorkflowEventTypes.PLUGIN_LOG;
       meta: WorkflowRunMeta;
       step: WorkflowStep;
       log: PluginLogEntry;

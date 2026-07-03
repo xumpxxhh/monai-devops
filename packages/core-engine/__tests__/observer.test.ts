@@ -4,13 +4,12 @@ import { createEngine } from '../engine/index.js';
 import {
   createWorkflowExecutor,
   WorkflowValidationError,
-  type WorkflowDefinition,
   type PluginExecutor,
 } from '../executor/index.js';
 import { createPlugin, getContext, getLogger } from '@monai-devops/plugin-sdk';
 import { WorkflowContextKeys } from '../context-keys.js';
-import { SkipReasons, StepFailureKinds, StepStatuses } from '../errors.js';
-import type { WorkflowLifecycleEvent } from '../observer/index.js';
+import { SkipReasons, StepStatuses } from '../errors.js';
+import { WorkflowEventTypes, type WorkflowLifecycleEvent } from '../observer/index.js';
 
 const testPlugin = createPlugin({
   name: 'test-plugin',
@@ -63,12 +62,20 @@ describe('WorkflowObserver', () => {
 
     assert.deepEqual(
       events.map((e) => e.type),
-      ['workflow:start', 'step:start', 'step:finished', 'workflow:finished'],
+      [
+        WorkflowEventTypes.WORKFLOW_START,
+        WorkflowEventTypes.STEP_START,
+        WorkflowEventTypes.STEP_FINISHED,
+        WorkflowEventTypes.WORKFLOW_FINISHED,
+      ],
     );
-    assert.equal(events[0]?.type === 'workflow:start' && events[0].meta.runId.length > 0, true);
-    const finished = events.find((e) => e.type === 'step:finished');
     assert.equal(
-      finished?.type === 'step:finished' && finished.result.status,
+      events[0]?.type === WorkflowEventTypes.WORKFLOW_START && events[0].meta.runId.length > 0,
+      true,
+    );
+    const finished = events.find((e) => e.type === WorkflowEventTypes.STEP_FINISHED);
+    assert.equal(
+      finished?.type === WorkflowEventTypes.STEP_FINISHED && finished.result.status,
       StepStatuses.COMPLETED,
     );
   });
@@ -118,13 +125,18 @@ describe('WorkflowObserver', () => {
       ],
     });
 
-    const stepStarts = events.filter((e) => e.type === 'step:start');
+    const stepStarts = events.filter((e) => e.type === WorkflowEventTypes.STEP_START);
     assert.equal(stepStarts.length, 1);
-    assert.equal(stepStarts[0]?.type === 'step:start' && stepStarts[0].step.id, 'a');
-
-    const bFinished = events.find((e) => e.type === 'step:finished' && e.step.id === 'b');
     assert.equal(
-      bFinished?.type === 'step:finished' && bFinished.result.skipReason,
+      stepStarts[0]?.type === WorkflowEventTypes.STEP_START && stepStarts[0].step.id,
+      'a',
+    );
+
+    const bFinished = events.find(
+      (e) => e.type === WorkflowEventTypes.STEP_FINISHED && e.step.id === 'b',
+    );
+    assert.equal(
+      bFinished?.type === WorkflowEventTypes.STEP_FINISHED && bFinished.result.skipReason,
       SkipReasons.CONDITION_NOT_MET,
     );
   });
@@ -146,12 +158,12 @@ describe('WorkflowObserver', () => {
     });
 
     assert.equal(run.success, false);
-    const stepFinished = events.find((e) => e.type === 'step:finished');
+    const stepFinished = events.find((e) => e.type === WorkflowEventTypes.STEP_FINISHED);
     assert.equal(
-      stepFinished?.type === 'step:finished' && stepFinished.result.status,
+      stepFinished?.type === WorkflowEventTypes.STEP_FINISHED && stepFinished.result.status,
       StepStatuses.FAILED,
     );
-    assert.equal(events.at(-1)?.type, 'workflow:finished');
+    assert.equal(events.at(-1)?.type, WorkflowEventTypes.WORKFLOW_FINISHED);
   });
 
   it('failFast emits workflow_aborted for unscheduled steps', async () => {
@@ -181,15 +193,19 @@ describe('WorkflowObserver', () => {
     assert.ok(executed.includes('a'));
     assert.ok(!executed.includes('b'));
 
-    const bFinished = events.find((e) => e.type === 'step:finished' && e.step.id === 'b');
+    const bFinished = events.find(
+      (e) => e.type === WorkflowEventTypes.STEP_FINISHED && e.step.id === 'b',
+    );
     assert.equal(
-      bFinished?.type === 'step:finished' && bFinished.result.skipReason,
+      bFinished?.type === WorkflowEventTypes.STEP_FINISHED && bFinished.result.skipReason,
       SkipReasons.WORKFLOW_ABORTED,
     );
 
-    const cFinished = events.find((e) => e.type === 'step:finished' && e.step.id === 'c');
+    const cFinished = events.find(
+      (e) => e.type === WorkflowEventTypes.STEP_FINISHED && e.step.id === 'c',
+    );
     assert.equal(
-      cFinished?.type === 'step:finished' && cFinished.result.skipReason,
+      cFinished?.type === WorkflowEventTypes.STEP_FINISHED && cFinished.result.skipReason,
       SkipReasons.DEPENDENCY_FAILED,
     );
   });
@@ -217,9 +233,9 @@ describe('WorkflowObserver', () => {
       ],
     });
 
-    const finished = events.filter((e) => e.type === 'step:finished');
+    const finished = events.filter((e) => e.type === WorkflowEventTypes.STEP_FINISHED);
     assert.equal(finished.length, 2);
-    const ids = finished.map((e) => (e.type === 'step:finished' ? e.step.id : ''));
+    const ids = finished.map((e) => (e.type === WorkflowEventTypes.STEP_FINISHED ? e.step.id : ''));
     assert.ok(ids.includes('a'));
     assert.ok(ids.includes('b'));
   });
@@ -266,8 +282,8 @@ describe('WorkflowObserver', () => {
     });
 
     await new Promise((r) => setTimeout(r, 20));
-    assert.ok(events.some((e) => e.type === 'workflow:start'));
-    assert.ok(events.some((e) => e.type === 'step:queued'));
+    assert.ok(events.some((e) => e.type === WorkflowEventTypes.WORKFLOW_START));
+    assert.ok(events.some((e) => e.type === WorkflowEventTypes.STEP_QUEUED));
 
     engine.getResourceManager().registerResource({
       id: 'r1',
@@ -280,11 +296,11 @@ describe('WorkflowObserver', () => {
     assert.equal(run.success, true);
 
     const types = events.map((e) => e.type);
-    const queuedIdx = types.indexOf('step:queued');
-    const startIdx = types.indexOf('step:start');
-    const finishedIdx = types.indexOf('step:finished');
+    const queuedIdx = types.indexOf(WorkflowEventTypes.STEP_QUEUED);
+    const startIdx = types.indexOf(WorkflowEventTypes.STEP_START);
+    const finishedIdx = types.indexOf(WorkflowEventTypes.STEP_FINISHED);
     assert.ok(queuedIdx >= 0 && startIdx > queuedIdx && finishedIdx > startIdx);
-    assert.equal(events.at(-1)?.type, 'workflow:finished');
+    assert.equal(events.at(-1)?.type, WorkflowEventTypes.WORKFLOW_FINISHED);
     engine.destroy();
   });
 
@@ -351,15 +367,15 @@ describe('WorkflowObserver', () => {
     });
 
     const types = events.map((e) => e.type);
-    const startIdx = types.indexOf('step:start');
-    const finishedIdx = types.indexOf('step:finished');
-    const logIdx = types.indexOf('plugin:log');
+    const startIdx = types.indexOf(WorkflowEventTypes.STEP_START);
+    const finishedIdx = types.indexOf(WorkflowEventTypes.STEP_FINISHED);
+    const logIdx = types.indexOf(WorkflowEventTypes.PLUGIN_LOG);
 
     assert.ok(startIdx >= 0 && logIdx > startIdx && finishedIdx > logIdx);
 
     const logEvent = events[logIdx];
-    assert.equal(logEvent?.type, 'plugin:log');
-    if (logEvent?.type === 'plugin:log') {
+    assert.equal(logEvent?.type, WorkflowEventTypes.PLUGIN_LOG);
+    if (logEvent?.type === WorkflowEventTypes.PLUGIN_LOG) {
       assert.equal(logEvent.log.message, 'plugin started');
       assert.equal(logEvent.log.level, 'info');
       assert.equal(logEvent.step.id, 's1');
@@ -392,9 +408,9 @@ describe('WorkflowObserver', () => {
       steps: [{ id: 's1', name: 'S1', plugin: 'append-plugin', config: {} }],
     });
 
-    const logEvent = events.find((e) => e.type === 'plugin:log');
-    assert.equal(logEvent?.type, 'plugin:log');
-    if (logEvent?.type === 'plugin:log') {
+    const logEvent = events.find((e) => e.type === WorkflowEventTypes.PLUGIN_LOG);
+    assert.equal(logEvent?.type, WorkflowEventTypes.PLUGIN_LOG);
+    if (logEvent?.type === WorkflowEventTypes.PLUGIN_LOG) {
       assert.equal(logEvent.log.message, 'line1\n');
       assert.equal(logEvent.log.stream, 'stdout');
     }
@@ -448,8 +464,8 @@ describe('WorkflowObserver', () => {
 
     const logMessages = events
       .filter(
-        (e): e is Extract<WorkflowLifecycleEvent, { type: 'plugin:log' }> =>
-          e.type === 'plugin:log',
+        (e): e is Extract<WorkflowLifecycleEvent, { type: typeof WorkflowEventTypes.PLUGIN_LOG }> =>
+          e.type === WorkflowEventTypes.PLUGIN_LOG,
       )
       .map((e) => e.log.message);
 
@@ -479,7 +495,7 @@ describe('WorkflowObserver', () => {
       observer: {
         onEvent: async (event) => {
           events.push(event);
-          if (event.type === 'plugin:log' && event.log.message === 'slow') {
+          if (event.type === WorkflowEventTypes.PLUGIN_LOG && event.log.message === 'slow') {
             await slowLogGate;
           }
         },
@@ -494,7 +510,7 @@ describe('WorkflowObserver', () => {
 
     await new Promise((resolve) => setTimeout(resolve, 10));
     assert.equal(
-      events.some((e) => e.type === 'step:finished'),
+      events.some((e) => e.type === WorkflowEventTypes.STEP_FINISHED),
       false,
       'step:finished must not emit before slow log completes',
     );
@@ -503,9 +519,13 @@ describe('WorkflowObserver', () => {
     await runPromise;
 
     const types = events.map((e) => e.type);
-    const slowIdx = events.findIndex((e) => e.type === 'plugin:log' && e.log.message === 'slow');
-    const fastIdx = events.findIndex((e) => e.type === 'plugin:log' && e.log.message === 'fast');
-    const finishedIdx = types.indexOf('step:finished');
+    const slowIdx = events.findIndex(
+      (e) => e.type === WorkflowEventTypes.PLUGIN_LOG && e.log.message === 'slow',
+    );
+    const fastIdx = events.findIndex(
+      (e) => e.type === WorkflowEventTypes.PLUGIN_LOG && e.log.message === 'fast',
+    );
+    const finishedIdx = types.indexOf(WorkflowEventTypes.STEP_FINISHED);
 
     assert.ok(slowIdx >= 0 && fastIdx > slowIdx && finishedIdx > fastIdx);
     engine.destroy();
@@ -525,7 +545,7 @@ describe('WorkflowObserver', () => {
       plugins: [loggingPlugin],
       observer: {
         onEvent: async (event) => {
-          if (event.type === 'plugin:log') {
+          if (event.type === WorkflowEventTypes.PLUGIN_LOG) {
             throw new Error('log observer failed');
           }
         },

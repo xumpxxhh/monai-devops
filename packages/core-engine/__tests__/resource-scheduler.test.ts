@@ -257,6 +257,7 @@ describe('resource-scheduler', () => {
   });
 
   it('wakes queue when resource is registered later', async () => {
+    // eslint-disable-next-line
     let scheduler!: ReturnType<typeof createResourceStepScheduler>;
     const rm = createResourceManager({
       autoCleanup: false,
