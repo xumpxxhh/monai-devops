@@ -1,5 +1,5 @@
 import type { WorkflowDefinition } from '@monai-devops/core-engine';
-import { parsePagination, type PaginatedResult } from '../common/dto/pagination.dto.js';
+import { type PaginatedResult } from '../common/dto/pagination.dto.js';
 
 export interface WorkflowRecord {
   id: string;

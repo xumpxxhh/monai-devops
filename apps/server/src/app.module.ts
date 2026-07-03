@@ -6,7 +6,6 @@ import { EngineModule } from './engine/engine.module.js';
 import { HealthModule } from './health/health.module.js';
 import { PluginsModule } from './plugins/plugins.module.js';
 import { ResourcesModule } from './resources/resources.module.js';
-import { RunsModule } from './runs/runs.module.js';
 import { StatsModule } from './stats/stats.module.js';
 import { TestDevopsModule } from './test-devops/test-devops.module.js';
 import { WorkflowsModule } from './workflows/workflows.module.js';

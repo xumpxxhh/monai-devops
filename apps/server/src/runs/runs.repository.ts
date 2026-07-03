@@ -1,13 +1,10 @@
 import type { WorkflowDefinition } from '@monai-devops/core-engine';
-import type { SerializedWorkflowLifecycleEvent, SerializedWorkflowRunResult } from '../common/serialization/serialize-workflow-event.js';
+import type {
+  SerializedWorkflowLifecycleEvent,
+  SerializedWorkflowRunResult,
+} from '../common/serialization/serialize-workflow-event.js';
 
-export type RunStatus =
-  | 'queued'
-  | 'running'
-  | 'finished'
-  | 'failed'
-  | 'rejected'
-  | 'cancelled';
+export type RunStatus = 'queued' | 'running' | 'finished' | 'failed' | 'rejected' | 'cancelled';
 
 export interface RunCounts {
   total: number;
