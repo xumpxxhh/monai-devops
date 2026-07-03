@@ -9,7 +9,7 @@ interface SerializedError {
   message: string;
 }
 
-type SerializedExecutionResult = Omit<ExecutionResult, 'error'> & {
+export type SerializedExecutionResult = Omit<ExecutionResult, 'error'> & {
   error?: SerializedError;
 };
 
@@ -23,7 +23,7 @@ function serializeError(error: Error): SerializedError {
   return { name: error.name, message: error.message };
 }
 
-function serializeExecutionResult(result: ExecutionResult): SerializedExecutionResult {
+export function serializeExecutionResult(result: ExecutionResult): SerializedExecutionResult {
   if (!result.error) {
     return result;
   }
