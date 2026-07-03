@@ -17,7 +17,7 @@ import {
 import '@xyflow/react/dist/style.css';
 import type { WorkflowDefinition } from '@monai-devops/core-engine';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { faPlay, faSave } from '@fortawesome/free-solid-svg-icons';
+import { faCog, faPlay, faSave } from '@fortawesome/free-solid-svg-icons';
 import { workflowsApi, type WorkflowDraft } from '../../shared/api/workflows';
 import { runsApi } from '../../shared/api/runs';
 import { ApiError } from '../../shared/api/http';
@@ -25,7 +25,8 @@ import { pluginsApi } from '../../shared/api/misc';
 import type { PluginInfo } from '../../shared/types';
 import { validateDag } from './dag-utils';
 import { FullscreenLayout } from '../../layouts/FullscreenLayout';
-import { Field, Input, Textarea, Select, Checkbox } from '../../shared/ui/form';
+import { Field, Input, Select, Checkbox } from '../../shared/ui/form';
+import { PluginConfigFormModal } from '../../shared/ui/json-schema-form';
 import { toast } from 'sonner';
 
 interface StepNodeData {
@@ -91,8 +92,6 @@ function buildDraft(
   edges: Edge[],
   workflowName: string,
   workflowId: string | null,
-  selectedNodeId: string | null,
-  configJson: string,
 ): WorkflowDraft {
   const nodeById = new Map(nodes.map((n) => [n.id, n]));
 
@@ -101,14 +100,7 @@ function buildDraft(
     name: workflowName,
     steps: nodes.map((node) => {
       const data = node.data;
-      let config = data.config ?? { type: 'integration' };
-      if (node.id === selectedNodeId) {
-        try {
-          config = JSON.parse(configJson) as Record<string, unknown>;
-        } catch {
-          // keep existing config when JSON invalid
-        }
-      }
+      const config = data.config ?? {};
 
       const deps = edges
         .filter((e) => e.target === node.id)
@@ -154,8 +146,7 @@ export default function WorkflowEditorPage() {
   const [workflowNameError, setWorkflowNameError] = useState('');
   const [plugins, setPlugins] = useState<PluginInfo[]>([]);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
-  const [configJson, setConfigJson] = useState('{"type":"integration"}');
-  const [configError, setConfigError] = useState('');
+  const [configModalOpen, setConfigModalOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [running, setRunning] = useState(false);
   const [failFast, setFailFast] = useState(true);
@@ -211,12 +202,6 @@ export default function WorkflowEditorPage() {
 
   const selectNode = (nodeId: string) => {
     setSelectedNodeId(nodeId);
-    const node = nodes.find((n) => n.id === nodeId);
-    if (node) {
-      const config = (node.data as StepNodeData).config ?? { type: 'integration' };
-      setConfigJson(JSON.stringify(config, null, 2));
-      setConfigError('');
-    }
   };
 
   const addStep = (plugin: string) => {
@@ -229,13 +214,11 @@ export default function WorkflowEditorPage() {
         label: `步骤 ${nodes.length + 1}`,
         plugin,
         clientRef,
-        config: { type: 'integration' },
+        config: {},
       },
     };
     setNodes((nds) => [...nds, newNode]);
     setSelectedNodeId(clientRef);
-    setConfigJson(JSON.stringify({ type: 'integration' }, null, 2));
-    setConfigError('');
   };
 
   const updateSelected = (
@@ -260,8 +243,7 @@ export default function WorkflowEditorPage() {
     );
   };
 
-  const buildCurrentDraft = () =>
-    buildDraft(nodes, edges, workflowName, workflowId, selectedNodeId, configJson);
+  const buildCurrentDraft = () => buildDraft(nodes, edges, workflowName, workflowId);
 
   const isWorkflowNameValid = !validateWorkflowName(workflowName);
 
@@ -474,24 +456,26 @@ export default function WorkflowEditorPage() {
                   options={plugins.map((p) => ({ value: p.name, label: p.name }))}
                 />
               </Field>
-              <Field label="Config JSON" htmlFor="step-config" error={configError || undefined}>
-                <Textarea
-                  id="step-config"
-                  mono
-                  className="h-32"
-                  value={configJson}
-                  onChange={(e) => {
-                    setConfigJson(e.target.value);
-                    try {
-                      JSON.parse(e.target.value);
-                      setConfigError('');
-                      updateSelected({ config: JSON.parse(e.target.value) });
-                    } catch {
-                      setConfigError('JSON 格式无效');
-                    }
-                  }}
-                />
+              <Field label="配置">
+                <button
+                  type="button"
+                  onClick={() => setConfigModalOpen(true)}
+                  className="inline-flex items-center gap-2 h-9 px-3 rounded-ctrl border border-line text-sm hover:bg-raised w-full justify-center"
+                >
+                  <FontAwesomeIcon icon={faCog} />
+                  编辑配置
+                </button>
+                <p className="mt-2 text-xs text-faint font-mono truncate">
+                  {JSON.stringify(selectedNode.data.config ?? {})}
+                </p>
               </Field>
+              <PluginConfigFormModal
+                open={configModalOpen}
+                onOpenChange={setConfigModalOpen}
+                pluginName={selectedNode.data.plugin}
+                value={(selectedNode.data.config ?? {}) as Record<string, unknown>}
+                onConfirm={(config) => updateSelected({ config })}
+              />
             </>
           ) : (
             <p className="text-sm text-faint mt-6">点击画布中的节点编辑属性</p>

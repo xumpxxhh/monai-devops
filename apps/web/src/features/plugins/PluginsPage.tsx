@@ -1,19 +1,30 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { pluginsApi } from '../../shared/api/misc';
 import type { ExecutionResultSerialized, PluginInfo } from '../../shared/types';
 import { StatusBadge } from '../../shared/ui/StatusBadge';
 import { EmptyState } from '../../shared/ui/EmptyState';
-import { Field, Textarea } from '../../shared/ui/form';
+import { PluginConfigForm, type PluginConfigFormHandle } from '../../shared/ui/json-schema-form';
+import { appendPluginLogEvent, type LogLine } from '../run-detail/run-state';
 
 export default function PluginsPage() {
   const [plugins, setPlugins] = useState<PluginInfo[]>([]);
   const [selected, setSelected] = useState<PluginInfo | null>(null);
-  const [configJson, setConfigJson] = useState('{"type":"integration"}');
+  const [config, setConfig] = useState<Record<string, unknown>>({});
   const [dryRunResult, setDryRunResult] = useState<ExecutionResultSerialized | null>(null);
   const [dryRunError, setDryRunError] = useState('');
   const [running, setRunning] = useState(false);
-  const [logs, setLogs] = useState<string[]>([]);
+  const [logs, setLogs] = useState<LogLine[]>([]);
+  const [formReady, setFormReady] = useState(false);
+  const configFormRef = useRef<PluginConfigFormHandle>(null);
+  const logEndRef = useRef<HTMLDivElement>(null);
+  const lastLogMessage = logs.at(-1)?.message;
+
+  useEffect(() => {
+    if (running) {
+      logEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, [logs.length, lastLogMessage, running]);
 
   useEffect(() => {
     pluginsApi
@@ -29,18 +40,22 @@ export default function PluginsPage() {
 
   const handleDryRun = async () => {
     if (!selected) return;
+
+    const validation = configFormRef.current?.validate();
+    if (!validation || !validation.ok) {
+      setDryRunError('请完善配置后再试运行');
+      return;
+    }
+
     setRunning(true);
     setDryRunError('');
     setDryRunResult(null);
     setLogs([]);
     try {
-      const config = JSON.parse(configJson) as Record<string, unknown>;
-      const result = await pluginsApi.dryRun(selected.name, config);
+      const result = await pluginsApi.dryRun(selected.name, validation.config, {
+        onLog: (event) => setLogs((prev) => appendPluginLogEvent(prev, event)),
+      });
       setDryRunResult(result);
-      setLogs([`执行完成: status=${result.status}, success=${result.success}`]);
-      if (result.pluginResult?.message) {
-        setLogs((l) => [...l, `plugin: ${result.pluginResult!.message}`]);
-      }
       toast.success('试运行完成');
     } catch (e) {
       const message = e instanceof Error ? e.message : '试运行失败';
@@ -70,8 +85,11 @@ export default function PluginsPage() {
                     type="button"
                     onClick={() => {
                       setSelected(p);
+                      setConfig({});
+                      setFormReady(false);
                       setDryRunResult(null);
                       setDryRunError('');
+                      setLogs([]);
                     }}
                     className={`w-full text-left px-4 py-3 border-b border-line-soft hover:bg-raised ${selected?.name === p.name ? 'bg-brand-soft' : ''}`}
                   >
@@ -94,23 +112,57 @@ export default function PluginsPage() {
 
                 <div className="bg-surface rounded-card border border-line shadow-card p-5">
                   <h3 className="text-sm font-medium mb-3">单步试运行</h3>
-                  <Field label="Config JSON" htmlFor="plugin-config">
-                    <Textarea
-                      id="plugin-config"
-                      mono
-                      className="h-24"
-                      value={configJson}
-                      onChange={(e) => setConfigJson(e.target.value)}
+                  <div className="mb-4">
+                    <PluginConfigForm
+                      ref={configFormRef}
+                      key={selected.name}
+                      pluginName={selected.name}
+                      value={config}
+                      onChange={setConfig}
+                      onReadyChange={setFormReady}
                     />
-                  </Field>
+                  </div>
                   <button
                     type="button"
                     onClick={handleDryRun}
-                    disabled={running}
+                    disabled={running || !formReady}
                     className="h-9 px-4 rounded-ctrl bg-brand text-white text-sm font-medium hover:bg-brand-hover disabled:opacity-50"
                   >
                     {running ? '运行中…' : '试运行'}
                   </button>
+
+                  {(running || logs.length > 0) && (
+                    <div className="mt-4 p-3 rounded-ctrl bg-panel font-mono text-xs max-h-64 overflow-auto">
+                      {logs.map((log) =>
+                        log.kind === 'stream' ? (
+                          <pre
+                            key={log.id}
+                            className={`whitespace-pre-wrap break-words ${
+                              log.stream === 'stderr' ? 'text-failed' : 'text-ink'
+                            }`}
+                          >
+                            {log.message}
+                          </pre>
+                        ) : (
+                          <div key={log.id} className="log-line">
+                            <span className="text-faint">{log.ts}</span>{' '}
+                            <span className={log.kind === 'log' ? 'text-running' : 'text-muted'}>
+                              [{log.eventType ?? log.kind}]
+                            </span>{' '}
+                            {log.stepId && (
+                              <span className="text-brand">{log.stepName ?? log.stepId}</span>
+                            )}{' '}
+                            <span className="text-ink">{log.message}</span>
+                          </div>
+                        ),
+                      )}
+                      {running && (
+                        <div ref={logEndRef} className="cursor-blink text-faint">
+                          等待日志…
+                        </div>
+                      )}
+                    </div>
+                  )}
 
                   {dryRunError && <p className="text-sm text-failed mt-3">{dryRunError}</p>}
 
@@ -123,16 +175,6 @@ export default function PluginsPage() {
                       <pre className="text-xs font-mono overflow-auto">
                         {JSON.stringify(dryRunResult, null, 2)}
                       </pre>
-                    </div>
-                  )}
-
-                  {logs.length > 0 && (
-                    <div className="mt-4 p-3 rounded-ctrl bg-panel font-mono text-xs">
-                      {logs.map((l, i) => (
-                        <div key={i} className="log-line">
-                          {l}
-                        </div>
-                      ))}
                     </div>
                   )}
                 </div>
