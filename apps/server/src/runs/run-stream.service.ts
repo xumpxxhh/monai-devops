@@ -5,10 +5,15 @@ import type {
   SerializedWorkflowRunResult,
 } from '../common/serialization/serialize-workflow-event.js';
 
-export type WsOutboundMessage =
+export type WsOutboundPayload =
   | { type: 'event'; event: SerializedWorkflowLifecycleEvent }
   | { type: 'done'; result: SerializedWorkflowRunResult }
   | { type: 'error'; message: string };
+
+export type WsOutboundMessage =
+  | { type: 'event'; runId: string; event: SerializedWorkflowLifecycleEvent }
+  | { type: 'done'; runId: string; result: SerializedWorkflowRunResult }
+  | { type: 'error'; runId?: string; message: string };
 
 @Injectable()
 export class RunStreamService {
@@ -27,7 +32,7 @@ export class RunStreamService {
     this.clientRuns.get(client)!.add(runId);
 
     for (const event of replay) {
-      this.send(client, { type: 'event', event });
+      this.send(client, { type: 'event', runId, event });
     }
   }
 
@@ -46,10 +51,11 @@ export class RunStreamService {
     this.clientRuns.delete(client);
   }
 
-  fanOut(runId: string, message: WsOutboundMessage): void {
+  fanOut(runId: string, payload: WsOutboundPayload): void {
     const clients = this.subscribers.get(runId);
     if (!clients) return;
 
+    const message = this.withRunId(runId, payload);
     for (const client of clients) {
       this.send(client, message);
     }
@@ -59,5 +65,9 @@ export class RunStreamService {
     if (client.readyState === client.OPEN) {
       client.send(JSON.stringify(message));
     }
+  }
+
+  private withRunId(runId: string, payload: WsOutboundPayload): WsOutboundMessage {
+    return { ...payload, runId };
   }
 }

@@ -43,6 +43,7 @@ export interface SubmitRunOptions {
 @Injectable()
 export class RunManagerService implements OnModuleInit {
   private readonly logger = new Logger(RunManagerService.name);
+  private readonly eventChains = new Map<string, Promise<void>>();
 
   constructor(
     private readonly engineService: EngineService,
@@ -52,7 +53,25 @@ export class RunManagerService implements OnModuleInit {
   ) {}
 
   onModuleInit(): void {
-    this.engineService.onEvent((event) => this.handleEngineEvent(event));
+    this.engineService.onEvent((event) => this.enqueueEngineEvent(event));
+  }
+
+  private enqueueEngineEvent(event: WorkflowLifecycleEvent): Promise<void> {
+    const runId = event.meta.runId;
+    const previous = this.eventChains.get(runId) ?? Promise.resolve();
+    const current = previous
+      .then(() => this.processEngineEvent(event))
+      .catch((error: unknown) => {
+        const message = error instanceof Error ? error.message : 'Unknown error';
+        this.logger.error(`Failed to process ${event.type} for run ${runId}: ${message}`);
+      })
+      .finally(() => {
+        if (this.eventChains.get(runId) === current) {
+          this.eventChains.delete(runId);
+        }
+      });
+    this.eventChains.set(runId, current);
+    return current;
   }
 
   async submitRun(workflow: WorkflowDefinition | WorkflowDraft, options: SubmitRunOptions = {}) {
@@ -169,7 +188,7 @@ export class RunManagerService implements OnModuleInit {
     this.runStream.subscribe(runId, client, record.events);
 
     if (record.result && (record.status === 'finished' || record.status === 'failed')) {
-      this.runStream.send(client, { type: 'done', result: record.result });
+      this.runStream.send(client, { type: 'done', runId, result: record.result });
     }
 
     return { ok: true };
@@ -225,7 +244,7 @@ export class RunManagerService implements OnModuleInit {
     this.runStream.fanOut(runId, { type: 'done', result: serialized });
   }
 
-  private async handleEngineEvent(event: WorkflowLifecycleEvent): Promise<void> {
+  private async processEngineEvent(event: WorkflowLifecycleEvent): Promise<void> {
     const runId = event.meta.runId;
     const serialized = serializeWorkflowEvent(event);
     await this.runRepository.appendEvent(runId, serialized);
