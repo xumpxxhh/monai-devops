@@ -50,9 +50,9 @@ export type PluginDryRunSseMessage =
   | { type: 'error'; message: string };
 
 export type WsOutboundMessage =
-  | { type: 'event'; event: SerializedWorkflowLifecycleEvent }
-  | { type: 'done'; result: WorkflowRunResultSerialized }
-  | { type: 'error'; message: string };
+  | { type: 'event'; runId: string; event: SerializedWorkflowLifecycleEvent }
+  | { type: 'done'; runId: string; result: WorkflowRunResultSerialized }
+  | { type: 'error'; runId?: string; message: string };
 
 export type WsInboundMessage =
   | { type: 'subscribe'; runId: string }

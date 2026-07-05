@@ -47,6 +47,7 @@ export default function RunDetailPage() {
   const [paused, setPaused] = useState(false);
   const [drawerStep, setDrawerStep] = useState<StepView | null>(null);
   const [wsBanner, setWsBanner] = useState('');
+  const [subscribeKey, setSubscribeKey] = useState<string | null>(null);
   const logEndRef = useRef<HTMLDivElement>(null);
 
   const handleEvent = useCallback(
@@ -61,11 +62,9 @@ export default function RunDetailPage() {
     setRecordStatus('finished');
   }, []);
 
-  const {
-    status: wsStatus,
-    subscribe,
-    close,
-  } = useWorkflowRun({
+  const { status: wsStatus } = useWorkflowRun({
+    runId,
+    autoSubscribe: subscribeKey === runId,
     onEvent: handleEvent,
     onDone: handleDone,
     onError: (msg) => setWsBanner(msg),
@@ -90,25 +89,23 @@ export default function RunDetailPage() {
       setRunState(hydrated);
 
       if (record.status === 'running' || record.status === 'queued') {
-        try {
-          await subscribe(runId!);
-        } catch {
-          setWsBanner('WebSocket 订阅失败，显示已缓冲的事件快照');
-        }
+        setSubscribeKey(runId!);
+      } else {
+        setSubscribeKey(null);
       }
     }
 
     load().catch((e) => {
       setRunState(createInitialRunState(runId!, undefined));
+      setSubscribeKey(null);
       setWsBanner('无法加载运行详情');
       toast.error(e instanceof Error ? e.message : '无法加载运行详情');
     });
 
     return () => {
       cancelled = true;
-      close();
     };
-  }, [runId, subscribe, close]);
+  }, [runId]);
 
   const lastLogMessage = runState?.logs.at(-1)?.message;
 
