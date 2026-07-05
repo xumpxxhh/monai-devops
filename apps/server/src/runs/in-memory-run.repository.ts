@@ -1,6 +1,10 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import {
+  canMergeStreamLogs,
+  mergeStreamLogInto,
+} from '../common/serialization/merge-stream-log-event.js';
+import {
   type RunListFilter,
   type RunRecord,
   type RunRepository,
@@ -9,6 +13,15 @@ import {
 } from './runs.repository.js';
 
 const ACTIVE_STATUSES: RunStatus[] = ['queued', 'running'];
+
+/** 缓冲超限时优先保留的生命周期事件 */
+const LIFECYCLE_EVENT_TYPES = new Set([
+  'workflow:start',
+  'workflow:finished',
+  'step:queued',
+  'step:start',
+  'step:finished',
+]);
 
 @Injectable()
 export class InMemoryRunRepository implements RunRepository {
@@ -84,12 +97,38 @@ export class InMemoryRunRepository implements RunRepository {
     const record = this.records.get(runId);
     if (!record) return;
 
-    record.events.push(event);
-    const limit = this.config.get<number>('RUN_HISTORY_LIMIT', 500);
-    if (record.events.length > limit) {
-      record.events.splice(0, record.events.length - limit);
+    const last = record.events.length > 0 ? record.events[record.events.length - 1] : undefined;
+    if (last && canMergeStreamLogs(last, event)) {
+      mergeStreamLogInto(last, event);
+    } else {
+      record.events.push(event);
+      const limit = this.config.get<number>('RUN_HISTORY_LIMIT', 500);
+      if (record.events.length > limit) {
+        this.trimEvents(record.events, limit);
+      }
     }
     this.touch(runId);
+  }
+
+  /** 超限时优先裁剪 plugin:log，尽量保留生命周期事件 */
+  private trimEvents(events: RunRecord['events'], limit: number): void {
+    while (events.length > limit) {
+      const logIndex = events.findIndex((event) => event.type === 'plugin:log');
+      if (logIndex >= 0) {
+        events.splice(logIndex, 1);
+        continue;
+      }
+
+      const disposableIndex = events.findIndex(
+        (event) => !LIFECYCLE_EVENT_TYPES.has(String(event.type)),
+      );
+      if (disposableIndex >= 0) {
+        events.splice(disposableIndex, 1);
+        continue;
+      }
+
+      events.shift();
+    }
   }
 
   async delete(runId: string): Promise<boolean> {
