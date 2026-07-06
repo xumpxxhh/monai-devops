@@ -1,4 +1,11 @@
-import { createPlugin, getLogger, z } from '@monai-devops/plugin-sdk';
+import {
+  createPlugin,
+  getAbortSignal,
+  getLogger,
+  PluginCancelledError,
+  throwIfAborted,
+  z,
+} from '@monai-devops/plugin-sdk';
 import type { PluginContext, PluginResult } from '@monai-devops/plugin-sdk';
 import { ChatOpenAI } from '@langchain/openai';
 
@@ -15,6 +22,7 @@ async function executeModelCallPlugin(
   context: PluginContext,
 ): Promise<PluginResult> {
   const log = getLogger(context);
+  const signal = getAbortSignal(context);
   const { message, apiKey } = config;
 
   const openAIModel = new ChatOpenAI({
@@ -28,11 +36,14 @@ async function executeModelCallPlugin(
   log.info('开始执行插件', { plugin: 'model-call-plugin', message });
 
   try {
-    const response = await openAIModel.stream(message);
+    throwIfAborted(context);
+
+    const response = await openAIModel.stream(message, { signal });
 
     let fullResponse = '';
 
     for await (const chunk of response) {
+      throwIfAborted(context);
       log.append(chunk.content.toString(), 'stdout');
       fullResponse += chunk.content.toString();
     }
@@ -43,6 +54,9 @@ async function executeModelCallPlugin(
       data: fullResponse,
     };
   } catch (error) {
+    if (error instanceof PluginCancelledError) {
+      throw error;
+    }
     return {
       success: false,
       message: `插件执行失败: ${(error as Error).message}`,

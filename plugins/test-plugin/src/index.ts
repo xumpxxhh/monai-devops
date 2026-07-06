@@ -1,13 +1,9 @@
-import { createPlugin, getLogger, z } from '@monai-devops/plugin-sdk';
+import { createPlugin, getLogger, sleep, throwIfAborted, z } from '@monai-devops/plugin-sdk';
 import type { PluginContext, PluginResult } from '@monai-devops/plugin-sdk';
 
 const configSchema = z.object({
   type: z.enum(['unit', 'integration', 'e2e']),
 });
-
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
 
 /**
  * 测试插件执行函数
@@ -20,36 +16,31 @@ async function executeTestPlugin(
   const log = getLogger(context);
 
   log.info('开始执行测试', { type });
-  await delay(3000);
+  await sleep(3000, context);
+  throwIfAborted(context);
   log.append('[runner] building...\n', 'stdout');
 
-  await delay(3000);
+  await sleep(3000, context);
+  throwIfAborted(context);
 
   log.info('测试执行完成', { type });
 
-  try {
-    switch (type) {
-      case 'unit':
-        return {
-          success: true,
-          message: '单元测试执行成功',
-        };
-      case 'integration':
-        return {
-          success: true,
-          message: '集成测试执行成功',
-        };
-      case 'e2e':
-        return {
-          success: true,
-          message: 'E2E测试执行成功',
-        };
-    }
-  } catch (error) {
-    return {
-      success: false,
-      message: `测试执行失败: ${(error as Error).message}`,
-    };
+  switch (type) {
+    case 'unit':
+      return {
+        success: true,
+        message: '单元测试执行成功',
+      };
+    case 'integration':
+      return {
+        success: true,
+        message: '集成测试执行成功',
+      };
+    case 'e2e':
+      return {
+        success: true,
+        message: 'E2E测试执行成功',
+      };
   }
 }
 
