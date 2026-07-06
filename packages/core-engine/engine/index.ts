@@ -202,6 +202,14 @@ export function createEngine(options: EngineOptions = {}) {
     return executor.getRunStatus(workflowRunId);
   }
 
+  function cancelScheduledTask(taskId: string): boolean {
+    return scheduler.cancelScheduledTask(taskId);
+  }
+
+  function getScheduledTaskId(workflowRunId: string): string | undefined {
+    return scheduler.getTaskIdByWorkflowRunId(workflowRunId);
+  }
+
   async function destroy(): Promise<void> {
     await executor.destroyActiveRuns();
     resourceScheduler.destroy();
@@ -217,6 +225,8 @@ export function createEngine(options: EngineOptions = {}) {
     pauseRun,
     resumeRun,
     getRunStatus,
+    cancelScheduledTask,
+    getScheduledTaskId,
     registerPlugin: plugins.registerPlugin,
     registerPlugins: plugins.registerPlugins,
     unregisterPlugin: plugins.unregisterPlugin,

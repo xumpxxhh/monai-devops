@@ -24,6 +24,7 @@ export const SkipReasons = {
   DEPENDENCY_FAILED: 'dependency_failed',
   WORKFLOW_ABORTED: 'workflow_aborted',
   USER_CANCELLED: 'user_cancelled',
+  PAUSE_INTERRUPTED: 'pause_interrupted',
 } as const;
 
 export type SkipReason = (typeof SkipReasons)[keyof typeof SkipReasons];

@@ -87,6 +87,7 @@ export interface CancelRunOptions {
 
 export interface PauseRunOptions {
   waitInFlight?: boolean;
+  abortInFlight?: boolean;
 }
 
 export interface RunControlResult {

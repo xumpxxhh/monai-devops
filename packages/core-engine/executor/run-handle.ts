@@ -34,6 +34,7 @@ export class RunHandle {
   private controlChain: Promise<void> = Promise.resolve();
   private stepAbortControllers = new Map<string, AbortController>();
   private cancelMode: RunControlMode = 'best-effort';
+  private pauseAbortInFlight = false;
 
   constructor(readonly workflowRunId: string) {
     this.completionPromise = new Promise<void>((resolve) => {
@@ -67,6 +68,14 @@ export class RunHandle {
 
   getCancelMode(): RunControlMode {
     return this.cancelMode;
+  }
+
+  isPauseAbortInFlight(): boolean {
+    return this.pauseAbortInFlight;
+  }
+
+  isInFlightAbortActive(): boolean {
+    return this.cancelMode === 'hard' || this.pauseAbortInFlight;
   }
 
   getSnapshot(): RunStatusSnapshot {
@@ -172,7 +181,8 @@ export class RunHandle {
   }
 
   requestPause(options: PauseRunOptions = {}): Promise<RunControlResult> {
-    const waitInFlight = options.waitInFlight ?? true;
+    const abortInFlight = options.abortInFlight ?? false;
+    const waitInFlight = abortInFlight ? true : (options.waitInFlight ?? true);
     return this.runControlOp(() => {
       const previousStatus = this.status;
       if (TERMINAL_STATUSES.has(previousStatus) || previousStatus === 'cancelling') {
@@ -192,6 +202,13 @@ export class RunHandle {
           currentStatus: previousStatus,
           inFlightSteps: this.getInFlightSteps(),
         };
+      }
+
+      if (abortInFlight) {
+        this.pauseAbortInFlight = true;
+        for (const controller of this.stepAbortControllers.values()) {
+          controller.abort();
+        }
       }
 
       if (waitInFlight && this.inFlightStepIds.size > 0) {
@@ -229,6 +246,7 @@ export class RunHandle {
       }
 
       this.status = 'running';
+      this.pauseAbortInFlight = false;
       const resolvers = this.resumeResolvers;
       this.resumeResolvers = [];
       for (const resolve of resolvers) {

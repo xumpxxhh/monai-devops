@@ -3,10 +3,15 @@
  * @module executor
  */
 
-import { noopLogger, PluginContextKeys, type PluginResult } from '@monai-devops/plugin-sdk';
+import {
+  noopLogger,
+  PluginCancelledError,
+  PluginContextKeys,
+  PluginFailureCodes,
+  type PluginResult,
+} from '@monai-devops/plugin-sdk';
 import {
   ResourceQueueCancelledError,
-  RunAlreadyActiveError,
   StepExecutionError,
   SkipReasons,
   StepFailureKinds,
@@ -34,7 +39,6 @@ import type {
   ExecutionResult,
   ExecutorOptions,
   PauseRunOptions,
-  RunControlMode,
   RunControlResult,
   RunStatusSnapshot,
   StepCondition,
@@ -62,6 +66,8 @@ export type {
   WorkflowRunStatus,
   WorkflowStep,
 } from './types.js';
+
+export type { WorkflowLifecycleEvent, WorkflowRunMeta };
 
 export { RunHandle } from './run-handle.js';
 export { RunRegistry } from './run-registry.js';
@@ -235,17 +241,17 @@ function resolveAbortSkipReason(reason: AbortSchedulingReason): SkipReason {
   return SkipReasons.WORKFLOW_ABORTED;
 }
 
-async function racePluginWithHardCancelTimeout(
+async function racePluginWithInFlightAbort(
   execute: () => Promise<PluginResult>,
   signal: AbortSignal | undefined,
-  getCancelMode: () => RunControlMode,
+  isInFlightAbortActive: () => boolean,
   timeoutMs: number,
-): Promise<PluginResult | 'hard_cancel_timeout'> {
+): Promise<PluginResult | 'in_flight_abort_timeout'> {
   if (!signal) {
     return execute();
   }
 
-  return new Promise<PluginResult | 'hard_cancel_timeout'>((resolve, reject) => {
+  return new Promise<PluginResult | 'in_flight_abort_timeout'>((resolve, reject) => {
     let timeoutId: ReturnType<typeof setTimeout> | undefined;
 
     const cleanup = () => {
@@ -254,11 +260,11 @@ async function racePluginWithHardCancelTimeout(
     };
 
     const onAbort = () => {
-      if (getCancelMode() !== 'hard') return;
+      if (!isInFlightAbortActive()) return;
       if (timeoutId !== undefined) clearTimeout(timeoutId);
       timeoutId = setTimeout(() => {
         cleanup();
-        resolve('hard_cancel_timeout');
+        resolve('in_flight_abort_timeout');
       }, timeoutMs);
     };
 
@@ -366,6 +372,13 @@ export function createWorkflowExecutor(options: ExecutorOptions = {}) {
     return resolveAbortSkipReason(handle.getAbortReason());
   }
 
+  function resolveInFlightAbortSkipReason(handle: RunHandle | undefined): SkipReason {
+    if (handle?.isPauseAbortInFlight()) {
+      return SkipReasons.PAUSE_INTERRUPTED;
+    }
+    return resolveQueueSkipReason(handle);
+  }
+
   async function executeStep(
     workflowRunId: string,
     step: WorkflowStep,
@@ -424,20 +437,26 @@ export function createWorkflowExecutor(options: ExecutorOptions = {}) {
         }
 
         if (signal?.aborted) {
-          const executionResult = buildSkippedResult(step.id, resolveQueueSkipReason(handle));
+          const executionResult = buildSkippedResult(
+            step.id,
+            resolveInFlightAbortSkipReason(handle),
+          );
           await notifyStepComplete(workflowRunId, step, executionResult, context, meta);
           return executionResult;
         }
 
-        const raced = await racePluginWithHardCancelTimeout(
+        const raced = await racePluginWithInFlightAbort(
           () => pluginExecutor(step.plugin, step.config, pluginContext),
           signal,
-          () => handle?.getCancelMode() ?? 'best-effort',
+          () => handle?.isInFlightAbortActive() ?? false,
           inFlightTimeoutMs,
         );
 
-        if (raced === 'hard_cancel_timeout') {
-          const executionResult = buildSkippedResult(step.id, SkipReasons.USER_CANCELLED);
+        if (raced === 'in_flight_abort_timeout') {
+          const executionResult = buildSkippedResult(
+            step.id,
+            resolveInFlightAbortSkipReason(handle),
+          );
           await notifyStepComplete(workflowRunId, step, executionResult, context, meta);
           return executionResult;
         }
@@ -452,6 +471,12 @@ export function createWorkflowExecutor(options: ExecutorOptions = {}) {
             plugin: step.plugin,
           },
         };
+      }
+
+      if (!pluginResult.success && pluginResult.code === PluginFailureCodes.PLUGIN_CANCELLED) {
+        const executionResult = buildSkippedResult(step.id, resolveInFlightAbortSkipReason(handle));
+        await notifyStepComplete(workflowRunId, step, executionResult, context, meta);
+        return executionResult;
       }
 
       if (!pluginResult.success) {
@@ -472,6 +497,12 @@ export function createWorkflowExecutor(options: ExecutorOptions = {}) {
       await notifyStepComplete(workflowRunId, step, executionResult, context, meta);
       return executionResult;
     } catch (error) {
+      if (error instanceof PluginCancelledError) {
+        const executionResult = buildSkippedResult(step.id, resolveInFlightAbortSkipReason(handle));
+        await notifyStepComplete(workflowRunId, step, executionResult, context, meta);
+        return executionResult;
+      }
+
       if (error instanceof ResourceQueueCancelledError) {
         const executionResult = buildSkippedResult(step.id, resolveQueueSkipReason(handle));
         await notifyStepComplete(workflowRunId, step, executionResult, context, meta);
@@ -661,7 +692,7 @@ export function createWorkflowExecutor(options: ExecutorOptions = {}) {
         }
       };
 
-      while (ready.length > 0 || inFlight.size > 0) {
+      while (ready.length > 0 || inFlight.size > 0 || handle.isPaused() || handle.isPausing()) {
         if (workflowFailed && failFast) {
           handle.setFailFastAbort();
         }
@@ -823,7 +854,11 @@ export function createWorkflowExecutor(options: ExecutorOptions = {}) {
 
     const result = await handle.requestPause(options);
 
-    if (result.currentStatus === 'pausing' && (options.waitInFlight ?? true)) {
+    const shouldWaitForPaused =
+      result.currentStatus === 'pausing' &&
+      ((options.waitInFlight ?? true) || (options.abortInFlight ?? false));
+
+    if (shouldWaitForPaused) {
       await handle.waitForPaused();
     } else if (result.currentStatus === 'paused') {
       const meta = handle.getRunMeta();

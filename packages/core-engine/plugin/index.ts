@@ -4,6 +4,7 @@
  */
 
 import {
+  PluginCancelledError,
   PluginFailureCodes,
   type PluginDefinition,
   type PluginConfig,
@@ -89,6 +90,13 @@ export function createPluginManager() {
     try {
       return await plugin.execute(config, context);
     } catch (error) {
+      if (error instanceof PluginCancelledError) {
+        return {
+          success: false,
+          code: PluginFailureCodes.PLUGIN_CANCELLED,
+          message: error.message,
+        };
+      }
       return {
         success: false,
         code: PluginFailureCodes.PLUGIN_EXECUTION_ERROR,
