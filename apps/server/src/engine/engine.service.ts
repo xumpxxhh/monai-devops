@@ -52,9 +52,10 @@ export class EngineService implements OnModuleInit, OnModuleDestroy {
 
   onModuleDestroy(): void {
     if (this.engine) {
-      this.engine.destroy();
-      this.ready = false;
-      this.logger.log('Engine destroyed');
+      void this.engine.destroy().finally(() => {
+        this.ready = false;
+        this.logger.log('Engine destroyed');
+      });
     }
   }
 
@@ -151,6 +152,22 @@ export class EngineService implements OnModuleInit, OnModuleDestroy {
 
   getQueueStatus() {
     return this.engine.getResourceScheduler().getQueueStatus();
+  }
+
+  cancelRun(workflowRunId: string, mode?: 'best-effort' | 'hard') {
+    return this.engine.cancelRun(workflowRunId, mode ? { mode } : undefined);
+  }
+
+  pauseRun(workflowRunId: string, waitInFlight?: boolean) {
+    return this.engine.pauseRun(workflowRunId, { waitInFlight });
+  }
+
+  resumeRun(workflowRunId: string) {
+    return this.engine.resumeRun(workflowRunId);
+  }
+
+  getRunStatus(workflowRunId: string) {
+    return this.engine.getRunStatus(workflowRunId);
   }
 
   cancelQueuedSteps(runId: string): number {

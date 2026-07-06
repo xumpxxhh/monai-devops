@@ -19,6 +19,7 @@ import {
 import {
   serializeWorkflowEvent,
   serializeWorkflowRunResult,
+  runStatusFromWorkflowResult,
 } from '../common/serialization/serialize-workflow-event.js';
 import {
   normalizeWorkflowIds,
@@ -33,12 +34,67 @@ import {
   type RunRepository,
   RUN_REPOSITORY,
 } from './runs.repository.js';
+import type { RunStatusSnapshot } from '@monai-devops/core-engine';
 
 export interface SubmitRunOptions {
   priority?: number;
   traceId?: string;
   failFast?: boolean;
   maxParallelSteps?: number;
+}
+
+const TERMINAL_RUN_STATUSES: RunRecord['status'][] = [
+  'finished',
+  'failed',
+  'rejected',
+  'cancelled',
+];
+
+const NON_DELETABLE_STATUSES: RunRecord['status'][] = [
+  'queued',
+  'running',
+  'paused',
+  'pausing',
+];
+
+function mergeEngineControlStatus(
+  record: RunRecord,
+  engine?: RunStatusSnapshot,
+): RunRecord {
+  if (!engine || engine.status === 'unknown') {
+    return record;
+  }
+
+  if (engine.status === 'cancelling') {
+    return { ...record, status: 'running', cancelled: 'best-effort' };
+  }
+
+  if (
+    engine.status === 'running' ||
+    engine.status === 'pausing' ||
+    engine.status === 'paused'
+  ) {
+    return { ...record, status: engine.status };
+  }
+
+  if (
+    engine.status === 'cancelled' ||
+    engine.status === 'finished' ||
+    engine.status === 'failed'
+  ) {
+    const statusMap: Record<string, RunRecord['status']> = {
+      cancelled: 'cancelled',
+      finished: 'finished',
+      failed: 'failed',
+    };
+    return {
+      ...record,
+      status: statusMap[engine.status] ?? record.status,
+      ...(engine.status === 'cancelled' ? { cancelled: 'best-effort' as const } : {}),
+    };
+  }
+
+  return record;
 }
 
 @Injectable()
@@ -127,7 +183,10 @@ export class RunManagerService implements OnModuleInit {
   }
 
   async getRun(runId: string): Promise<RunRecord | undefined> {
-    return this.runRepository.findById(runId);
+    const record = await this.runRepository.findById(runId);
+    if (!record) return undefined;
+    const engineStatus = this.engineService.getRunStatus(runId);
+    return mergeEngineControlStatus(record, engineStatus);
   }
 
   async listRuns(filter: Parameters<RunRepository['list']>[0]) {
@@ -145,32 +204,100 @@ export class RunManagerService implements OnModuleInit {
       throw new HttpException('Run 不存在', HttpStatus.NOT_FOUND);
     }
 
-    if (
-      record.status === 'finished' ||
-      record.status === 'failed' ||
-      record.status === 'rejected'
-    ) {
+    if (TERMINAL_RUN_STATUSES.includes(record.status)) {
       return { runId, status: record.status, cancelled: undefined };
     }
 
-    const cancelledSteps = this.engineService.cancelQueuedSteps(runId);
-    this.logger.log(`Run ${runId} best-effort cancel (${cancelledSteps} queued steps cancelled)`);
+    const controlResult = await this.engineService.cancelRun(runId, 'best-effort');
+    this.logger.log(
+      `Run ${runId} cancel requested (${controlResult.previousStatus} -> ${controlResult.currentStatus})`,
+    );
 
-    if (record.status === 'queued' || record.status === 'running') {
+    if (controlResult.currentStatus === 'unknown' && record.status === 'queued') {
       await this.runRepository.update(runId, {
         status: 'cancelled',
         cancelled: 'best-effort',
         finishedAt: new Date(),
       });
+      return { runId, status: 'cancelled' as const, cancelled: 'best-effort' as const };
     }
 
-    return { runId, status: 'cancelled', cancelled: 'best-effort' as const };
+    if (
+      controlResult.currentStatus === 'cancelling' ||
+      controlResult.currentStatus === 'cancelled'
+    ) {
+      if (controlResult.currentStatus === 'cancelling') {
+        await this.runRepository.update(runId, {
+          status: 'running',
+          cancelled: 'best-effort',
+        });
+      }
+      return {
+        runId,
+        status:
+          controlResult.currentStatus === 'cancelled'
+            ? ('cancelled' as const)
+            : ('running' as const),
+        cancelled: 'best-effort' as const,
+        inFlightSteps: controlResult.inFlightSteps,
+      };
+    }
+
+    return {
+      runId,
+      status: record.status,
+      cancelled: undefined,
+    };
+  }
+
+  async pauseRun(runId: string) {
+    const record = await this.runRepository.findById(runId);
+    if (!record) {
+      throw new HttpException('Run 不存在', HttpStatus.NOT_FOUND);
+    }
+
+    if (!['running', 'pausing'].includes(record.status)) {
+      throw new HttpException(
+        `无法暂停状态为 ${record.status} 的 Run`,
+        HttpStatus.CONFLICT,
+      );
+    }
+
+    const result = await this.engineService.pauseRun(runId, true);
+    if (result.currentStatus === 'paused' || result.currentStatus === 'pausing') {
+      await this.runRepository.update(runId, {
+        status: result.currentStatus === 'paused' ? 'paused' : 'pausing',
+      });
+    }
+
+    return { runId, status: result.currentStatus, inFlightSteps: result.inFlightSteps };
+  }
+
+  async resumeRun(runId: string) {
+    const record = await this.runRepository.findById(runId);
+    if (!record) {
+      throw new HttpException('Run 不存在', HttpStatus.NOT_FOUND);
+    }
+
+    if (!['paused', 'pausing'].includes(record.status)) {
+      throw new HttpException(
+        `无法继续状态为 ${record.status} 的 Run`,
+        HttpStatus.CONFLICT,
+      );
+    }
+
+    const result = await this.engineService.resumeRun(runId);
+    if (result.currentStatus === 'running') {
+      await this.runRepository.update(runId, { status: 'running' });
+    }
+
+    return { runId, status: result.currentStatus };
   }
 
   async deleteRun(runId: string): Promise<boolean> {
     const record = await this.runRepository.findById(runId);
     if (!record) return false;
-    if (record.status === 'queued' || record.status === 'running') {
+    if (NON_DELETABLE_STATUSES.includes(record.status)) {
       throw new HttpException('无法删除进行中的 Run', HttpStatus.CONFLICT);
     }
     return this.runRepository.delete(runId);
@@ -187,7 +314,7 @@ export class RunManagerService implements OnModuleInit {
 
     this.runStream.subscribe(runId, client, record.events);
 
-    if (record.result && (record.status === 'finished' || record.status === 'failed')) {
+    if (record.result && (record.status === 'finished' || record.status === 'failed' || record.status === 'cancelled')) {
       this.runStream.send(client, { type: 'done', runId, result: record.result });
     }
 
@@ -199,6 +326,11 @@ export class RunManagerService implements OnModuleInit {
     workflow: WorkflowDefinition,
     context: { traceId: string; priority?: number },
   ): Promise<void> {
+    const existing = await this.runRepository.findById(runId);
+    if (existing?.status === 'cancelled') {
+      return;
+    }
+
     try {
       const result = await this.engineService.runWorkflow(runId, workflow, context);
       await this.finalizeIfNeeded(runId, result);
@@ -233,16 +365,23 @@ export class RunManagerService implements OnModuleInit {
 
   private async finalizeIfNeeded(runId: string, result: WorkflowRunResult): Promise<void> {
     const record = await this.runRepository.findById(runId);
-    if (!record || record.status === 'finished' || record.status === 'failed') {
+    if (
+      !record ||
+      record.status === 'finished' ||
+      record.status === 'failed' ||
+      record.status === 'cancelled'
+    ) {
       return;
     }
 
     const serialized = serializeWorkflowRunResult(result);
+    const status = runStatusFromWorkflowResult(result);
     await this.runRepository.update(runId, {
-      status: result.success ? 'finished' : 'failed',
+      status,
       finishedAt: new Date(),
       result: serialized,
       counts: this.countsFromResult(result),
+      ...(status === 'cancelled' ? { cancelled: 'best-effort' as const } : {}),
     });
     this.runStream.fanOut(runId, { type: 'done', result: serialized });
   }
@@ -270,13 +409,30 @@ export class RunManagerService implements OnModuleInit {
       }
     }
 
+    if (event.type === 'workflow:cancelled') {
+      await this.runRepository.update(runId, {
+        status: 'running',
+        cancelled: 'best-effort',
+      });
+    }
+
+    if (event.type === 'workflow:paused') {
+      await this.runRepository.update(runId, { status: 'paused' });
+    }
+
+    if (event.type === 'workflow:resumed') {
+      await this.runRepository.update(runId, { status: 'running' });
+    }
+
     if (event.type === 'workflow:finished') {
       const serializedResult = serializeWorkflowRunResult(event.result);
+      const status = runStatusFromWorkflowResult(event.result);
       await this.runRepository.update(runId, {
-        status: event.result.success ? 'finished' : 'failed',
+        status,
         finishedAt: new Date(),
         result: serializedResult,
         counts: this.countsFromResult(event.result),
+        ...(status === 'cancelled' ? { cancelled: 'best-effort' as const } : {}),
       });
       this.runStream.fanOut(runId, { type: 'done', result: serializedResult });
     } else {

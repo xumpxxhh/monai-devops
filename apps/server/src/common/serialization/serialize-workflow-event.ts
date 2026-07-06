@@ -3,6 +3,7 @@ import type {
   WorkflowLifecycleEvent,
   WorkflowRunResult,
 } from '@monai-devops/core-engine';
+import type { RunStatus } from '../../runs/runs.repository.js';
 
 interface SerializedError {
   name: string;
@@ -37,6 +38,12 @@ export function serializeWorkflowRunResult(result: WorkflowRunResult): Serialize
     ...result,
     results: result.results.map(serializeExecutionResult),
   };
+}
+
+export function runStatusFromWorkflowResult(result: WorkflowRunResult): RunStatus {
+  if (result.status === 'cancelled') return 'cancelled';
+  if (result.status === 'failed') return 'failed';
+  return 'finished';
 }
 
 export function serializeWorkflowEvent(

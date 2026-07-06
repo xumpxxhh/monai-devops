@@ -4,7 +4,15 @@ import type {
   SerializedWorkflowRunResult,
 } from '../common/serialization/serialize-workflow-event.js';
 
-export type RunStatus = 'queued' | 'running' | 'finished' | 'failed' | 'rejected' | 'cancelled';
+export type RunStatus =
+  | 'queued'
+  | 'running'
+  | 'paused'
+  | 'pausing'
+  | 'finished'
+  | 'failed'
+  | 'rejected'
+  | 'cancelled';
 
 export interface RunCounts {
   total: number;

@@ -12,12 +12,15 @@ import {
   RUN_REPOSITORY,
 } from './runs.repository.js';
 
-const ACTIVE_STATUSES: RunStatus[] = ['queued', 'running'];
+const ACTIVE_STATUSES: RunStatus[] = ['queued', 'running', 'pausing', 'paused'];
 
 /** 缓冲超限时优先保留的生命周期事件 */
 const LIFECYCLE_EVENT_TYPES = new Set([
   'workflow:start',
   'workflow:finished',
+  'workflow:cancelled',
+  'workflow:paused',
+  'workflow:resumed',
   'step:queued',
   'step:start',
   'step:finished',

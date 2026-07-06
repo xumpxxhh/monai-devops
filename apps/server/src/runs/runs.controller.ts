@@ -72,6 +72,16 @@ export class RunsController {
     return this.runManager.cancelRun(runId);
   }
 
+  @Post(':runId/pause')
+  pause(@Param('runId') runId: string) {
+    return this.runManager.pauseRun(runId);
+  }
+
+  @Post(':runId/resume')
+  resume(@Param('runId') runId: string) {
+    return this.runManager.resumeRun(runId);
+  }
+
   @Delete(':runId')
   async remove(@Param('runId') runId: string) {
     const deleted = await this.runManager.deleteRun(runId);
