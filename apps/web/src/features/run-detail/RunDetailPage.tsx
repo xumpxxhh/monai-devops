@@ -122,14 +122,20 @@ export default function RunDetailPage() {
     };
   }, [runId]);
 
-  const handleCancelRun = async () => {
+  const handleCancelRun = async (mode: 'best-effort' | 'hard' = 'best-effort') => {
     if (!runId || controlLoading) return;
+    if (mode === 'hard') {
+      const confirmed = window.confirm(
+        '强制取消将中断正在执行的步骤。未协作退出的插件可能在超时后被标记为跳过。确定继续？',
+      );
+      if (!confirmed) return;
+    }
     setControlLoading(true);
     try {
-      const result = await runsApi.cancel(runId);
+      const result = await runsApi.cancel(runId, { mode });
       setRecordStatus(result.status as RunStatus);
       if (result.cancelled) {
-        toast.success('已请求取消');
+        toast.success(mode === 'hard' ? '已请求强制取消' : '已请求取消(至当前步骤完成)');
       }
       if (result.status === 'cancelled') {
         setSubscribeKey(null);
@@ -239,15 +245,25 @@ export default function RunDetailPage() {
               </button>
             )}
             {canCancel && (
-              <button
-                type="button"
-                disabled={controlLoading}
-                onClick={() => void handleCancelRun()}
-                className="inline-flex items-center gap-2 h-8 px-3 rounded-ctrl text-sm border border-line text-failed hover:bg-raised disabled:opacity-60"
-              >
-                <FontAwesomeIcon icon={faBan} />
-                取消运行
-              </button>
+              <>
+                <button
+                  type="button"
+                  disabled={controlLoading}
+                  onClick={() => void handleCancelRun('best-effort')}
+                  className="inline-flex items-center gap-2 h-8 px-3 rounded-ctrl text-sm border border-line text-failed hover:bg-raised disabled:opacity-60"
+                >
+                  <FontAwesomeIcon icon={faBan} />
+                  取消运行
+                </button>
+                <button
+                  type="button"
+                  disabled={controlLoading}
+                  onClick={() => void handleCancelRun('hard')}
+                  className="inline-flex items-center gap-2 h-8 px-3 rounded-ctrl text-sm border border-line text-failed hover:bg-raised disabled:opacity-60"
+                >
+                  强制取消
+                </button>
+              </>
             )}
           </div>
         </div>

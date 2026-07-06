@@ -33,7 +33,7 @@ export interface RunRecord {
   finishedAt?: Date;
   result?: SerializedWorkflowRunResult;
   events: SerializedWorkflowLifecycleEvent[];
-  cancelled?: 'best-effort';
+  cancelled?: 'best-effort' | 'hard';
 }
 
 export interface RunListFilter {

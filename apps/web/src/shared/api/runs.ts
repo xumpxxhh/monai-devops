@@ -23,17 +23,18 @@ export const runsApi = {
       `/runs/${runId}/events`,
     );
   },
-  cancel(runId: string) {
+  cancel(runId: string, options?: { mode?: 'best-effort' | 'hard' }) {
     return apiPost<{
       runId: string;
       status: string;
-      cancelled?: string;
+      cancelled?: 'best-effort' | 'hard';
       inFlightSteps?: string[];
-    }>(`/runs/${runId}/cancel`);
+    }>(`/runs/${runId}/cancel`, options);
   },
-  pause(runId: string) {
+  pause(runId: string, options?: { waitInFlight?: boolean; abortInFlight?: boolean }) {
     return apiPost<{ runId: string; status: string; inFlightSteps?: string[] }>(
       `/runs/${runId}/pause`,
+      options,
     );
   },
   resume(runId: string) {

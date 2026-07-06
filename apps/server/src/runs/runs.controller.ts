@@ -11,7 +11,12 @@ import {
 } from '@nestjs/common';
 import type { WorkflowDraft } from '../common/validation/normalize-workflow-ids.js';
 import { parsePagination } from '../common/dto/pagination.dto.js';
-import { RunManagerService, type SubmitRunOptions } from './run-manager.service.js';
+import {
+  RunManagerService,
+  type SubmitRunOptions,
+  type CancelRunOptions,
+  type PauseRunOptions,
+} from './run-manager.service.js';
 import type { RunStatus } from './runs.repository.js';
 
 interface InlineRunBody extends SubmitRunOptions {
@@ -68,13 +73,13 @@ export class RunsController {
   }
 
   @Post(':runId/cancel')
-  cancel(@Param('runId') runId: string) {
-    return this.runManager.cancelRun(runId);
+  cancel(@Param('runId') runId: string, @Body() body: CancelRunOptions = {}) {
+    return this.runManager.cancelRun(runId, body);
   }
 
   @Post(':runId/pause')
-  pause(@Param('runId') runId: string) {
-    return this.runManager.pauseRun(runId);
+  pause(@Param('runId') runId: string, @Body() body: PauseRunOptions = {}) {
+    return this.runManager.pauseRun(runId, body);
   }
 
   @Post(':runId/resume')

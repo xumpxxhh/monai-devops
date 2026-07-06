@@ -158,8 +158,8 @@ export class EngineService implements OnModuleInit, OnModuleDestroy {
     return this.engine.cancelRun(workflowRunId, mode ? { mode } : undefined);
   }
 
-  pauseRun(workflowRunId: string, waitInFlight?: boolean) {
-    return this.engine.pauseRun(workflowRunId, { waitInFlight });
+  pauseRun(workflowRunId: string, options?: { waitInFlight?: boolean; abortInFlight?: boolean }) {
+    return this.engine.pauseRun(workflowRunId, options);
   }
 
   resumeRun(workflowRunId: string) {
@@ -169,11 +169,6 @@ export class EngineService implements OnModuleInit, OnModuleDestroy {
   getRunStatus(workflowRunId: string) {
     return this.engine.getRunStatus(workflowRunId);
   }
-
-  cancelQueuedSteps(runId: string): number {
-    return this.engine.getResourceScheduler().cancelByWorkflowRunId(runId);
-  }
-
   getPluginCount(): number {
     return this.engine.getPlugins().length;
   }

@@ -43,6 +43,15 @@ export interface SubmitRunOptions {
   maxParallelSteps?: number;
 }
 
+export interface CancelRunOptions {
+  mode?: 'best-effort' | 'hard';
+}
+
+export interface PauseRunOptions {
+  waitInFlight?: boolean;
+  abortInFlight?: boolean;
+}
+
 const TERMINAL_RUN_STATUSES: RunRecord['status'][] = [
   'finished',
   'failed',
@@ -50,17 +59,9 @@ const TERMINAL_RUN_STATUSES: RunRecord['status'][] = [
   'cancelled',
 ];
 
-const NON_DELETABLE_STATUSES: RunRecord['status'][] = [
-  'queued',
-  'running',
-  'paused',
-  'pausing',
-];
+const NON_DELETABLE_STATUSES: RunRecord['status'][] = ['queued', 'running', 'paused', 'pausing'];
 
-function mergeEngineControlStatus(
-  record: RunRecord,
-  engine?: RunStatusSnapshot,
-): RunRecord {
+function mergeEngineControlStatus(record: RunRecord, engine?: RunStatusSnapshot): RunRecord {
   if (!engine || engine.status === 'unknown') {
     return record;
   }
@@ -69,19 +70,11 @@ function mergeEngineControlStatus(
     return { ...record, status: 'running', cancelled: 'best-effort' };
   }
 
-  if (
-    engine.status === 'running' ||
-    engine.status === 'pausing' ||
-    engine.status === 'paused'
-  ) {
+  if (engine.status === 'running' || engine.status === 'pausing' || engine.status === 'paused') {
     return { ...record, status: engine.status };
   }
 
-  if (
-    engine.status === 'cancelled' ||
-    engine.status === 'finished' ||
-    engine.status === 'failed'
-  ) {
+  if (engine.status === 'cancelled' || engine.status === 'finished' || engine.status === 'failed') {
     const statusMap: Record<string, RunRecord['status']> = {
       cancelled: 'cancelled',
       finished: 'finished',
@@ -198,7 +191,7 @@ export class RunManagerService implements OnModuleInit {
     return record?.events;
   }
 
-  async cancelRun(runId: string) {
+  async cancelRun(runId: string, options: CancelRunOptions = {}) {
     const record = await this.runRepository.findById(runId);
     if (!record) {
       throw new HttpException('Run 不存在', HttpStatus.NOT_FOUND);
@@ -208,18 +201,19 @@ export class RunManagerService implements OnModuleInit {
       return { runId, status: record.status, cancelled: undefined };
     }
 
-    const controlResult = await this.engineService.cancelRun(runId, 'best-effort');
+    const mode = options.mode ?? 'best-effort';
+    const controlResult = await this.engineService.cancelRun(runId, mode);
     this.logger.log(
-      `Run ${runId} cancel requested (${controlResult.previousStatus} -> ${controlResult.currentStatus})`,
+      `Run ${runId} cancel requested (${controlResult.previousStatus} -> ${controlResult.currentStatus}, mode=${mode})`,
     );
 
     if (controlResult.currentStatus === 'unknown' && record.status === 'queued') {
       await this.runRepository.update(runId, {
         status: 'cancelled',
-        cancelled: 'best-effort',
+        cancelled: mode,
         finishedAt: new Date(),
       });
-      return { runId, status: 'cancelled' as const, cancelled: 'best-effort' as const };
+      return { runId, status: 'cancelled' as const, cancelled: mode };
     }
 
     if (
@@ -229,7 +223,7 @@ export class RunManagerService implements OnModuleInit {
       if (controlResult.currentStatus === 'cancelling') {
         await this.runRepository.update(runId, {
           status: 'running',
-          cancelled: 'best-effort',
+          cancelled: mode,
         });
       }
       return {
@@ -238,7 +232,7 @@ export class RunManagerService implements OnModuleInit {
           controlResult.currentStatus === 'cancelled'
             ? ('cancelled' as const)
             : ('running' as const),
-        cancelled: 'best-effort' as const,
+        cancelled: mode,
         inFlightSteps: controlResult.inFlightSteps,
       };
     }
@@ -250,20 +244,17 @@ export class RunManagerService implements OnModuleInit {
     };
   }
 
-  async pauseRun(runId: string) {
+  async pauseRun(runId: string, options: PauseRunOptions = {}) {
     const record = await this.runRepository.findById(runId);
     if (!record) {
       throw new HttpException('Run 不存在', HttpStatus.NOT_FOUND);
     }
 
     if (!['running', 'pausing'].includes(record.status)) {
-      throw new HttpException(
-        `无法暂停状态为 ${record.status} 的 Run`,
-        HttpStatus.CONFLICT,
-      );
+      throw new HttpException(`无法暂停状态为 ${record.status} 的 Run`, HttpStatus.CONFLICT);
     }
 
-    const result = await this.engineService.pauseRun(runId, true);
+    const result = await this.engineService.pauseRun(runId, options);
     if (result.currentStatus === 'paused' || result.currentStatus === 'pausing') {
       await this.runRepository.update(runId, {
         status: result.currentStatus === 'paused' ? 'paused' : 'pausing',
@@ -280,10 +271,7 @@ export class RunManagerService implements OnModuleInit {
     }
 
     if (!['paused', 'pausing'].includes(record.status)) {
-      throw new HttpException(
-        `无法继续状态为 ${record.status} 的 Run`,
-        HttpStatus.CONFLICT,
-      );
+      throw new HttpException(`无法继续状态为 ${record.status} 的 Run`, HttpStatus.CONFLICT);
     }
 
     const result = await this.engineService.resumeRun(runId);
@@ -314,7 +302,10 @@ export class RunManagerService implements OnModuleInit {
 
     this.runStream.subscribe(runId, client, record.events);
 
-    if (record.result && (record.status === 'finished' || record.status === 'failed' || record.status === 'cancelled')) {
+    if (
+      record.result &&
+      (record.status === 'finished' || record.status === 'failed' || record.status === 'cancelled')
+    ) {
       this.runStream.send(client, { type: 'done', runId, result: record.result });
     }
 
@@ -412,7 +403,7 @@ export class RunManagerService implements OnModuleInit {
     if (event.type === 'workflow:cancelled') {
       await this.runRepository.update(runId, {
         status: 'running',
-        cancelled: 'best-effort',
+        cancelled: event.mode,
       });
     }
 

@@ -28,7 +28,8 @@ export interface ExecutionResultSerialized {
     | 'condition_not_met'
     | 'dependency_failed'
     | 'workflow_aborted'
-    | 'user_cancelled';
+    | 'user_cancelled'
+    | 'pause_interrupted';
 }
 
 export interface WorkflowRunResultSerialized {
@@ -94,7 +95,7 @@ export interface RunRecord {
   finishedAt?: string;
   result?: WorkflowRunResultSerialized;
   events: SerializedWorkflowLifecycleEvent[];
-  cancelled?: 'best-effort';
+  cancelled?: 'best-effort' | 'hard';
 }
 
 export interface PaginatedResponse<T> {
