@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { Injectable } from '@nestjs/common';
 import type { WorkflowDefinition, WorkflowStep } from '@monai-devops/core-engine';
 import { EngineService } from '../engine/engine.service.js';
@@ -27,7 +28,7 @@ export class TestDevopsService {
       ],
     };
 
-    const run = await this.engineService.runWorkflow(workflow);
+    const run = await this.engineService.runWorkflow(randomUUID(), workflow);
 
     return {
       success: run.success,

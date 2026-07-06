@@ -48,7 +48,7 @@ export class PluginsService {
 
     return new Observable((subscriber) => {
       const unsubscribe = this.engineService.onEvent((event) => {
-        if (event.meta.runId !== runId || event.type !== 'plugin:log') {
+        if (event.workflowRunId !== runId || event.type !== 'plugin:log') {
           return;
         }
 
@@ -60,7 +60,7 @@ export class PluginsService {
       });
 
       void this.engineService
-        .dryRunPlugin(name, config, { runId })
+        .dryRunPlugin(runId, name, config)
         .then((result) => {
           const message: PluginDryRunSseMessage = {
             type: 'done',

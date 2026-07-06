@@ -72,13 +72,15 @@ export class EngineService implements OnModuleInit, OnModuleDestroy {
   }
 
   runWorkflow(
+    workflowRunId: string,
     workflow: WorkflowDefinition,
     context: Partial<ExecutionContext> = {},
   ): Promise<WorkflowRunResult> {
-    return this.engine.runWorkflow(workflow, context);
+    return this.engine.runWorkflow(workflowRunId, workflow, context);
   }
 
   dryRunPlugin(
+    workflowRunId: string,
     pluginName: string,
     config: PluginConfig,
     context: Partial<ExecutionContext> = {},
@@ -90,21 +92,19 @@ export class EngineService implements OnModuleInit, OnModuleDestroy {
       config,
     };
 
-    const runId = typeof context.runId === 'string' ? context.runId : 'dry-run';
     const traceId = typeof context.traceId === 'string' ? context.traceId : undefined;
 
     const executionContext: ExecutionContext = {
       workflowId: 'dry-run',
       stepId: step.id,
-      runId,
+      runId: workflowRunId,
       traceId,
       priority: context.priority,
       previousResults: context.previousResults,
       artifacts: context.artifacts,
     };
 
-    return this.engine.getExecutor().executeStep(step, executionContext, {
-      runId,
+    return this.engine.getExecutor().executeStep(workflowRunId, step, executionContext, {
       workflowId: 'dry-run',
       traceId,
       context: executionContext,
@@ -154,7 +154,7 @@ export class EngineService implements OnModuleInit, OnModuleDestroy {
   }
 
   cancelQueuedSteps(runId: string): number {
-    return this.engine.getResourceScheduler().cancelByRunId(runId);
+    return this.engine.getResourceScheduler().cancelByWorkflowRunId(runId);
   }
 
   getPluginCount(): number {

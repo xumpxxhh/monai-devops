@@ -13,7 +13,7 @@ function streamLog(
 ): SerializedWorkflowLifecycleEvent {
   return {
     type: 'plugin:log',
-    meta: { runId: 'run-1', workflowId: 'wf-1' },
+    meta: { workflowId: 'wf-1' },
     step: { id: stepId, name: stepId, plugin: 'test-plugin' },
     log: { level: 'info', message, timestamp, stream },
   };

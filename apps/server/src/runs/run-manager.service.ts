@@ -10,6 +10,7 @@ import {
 import { ConfigService } from '@nestjs/config';
 import {
   StepStatuses,
+  WorkflowRunIdValidationError,
   WorkflowValidationError,
   type WorkflowDefinition,
   type WorkflowLifecycleEvent,
@@ -57,7 +58,7 @@ export class RunManagerService implements OnModuleInit {
   }
 
   private enqueueEngineEvent(event: WorkflowLifecycleEvent): Promise<void> {
-    const runId = event.meta.runId;
+    const runId = event.workflowRunId;
     const previous = this.eventChains.get(runId) ?? Promise.resolve();
     const current = previous
       .then(() => this.processEngineEvent(event))
@@ -118,7 +119,6 @@ export class RunManagerService implements OnModuleInit {
     this.logger.log(`Run ${runId} queued (workflow=${normalized.id}, traceId=${traceId})`);
 
     void this.executeRun(runId, normalized, {
-      runId,
       traceId,
       priority: options.priority,
     });
@@ -197,13 +197,16 @@ export class RunManagerService implements OnModuleInit {
   private async executeRun(
     runId: string,
     workflow: WorkflowDefinition,
-    context: { runId: string; traceId: string; priority?: number },
+    context: { traceId: string; priority?: number },
   ): Promise<void> {
     try {
-      const result = await this.engineService.runWorkflow(workflow, context);
+      const result = await this.engineService.runWorkflow(runId, workflow, context);
       await this.finalizeIfNeeded(runId, result);
     } catch (error) {
-      if (error instanceof WorkflowValidationError) {
+      if (
+        error instanceof WorkflowValidationError ||
+        error instanceof WorkflowRunIdValidationError
+      ) {
         await this.runRepository.update(runId, {
           status: 'rejected',
           finishedAt: new Date(),
@@ -245,7 +248,7 @@ export class RunManagerService implements OnModuleInit {
   }
 
   private async processEngineEvent(event: WorkflowLifecycleEvent): Promise<void> {
-    const runId = event.meta.runId;
+    const runId = event.workflowRunId;
     const serialized = serializeWorkflowEvent(event);
     await this.runRepository.appendEvent(runId, serialized);
 

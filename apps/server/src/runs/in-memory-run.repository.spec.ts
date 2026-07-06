@@ -10,7 +10,8 @@ function streamLog(
 ): SerializedWorkflowLifecycleEvent {
   return {
     type: 'plugin:log',
-    meta: { runId: 'run-1', workflowId: 'wf-1' },
+    workflowRunId: 'run-1',
+    meta: { workflowId: 'wf-1' },
     step: { id: stepId, name: stepId, plugin: 'test-plugin' },
     log: { level: 'info', message, timestamp: Date.now(), stream },
   };
@@ -57,7 +58,8 @@ describe('InMemoryRunRepository.appendEvent stream merge', () => {
     await repository.appendEvent('run-1', streamLog('s1', 'line1\n'));
     await repository.appendEvent('run-1', {
       type: 'step:finished',
-      meta: { runId: 'run-1', workflowId: 'wf-1' },
+      workflowRunId: 'run-1',
+      meta: { workflowId: 'wf-1' },
       step: { id: 's1', name: 'S1', plugin: 'test-plugin' },
       result: { status: 'completed', success: true, stepId: 's1' },
     });
