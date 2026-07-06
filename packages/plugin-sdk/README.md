@@ -202,6 +202,19 @@ log.append('[build] compiling...\n', 'stdout'); // stream: 'stdout' | 'stderr'
 | `PluginLogEntry`  | `{ level, message, timestamp, data?, stream? }` |
 | `noopLogger`      | 空实现，用于单测或无 observer 场景              |
 
+## 取消信号（AbortSignal）
+
+`mode: 'hard'` 取消时，core-engine 在 `step:start` 之后向 context 注入 `AbortSignal`（键名 `PluginContextKeys.signal`，值为 `'signal'`）。插件应监听 `signal` 并协作退出；未响应时在 `inFlightTimeoutMs` 超时后步骤会被标记为 `SKIPPED / user_cancelled`。
+
+```ts
+import { PluginContextKeys, getContext } from '@monai-devops/plugin-sdk';
+
+const signal = getContext<AbortSignal>(context, PluginContextKeys.signal);
+signal?.addEventListener('abort', () => {
+  // 停止子进程、关闭连接等
+});
+```
+
 ## 编写约定
 
 1. **业务失败用 Result，不用 throw** — 便于 executor 统一归类为插件失败

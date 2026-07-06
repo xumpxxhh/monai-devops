@@ -27,6 +27,7 @@ export interface PluginLogger {
 
 export const PluginContextKeys = {
   logger: 'logger',
+  signal: 'signal',
 } as const;
 
 export const noopLogger: PluginLogger = {
