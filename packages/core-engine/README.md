@@ -86,7 +86,7 @@ flowchart TB
 | `PluginFailureCodes` | plugin-sdk  | `PLUGIN_NOT_FOUND`、`PLUGIN_EXECUTION_ERROR` |
 | `StepStatuses`       | core-engine | `COMPLETED`、`SKIPPED`、`FAILED`             |
 | `StepFailureKinds`   | core-engine | `PLUGIN`、`RESOURCE`、`INTERNAL`             |
-| `SkipReasons`        | core-engine | `CONDITION_NOT_MET`、`DEPENDENCY_FAILED`、`WORKFLOW_ABORTED` |
+| `SkipReasons`        | core-engine | `CONDITION_NOT_MET`、`DEPENDENCY_FAILED`、`WORKFLOW_ABORTED`、`USER_CANCELLED` |
 
 **WorkflowValidationError**（启动前抛出）
 
@@ -166,10 +166,13 @@ if (step.pluginResult?.code === PluginFailureCodes.PLUGIN_NOT_FOUND) {
 
 - `runWorkflow(workflowRunId, workflow, context?)` → `WorkflowRunResult`
 - `scheduleWorkflow(workflowRunId, workflow, context?)` → `Promise<ScheduleResult>`（整次 workflow 作为调度任务）
+- `cancelRun(workflowRunId, options?)` → `Promise<RunControlResult>`（尽力取消，P0；`mode: 'hard'` 时向 in-flight 步骤注入 `AbortSignal`）
+- `pauseRun(workflowRunId, options?)` / `resumeRun(workflowRunId)` → `Promise<RunControlResult>`（P1）
+- `getRunStatus(workflowRunId)` → `RunStatusSnapshot | undefined`
 - `registerPlugin` / `registerPlugins` / `unregisterPlugin` / `getPlugin` / `getPlugins` / `getPluginNames` / `hasPlugin`
 - `registerResource(resource)` — 动态注册资源并唤醒等待队列
 - `getExecutor()` / `getScheduler()` / `getResourceManager()` / `getResourceScheduler()` — 高级用法
-- `destroy()` — 释放 resource-scheduler、资源池定时器与执行历史
+- `destroy()` — 取消所有活跃 Run 后释放 resource-scheduler、资源池定时器与执行历史
 
 ### executor（DAG 工作流）
 
@@ -190,6 +193,7 @@ if (step.pluginResult?.code === PluginFailureCodes.PLUGIN_NOT_FOUND) {
 | 方法 | 说明 |
 | ---- | ---- |
 | `executeStep(workflowRunId, step, context, meta?)` | 单步执行；无 `workflow:start` / `workflow:finished` |
+| `cancelRun` / `pauseRun` / `resumeRun` / `getRunStatus` / `destroyActiveRuns` | Run 控制 API（实现于 executor，engine 透传） |
 | `getExecutionHistory(workflowId)` | 最近一次 `executeWorkflow` 的步骤结果 |
 | `clearHistory()` | 清空历史（`destroy()` 时也会调用） |
 
@@ -235,6 +239,15 @@ const observer: WorkflowObserver = {
       case "plugin:log":
         // 插件执行期日志（log.info / log.append 等）
         break;
+      case "workflow:cancelled":
+        // 用户取消受理（尽力取消）
+        break;
+      case "workflow:paused":
+        // Run 已暂停
+        break;
+      case "workflow:resumed":
+        // Run 已恢复
+        break;
       case "workflow:finished":
         // 整次 run 结束
         break;
@@ -258,7 +271,10 @@ await engine.runWorkflow('550e8400-e29b-41d4-a716-446655440000', workflow, {
 | `step:start`        | 资源分配成功后、插件执行前（条件跳过**不**触发）                        |
 | `plugin:log`        | 插件通过 `getLogger(context)` 写日志；在 `step:start` 与 `step:finished` 之间 |
 | `step:finished`     | 步骤结束（成功、失败、跳过均触发；失败只发此事件，不发单独 error 事件） |
-| `workflow:finished` | 所有步骤处理完毕（含 failFast 补发的未执行步）                          |
+| `workflow:cancelled`| 用户/destroy 取消受理时（尽力取消阶段 A）                               |
+| `workflow:paused`   | Run 进入 `paused` 控制态                                                |
+| `workflow:resumed`  | Run 从 `paused` 恢复为 `running`                                        |
+| `workflow:finished` | 所有步骤处理完毕；`result.status` 可为 `success` / `failed` / `cancelled` |
 
 **plugin:log 语义**
 

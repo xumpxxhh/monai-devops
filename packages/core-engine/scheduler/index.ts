@@ -14,6 +14,7 @@ export interface Task {
   priority: number;
   execute: () => Promise<unknown>;
   createdAt: Date;
+  workflowRunId?: string;
 }
 
 /**
@@ -33,11 +34,13 @@ export interface ScheduleResult {
   success: boolean;
   result?: unknown;
   error?: Error;
+  cancelled?: boolean;
 }
 
 interface QueueEntry {
   task: Task;
   resolve: (result: ScheduleResult) => void;
+  cancelled: boolean;
 }
 
 /**
@@ -51,6 +54,8 @@ export function createTaskScheduler(options: SchedulerOptions = {}) {
     if (byPriority !== 0) return byPriority;
     return a.task.createdAt.getTime() - b.task.createdAt.getTime();
   });
+  const pendingById = new Map<string, QueueEntry>();
+  const workflowRunIdToTaskId = new Map<string, string>();
   let runningTasks = 0;
 
   async function executeWithRetry(
@@ -86,11 +91,34 @@ export function createTaskScheduler(options: SchedulerOptions = {}) {
 
   function processQueue(): void {
     while (runningTasks < maxConcurrency && !taskQueue.isEmpty()) {
-      const entry = taskQueue.pop()!;
+      const entry = taskQueue.peek();
+      if (!entry || entry.cancelled) {
+        taskQueue.pop();
+        if (entry) {
+          pendingById.delete(entry.task.id);
+          if (entry.task.workflowRunId) {
+            workflowRunIdToTaskId.delete(entry.task.workflowRunId);
+          }
+          entry.resolve({
+            taskId: entry.task.id,
+            success: false,
+            cancelled: true,
+          });
+        }
+        continue;
+      }
+
+      const popped = taskQueue.pop()!;
+      pendingById.delete(popped.task.id);
       runningTasks++;
 
-      void executeWithRetry(entry.task, retryAttempts, retryDelay)
-        .then(entry.resolve)
+      void executeWithRetry(popped.task, retryAttempts, retryDelay)
+        .then((result) => {
+          if (popped.task.workflowRunId) {
+            workflowRunIdToTaskId.delete(popped.task.workflowRunId);
+          }
+          popped.resolve(result);
+        })
         .finally(() => {
           runningTasks--;
           processQueue();
@@ -100,10 +128,36 @@ export function createTaskScheduler(options: SchedulerOptions = {}) {
 
   function scheduleTask(task: Task): Promise<ScheduleResult> {
     const promise = new Promise<ScheduleResult>((resolve) => {
-      taskQueue.push({ task, resolve });
+      const entry: QueueEntry = { task, resolve, cancelled: false };
+      pendingById.set(task.id, entry);
+      if (task.workflowRunId) {
+        workflowRunIdToTaskId.set(task.workflowRunId, task.id);
+      }
+      taskQueue.push(entry);
       processQueue();
     });
     return promise;
+  }
+
+  function cancelScheduledTask(taskId: string): boolean {
+    const entry = pendingById.get(taskId);
+    if (!entry) return false;
+    entry.cancelled = true;
+    if (entry.task.workflowRunId) {
+      workflowRunIdToTaskId.delete(entry.task.workflowRunId);
+    }
+    processQueue();
+    return true;
+  }
+
+  function cancelScheduledTaskByWorkflowRunId(workflowRunId: string): boolean {
+    const taskId = workflowRunIdToTaskId.get(workflowRunId);
+    if (!taskId) return false;
+    return cancelScheduledTask(taskId);
+  }
+
+  function getTaskIdByWorkflowRunId(workflowRunId: string): string | undefined {
+    return workflowRunIdToTaskId.get(workflowRunId);
   }
 
   function getQueueStatus() {
@@ -116,6 +170,9 @@ export function createTaskScheduler(options: SchedulerOptions = {}) {
 
   return {
     scheduleTask,
+    cancelScheduledTask,
+    cancelScheduledTaskByWorkflowRunId,
+    getTaskIdByWorkflowRunId,
     getQueueStatus,
   };
 }

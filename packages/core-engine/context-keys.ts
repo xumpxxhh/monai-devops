@@ -13,4 +13,5 @@ export const WorkflowContextKeys = {
   runId: 'runId',
   traceId: 'traceId',
   logger: 'logger',
+  signal: 'signal',
 } as const;

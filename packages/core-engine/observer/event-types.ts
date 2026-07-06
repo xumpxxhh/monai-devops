@@ -6,6 +6,9 @@
 export const WorkflowEventTypes = {
   WORKFLOW_START: 'workflow:start',
   WORKFLOW_FINISHED: 'workflow:finished',
+  WORKFLOW_CANCELLED: 'workflow:cancelled',
+  WORKFLOW_PAUSED: 'workflow:paused',
+  WORKFLOW_RESUMED: 'workflow:resumed',
   STEP_QUEUED: 'step:queued',
   STEP_START: 'step:start',
   STEP_FINISHED: 'step:finished',

@@ -6,6 +6,7 @@
 import type {
   ExecutionContext,
   ExecutionResult,
+  RunControlMode,
   WorkflowDefinition,
   WorkflowRunResult,
   WorkflowStep,
@@ -38,6 +39,24 @@ export type WorkflowLifecycleEvent =
       workflowRunId: string;
       meta: WorkflowRunMeta;
       result: WorkflowRunResult;
+    }
+  | {
+      type: typeof WorkflowEventTypes.WORKFLOW_CANCELLED;
+      workflowRunId: string;
+      meta: WorkflowRunMeta;
+      inFlightSteps: string[];
+      mode: RunControlMode;
+    }
+  | {
+      type: typeof WorkflowEventTypes.WORKFLOW_PAUSED;
+      workflowRunId: string;
+      meta: WorkflowRunMeta;
+      inFlightSteps: string[];
+    }
+  | {
+      type: typeof WorkflowEventTypes.WORKFLOW_RESUMED;
+      workflowRunId: string;
+      meta: WorkflowRunMeta;
     }
   | {
       type: typeof WorkflowEventTypes.STEP_QUEUED;

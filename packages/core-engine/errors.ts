@@ -23,6 +23,7 @@ export const SkipReasons = {
   CONDITION_NOT_MET: 'condition_not_met',
   DEPENDENCY_FAILED: 'dependency_failed',
   WORKFLOW_ABORTED: 'workflow_aborted',
+  USER_CANCELLED: 'user_cancelled',
 } as const;
 
 export type SkipReason = (typeof SkipReasons)[keyof typeof SkipReasons];
@@ -68,5 +69,15 @@ export class ResourceQueueCancelledError extends Error {
   constructor(message = '资源等待已取消') {
     super(message);
     this.name = 'ResourceQueueCancelledError';
+  }
+}
+
+/**
+ * 同一 workflowRunId 已有活跃 Run 时抛出
+ */
+export class RunAlreadyActiveError extends Error {
+  constructor(workflowRunId: string) {
+    super(`workflowRunId 已有活跃 Run: ${workflowRunId}`);
+    this.name = 'RunAlreadyActiveError';
   }
 }

@@ -65,11 +65,52 @@ export interface ExecutionResult {
   skipReason?: SkipReason;
 }
 
+export type WorkflowRunStatus = 'success' | 'failed' | 'cancelled';
+
+export type RunControlStatus =
+  | 'running'
+  | 'pausing'
+  | 'paused'
+  | 'cancelling'
+  | 'cancelled'
+  | 'finished'
+  | 'failed'
+  | 'unknown';
+
+export type AbortSchedulingReason = 'none' | 'fail_fast' | 'user_cancel' | 'destroy';
+
+export type RunControlMode = 'best-effort' | 'hard';
+
+export interface CancelRunOptions {
+  mode?: RunControlMode;
+}
+
+export interface PauseRunOptions {
+  waitInFlight?: boolean;
+}
+
+export interface RunControlResult {
+  workflowRunId: string;
+  action: 'cancel' | 'pause' | 'resume';
+  previousStatus: RunControlStatus;
+  currentStatus: RunControlStatus;
+  mode?: RunControlMode;
+  inFlightSteps?: string[];
+}
+
+export interface RunStatusSnapshot {
+  workflowRunId: string;
+  status: RunControlStatus;
+  inFlightSteps: string[];
+  progress?: { completed: number; total: number };
+}
+
 /**
  * 工作流运行结果
  */
 export interface WorkflowRunResult {
   success: boolean;
+  status: WorkflowRunStatus;
   workflowId: string;
   results: ExecutionResult[];
 }
@@ -90,6 +131,8 @@ export interface ExecutorOptions {
   pluginExecutor?: PluginExecutor;
   maxParallelSteps?: number;
   failFast?: boolean;
+  /** hard cancel 时 in-flight 步骤超时（ms），默认 30000 */
+  inFlightTimeoutMs?: number;
   /** 生命周期观察者，供调用层接收执行期事件 */
   observer?: WorkflowObserver;
   /** 引擎内部/高级定制：步骤开始钩子（在 step:start 之前 await，可用于资源挂起） */
