@@ -1,4 +1,5 @@
 import type {
+  RunStatus,
   SerializedWorkflowLifecycleEvent,
   WorkflowRunResultSerialized,
 } from '../../shared/types';
@@ -49,7 +50,7 @@ export interface RunState {
     skipped: number;
     total: number;
   };
-  status: 'running' | 'finished';
+  status: RunStatus;
   finalResult?: WorkflowRunResultSerialized;
   startedAt?: string;
 }
@@ -264,9 +265,27 @@ export function applyRunEvent(state: RunState, event: SerializedWorkflowLifecycl
     };
   }
 
+  if (event.type === 'workflow:cancelled') {
+    status = 'running';
+  }
+
+  if (event.type === 'workflow:paused') {
+    status = 'paused';
+  }
+
+  if (event.type === 'workflow:resumed') {
+    status = 'running';
+  }
+
   if (event.type === 'workflow:finished') {
-    status = 'finished';
-    finalResult = event.result as WorkflowRunResultSerialized;
+    const result = event.result as WorkflowRunResultSerialized;
+    finalResult = result;
+    status =
+      result.status === 'cancelled'
+        ? 'cancelled'
+        : result.status === 'failed'
+          ? 'failed'
+          : 'finished';
   }
 
   return {
@@ -298,7 +317,13 @@ export function hydrateRunState(
     state = applyRunEvent(state, event);
   }
   if (finalResult) {
-    state = { ...state, status: 'finished', finalResult };
+    const terminalStatus: RunStatus =
+      finalResult.status === 'cancelled'
+        ? 'cancelled'
+        : finalResult.status === 'failed'
+          ? 'failed'
+          : 'finished';
+    state = { ...state, status: terminalStatus, finalResult };
   }
   return state;
 }

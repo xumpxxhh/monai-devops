@@ -24,7 +24,20 @@ export const runsApi = {
     );
   },
   cancel(runId: string) {
-    return apiPost<{ runId: string; status: string; cancelled?: string }>(`/runs/${runId}/cancel`);
+    return apiPost<{
+      runId: string;
+      status: string;
+      cancelled?: string;
+      inFlightSteps?: string[];
+    }>(`/runs/${runId}/cancel`);
+  },
+  pause(runId: string) {
+    return apiPost<{ runId: string; status: string; inFlightSteps?: string[] }>(
+      `/runs/${runId}/pause`,
+    );
+  },
+  resume(runId: string) {
+    return apiPost<{ runId: string; status: string }>(`/runs/${runId}/resume`);
   },
   remove(runId: string) {
     return apiDelete<{ runId: string; deleted: boolean }>(`/runs/${runId}`);

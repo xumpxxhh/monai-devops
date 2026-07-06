@@ -12,6 +12,8 @@ export const STATUS_META: Record<StepUiStatus, { label: string; color: string; i
 export const RUN_STATUS_META: Record<string, { label: string; color: string; dot: string }> = {
   queued: { label: '排队', color: 'text-queued', dot: 'bg-queued' },
   running: { label: '运行中', color: 'text-running', dot: 'bg-running live-dot' },
+  pausing: { label: '暂停中', color: 'text-queued', dot: 'bg-queued live-dot' },
+  paused: { label: '已暂停', color: 'text-queued', dot: 'bg-queued' },
   finished: { label: '已完成', color: 'text-completed', dot: 'bg-completed' },
   failed: { label: '失败', color: 'text-failed', dot: 'bg-failed' },
   rejected: { label: '已拒绝', color: 'text-failed', dot: 'bg-failed' },

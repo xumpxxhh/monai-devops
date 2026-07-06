@@ -24,11 +24,16 @@ export interface ExecutionResultSerialized {
   };
   error?: SerializedError;
   failureKind?: 'plugin' | 'resource' | 'internal';
-  skipReason?: 'condition_not_met' | 'dependency_failed' | 'workflow_aborted';
+  skipReason?:
+    | 'condition_not_met'
+    | 'dependency_failed'
+    | 'workflow_aborted'
+    | 'user_cancelled';
 }
 
 export interface WorkflowRunResultSerialized {
   success: boolean;
+  status: 'success' | 'failed' | 'cancelled';
   workflowId: string;
   results: ExecutionResultSerialized[];
 }
@@ -60,7 +65,15 @@ export type WsInboundMessage =
   | { type: 'unsubscribe'; runId: string }
   | { type: 'run'; workflow: import('@monai-devops/core-engine').WorkflowDefinition };
 
-export type RunStatus = 'queued' | 'running' | 'finished' | 'failed' | 'rejected' | 'cancelled';
+export type RunStatus =
+  | 'queued'
+  | 'running'
+  | 'pausing'
+  | 'paused'
+  | 'finished'
+  | 'failed'
+  | 'rejected'
+  | 'cancelled';
 
 export interface RunCounts {
   total: number;

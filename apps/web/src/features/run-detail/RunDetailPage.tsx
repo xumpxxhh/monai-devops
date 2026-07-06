@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { toast } from 'sonner';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { faCopy, faBan } from '@fortawesome/free-solid-svg-icons';
+import { faCopy, faBan, faPause, faPlay } from '@fortawesome/free-solid-svg-icons';
 import { runsApi } from '../../shared/api/runs';
 import { useWorkflowRun } from '../../shared/hooks/useWorkflowRun';
 import { StatusBadge } from '../../shared/ui/StatusBadge';
@@ -12,6 +12,7 @@ import { Drawer } from '../../shared/ui/Drawer';
 import { Checkbox } from '../../shared/ui/form';
 import { WsPill } from '../../shared/ui/WsPill';
 import { RUN_STATUS_META } from '../../shared/types/status';
+import type { RunStatus, WorkflowRunResultSerialized } from '../../shared/types';
 import {
   applyRunEvent,
   createInitialRunState,
@@ -21,6 +22,17 @@ import {
 } from './run-state';
 
 type LogFilter = 'all' | 'logs' | 'errors';
+
+const ACTIVE_RUN_STATUSES = new Set<RunStatus>(['queued', 'running', 'paused', 'pausing']);
+const CANCELLABLE_STATUSES = new Set<RunStatus>(['queued', 'running', 'paused', 'pausing']);
+const PAUSABLE_STATUSES = new Set<RunStatus>(['running', 'pausing']);
+const RESUMABLE_STATUSES = new Set<RunStatus>(['paused', 'pausing']);
+
+function terminalStatusFromResult(result: WorkflowRunResultSerialized): RunStatus {
+  if (result.status === 'cancelled') return 'cancelled';
+  if (result.status === 'failed') return 'failed';
+  return 'finished';
+}
 
 function DagNodeView({ step, onClick }: { step: StepView; onClick: () => void }) {
   const ringClass = `node-${step.status}`;
@@ -41,25 +53,28 @@ function DagNodeView({ step, onClick }: { step: StepView; onClick: () => void })
 export default function RunDetailPage() {
   const { runId } = useParams<{ runId: string }>();
   const [runState, setRunState] = useState<RunState | null>(null);
-  const [recordStatus, setRecordStatus] = useState<string>('running');
+  const [recordStatus, setRecordStatus] = useState<RunStatus>('running');
   const [logFilter, setLogFilter] = useState<LogFilter>('all');
   const [autoScroll, setAutoScroll] = useState(true);
-  const [paused, setPaused] = useState(false);
+  const [logScrollPaused, setLogScrollPaused] = useState(false);
+  const [controlLoading, setControlLoading] = useState(false);
   const [drawerStep, setDrawerStep] = useState<StepView | null>(null);
   const [wsBanner, setWsBanner] = useState('');
   const [subscribeKey, setSubscribeKey] = useState<string | null>(null);
   const logEndRef = useRef<HTMLDivElement>(null);
 
-  const handleEvent = useCallback(
-    (event: Parameters<typeof applyRunEvent>[1]) => {
-      if (paused) return;
-      setRunState((prev) => (prev ? applyRunEvent(prev, event) : prev));
-    },
-    [paused],
-  );
+  const handleEvent = useCallback((event: Parameters<typeof applyRunEvent>[1]) => {
+    setRunState((prev) => {
+      if (!prev) return prev;
+      const next = applyRunEvent(prev, event);
+      setRecordStatus(next.status);
+      return next;
+    });
+  }, []);
 
-  const handleDone = useCallback(() => {
-    setRecordStatus('finished');
+  const handleDone = useCallback((result: WorkflowRunResultSerialized) => {
+    setRecordStatus(terminalStatusFromResult(result));
+    setSubscribeKey(null);
   }, []);
 
   const { status: wsStatus } = useWorkflowRun({
@@ -86,9 +101,9 @@ export default function RunDetailPage() {
         record.events,
         record.result,
       );
-      setRunState(hydrated);
+      setRunState({ ...hydrated, status: record.status });
 
-      if (record.status === 'running' || record.status === 'queued') {
+      if (ACTIVE_RUN_STATUSES.has(record.status)) {
         setSubscribeKey(runId!);
       } else {
         setSubscribeKey(null);
@@ -107,13 +122,61 @@ export default function RunDetailPage() {
     };
   }, [runId]);
 
+  const handleCancelRun = async () => {
+    if (!runId || controlLoading) return;
+    setControlLoading(true);
+    try {
+      const result = await runsApi.cancel(runId);
+      setRecordStatus(result.status as RunStatus);
+      if (result.cancelled) {
+        toast.success('已请求取消');
+      }
+      if (result.status === 'cancelled') {
+        setSubscribeKey(null);
+      }
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : '取消失败');
+    } finally {
+      setControlLoading(false);
+    }
+  };
+
+  const handlePauseRun = async () => {
+    if (!runId || controlLoading) return;
+    setControlLoading(true);
+    try {
+      const result = await runsApi.pause(runId);
+      setRecordStatus(result.status as RunStatus);
+      toast.success('运行已暂停');
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : '暂停失败');
+    } finally {
+      setControlLoading(false);
+    }
+  };
+
+  const handleResumeRun = async () => {
+    if (!runId || controlLoading) return;
+    setControlLoading(true);
+    try {
+      const result = await runsApi.resume(runId);
+      setRecordStatus(result.status as RunStatus);
+      setSubscribeKey(runId);
+      toast.success('运行已继续');
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : '继续失败');
+    } finally {
+      setControlLoading(false);
+    }
+  };
+
   const lastLogMessage = runState?.logs.at(-1)?.message;
 
   useEffect(() => {
-    if (autoScroll && !paused) {
+    if (autoScroll && !logScrollPaused) {
       logEndRef.current?.scrollIntoView({ behavior: 'smooth' });
     }
-  }, [runState?.logs.length, lastLogMessage, autoScroll, paused]);
+  }, [runState?.logs.length, lastLogMessage, autoScroll, logScrollPaused]);
 
   const filteredLogs = (runState?.logs ?? []).filter((log) => {
     if (logFilter === 'logs') return log.kind === 'log' || log.kind === 'stream';
@@ -130,6 +193,10 @@ export default function RunDetailPage() {
 
   const meta = RUN_STATUS_META[recordStatus] ?? RUN_STATUS_META.running;
   const steps = runState ? Object.values(runState.steps) : [];
+  const canCancel = CANCELLABLE_STATUSES.has(recordStatus);
+  const canPause = PAUSABLE_STATUSES.has(recordStatus);
+  const canResume = RESUMABLE_STATUSES.has(recordStatus);
+  const isActiveRun = ACTIVE_RUN_STATUSES.has(recordStatus);
 
   return (
     <div className="flex flex-col h-screen bg-canvas">
@@ -147,17 +214,41 @@ export default function RunDetailPage() {
               {meta.label}
             </span>
           </div>
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2">
             <WsPill status={wsStatus} />
-            <button
-              type="button"
-              disabled
-              title="内核 AbortSignal 未实现"
-              className="inline-flex items-center gap-2 h-8 px-3 rounded-ctrl text-sm border border-line text-faint cursor-not-allowed opacity-60"
-            >
-              <FontAwesomeIcon icon={faBan} />
-              取消运行
-            </button>
+            {canResume && (
+              <button
+                type="button"
+                disabled={controlLoading}
+                onClick={() => void handleResumeRun()}
+                className="inline-flex items-center gap-2 h-8 px-3 rounded-ctrl text-sm border border-line hover:bg-raised disabled:opacity-60"
+              >
+                <FontAwesomeIcon icon={faPlay} />
+                继续运行
+              </button>
+            )}
+            {canPause && (
+              <button
+                type="button"
+                disabled={controlLoading}
+                onClick={() => void handlePauseRun()}
+                className="inline-flex items-center gap-2 h-8 px-3 rounded-ctrl text-sm border border-line hover:bg-raised disabled:opacity-60"
+              >
+                <FontAwesomeIcon icon={faPause} />
+                暂停运行
+              </button>
+            )}
+            {canCancel && (
+              <button
+                type="button"
+                disabled={controlLoading}
+                onClick={() => void handleCancelRun()}
+                className="inline-flex items-center gap-2 h-8 px-3 rounded-ctrl text-sm border border-line text-failed hover:bg-raised disabled:opacity-60"
+              >
+                <FontAwesomeIcon icon={faBan} />
+                取消运行
+              </button>
+            )}
           </div>
         </div>
 
@@ -224,10 +315,11 @@ export default function RunDetailPage() {
               />
               <button
                 type="button"
-                onClick={() => setPaused((p) => !p)}
+                onClick={() => setLogScrollPaused((p) => !p)}
                 className="px-2 py-1 rounded-ctrl hover:bg-raised text-muted"
+                title="暂停/继续日志自动滚动"
               >
-                {paused ? '继续' : '暂停'}
+                {logScrollPaused ? '恢复滚动' : '暂停滚动'}
               </button>
             </div>
           </div>
@@ -257,7 +349,7 @@ export default function RunDetailPage() {
                 </div>
               ),
             )}
-            {recordStatus === 'running' && (
+            {isActiveRun && (
               <div ref={logEndRef} className="cursor-blink text-faint">
                 等待事件…
               </div>
