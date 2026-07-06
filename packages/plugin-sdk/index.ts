@@ -18,7 +18,7 @@ export type {
   PluginFailureCode,
 } from './types/index.js';
 
-export { PluginFailureCodes } from './types/index.js';
+export { PluginFailureCodes, PluginCancelledError } from './types/index.js';
 
 export {
   createPlugin,
@@ -38,5 +38,13 @@ export type {
   PluginLogger,
 } from './logger/index.js';
 
-export { PluginContextKeys, noopLogger, getLogger } from './logger/index.js';
+export {
+  PluginContextKeys,
+  noopLogger,
+  getLogger,
+  getAbortSignal,
+  isAborted,
+  throwIfAborted,
+  sleep,
+} from './logger/index.js';
 export { formatZodError } from './validation/index.js';

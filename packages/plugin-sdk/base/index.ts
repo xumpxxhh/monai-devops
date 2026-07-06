@@ -5,7 +5,7 @@
 
 import type { z } from 'zod';
 import type { PluginManifest, PluginConfig, PluginContext, PluginResult } from '../types/index.js';
-import { PluginFailureCodes } from '../types/index.js';
+import { PluginCancelledError, PluginFailureCodes } from '../types/index.js';
 import type { PluginHooks } from '../hooks/index.js';
 import { formatZodError } from '../validation/index.js';
 
@@ -49,21 +49,49 @@ export type CreatePluginOptions<T extends z.ZodType = z.ZodType> =
   | CreatePluginOptionsWithSchema<T>
   | CreatePluginOptionsWithoutSchema;
 
+function wrapWithCancellation<TConfig>(
+  execute: (config: TConfig, context: PluginContext) => Promise<PluginResult>,
+): (config: TConfig, context: PluginContext) => Promise<PluginResult> {
+  return async (config, context) => {
+    try {
+      return await execute(config, context);
+    } catch (error) {
+      if (error instanceof PluginCancelledError) {
+        return {
+          success: false,
+          code: PluginFailureCodes.PLUGIN_CANCELLED,
+          message: error.message,
+        };
+      }
+      throw error;
+    }
+  };
+}
+
 function wrapWithHooks<TConfig>(
   execute: (config: TConfig, context: PluginContext) => Promise<PluginResult>,
   hooks: PluginHooks<TConfig> | undefined,
 ): (config: TConfig, context: PluginContext) => Promise<PluginResult> {
+  const cancellableExecute = wrapWithCancellation(execute);
+
   if (!hooks) {
-    return execute;
+    return cancellableExecute;
   }
 
   return async (config, context) => {
     try {
       await hooks.beforeExecute?.(config, context);
-      const result = await execute(config, context);
+      const result = await cancellableExecute(config, context);
       await hooks.afterExecute?.(result, config, context);
       return result;
     } catch (error) {
+      if (error instanceof PluginCancelledError) {
+        return {
+          success: false,
+          code: PluginFailureCodes.PLUGIN_CANCELLED,
+          message: error.message,
+        };
+      }
       const err = error instanceof Error ? error : new Error(String(error));
       await hooks.onError?.(err, config, context);
       return { success: false, message: err.message };

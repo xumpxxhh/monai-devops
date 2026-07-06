@@ -37,7 +37,19 @@ export const PluginFailureCodes = {
   PLUGIN_NOT_FOUND: 'PLUGIN_NOT_FOUND',
   PLUGIN_CONFIG_INVALID: 'PLUGIN_CONFIG_INVALID',
   PLUGIN_EXECUTION_ERROR: 'PLUGIN_EXECUTION_ERROR',
+  PLUGIN_CANCELLED: 'PLUGIN_CANCELLED',
 } as const;
+
+/**
+ * 插件协作取消时抛出；由 createPlugin / plugin manager 转为 PLUGIN_CANCELLED Result
+ */
+export class PluginCancelledError extends Error {
+  readonly name = 'PluginCancelledError';
+
+  constructor(message = '插件执行已取消') {
+    super(message);
+  }
+}
 
 export type PluginFailureCode = (typeof PluginFailureCodes)[keyof typeof PluginFailureCodes];
 

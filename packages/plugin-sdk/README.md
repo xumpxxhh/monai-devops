@@ -204,16 +204,31 @@ log.append('[build] compiling...\n', 'stdout'); // stream: 'stdout' | 'stderr'
 
 ## 取消信号（AbortSignal）
 
-`mode: 'hard'` 取消时，core-engine 在 `step:start` 之后向 context 注入 `AbortSignal`（键名 `PluginContextKeys.signal`，值为 `'signal'`）。插件应监听 `signal` 并协作退出；未响应时在 `inFlightTimeoutMs` 超时后步骤会被标记为 `SKIPPED / user_cancelled`。
+`mode: 'hard'` 取消或 `pauseRun({ abortInFlight: true })` 时，core-engine 在 `step:start` 之后向 context 注入 `AbortSignal`（键名 `PluginContextKeys.signal`，值为 `'signal'`）。插件应在 `await` 检查点响应 signal；未响应时在 `inFlightTimeoutMs` 超时后步骤会被标记为 `SKIPPED / user_cancelled`。
 
 ```ts
-import { PluginContextKeys, getContext } from '@monai-devops/plugin-sdk';
+import {
+  getAbortSignal,
+  throwIfAborted,
+  sleep,
+  PluginCancelledError,
+} from '@monai-devops/plugin-sdk';
 
-const signal = getContext<AbortSignal>(context, PluginContextKeys.signal);
-signal?.addEventListener('abort', () => {
-  // 停止子进程、关闭连接等
-});
+// 在循环或长任务中主动检查
+for await (const chunk of stream) {
+  throwIfAborted(context);
+  // ...
+}
+
+// 可中断等待（替代 setTimeout）
+await sleep(3000, context);
+
+// 传给支持 abort 的底层 API
+const signal = getAbortSignal(context);
+await fetch(url, { signal });
 ```
+
+`throwIfAborted` 抛出 `PluginCancelledError`，经 `createPlugin` / plugin manager 转为 `PLUGIN_CANCELLED` Result，executor 将其记为 `SKIPPED`（非 `FAILED`）。
 
 ## 编写约定
 
