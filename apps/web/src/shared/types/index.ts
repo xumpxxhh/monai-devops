@@ -35,7 +35,8 @@ export interface WorkflowRunResultSerialized {
 
 export type SerializedWorkflowLifecycleEvent = {
   type: string;
-  meta?: { runId: string; workflowId: string; traceId?: string };
+  workflowRunId?: string;
+  meta?: { workflowId: string; traceId?: string };
   workflow?: unknown;
   step?: { id: string; name: string; plugin: string };
   result?: unknown;

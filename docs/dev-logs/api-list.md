@@ -3,6 +3,8 @@
 > 基于当前代码实现整理。所有 HTTP 路径均带全局前缀 `/{GLOBAL_API_PREFIX}`。  
 > 当前默认配置（`.env`）：`GLOBAL_API_PREFIX=api/v1/devops`，`PORT=3000`。
 
+**最近更新**：2026-07-06
+
 **Base URL**：`http://localhost:3000/api/v1/devops`
 
 **已注册插件**（`plugin-registry.ts`，运行 `pnpm sync:plugins` 同步）：
@@ -60,6 +62,14 @@ HTTP 异常统一由 `AllExceptionsFilter` 返回：
 }
 ```
 
+### 事件缓冲与流式 log 合并
+
+Run 的 `events[]` 与 WS 回放共享同一缓冲逻辑：
+
+- 同一步骤、同一 `stream`（`stdout` / `stderr`）的连续 `plugin:log` 会**合并**为单条（message 拼接）
+- 缓冲超限时**优先裁剪** `plugin:log`，尽量保留 `workflow:*` / `step:*` 生命周期事件
+- 内核事件按 `runId` **串行**写入缓冲后再扇出，避免并发乱序
+
 ---
 
 ## HTTP 接口
@@ -80,7 +90,7 @@ HTTP 异常统一由 `AllExceptionsFilter` 返回：
 | GET | `/plugins` | 插件注册表列表 |
 | GET | `/plugins/:name` | 单个插件详情 |
 | GET | `/plugins/:name/config-schema` | 插件 config 的 JSON Schema（Zod → JSON Schema，供前端表单渲染） |
-| POST | `/plugins/:name/dry-run` | 单步试运行 |
+| POST | `/plugins/:name/dry-run` | 单步试运行（**SSE 流式**） |
 
 **GET /plugins** 响应示例：
 
@@ -141,21 +151,29 @@ HTTP 异常统一由 `AllExceptionsFilter` 返回：
 
 插件不存在或未声明 `configSchema` 时返回 `404`。
 
-**POST /plugins/:name/dry-run** 请求体：
+**POST /plugins/:name/dry-run** — SSE 流式响应
 
-```json
-{ "config": { "type": "integration" } }
-```
+- Content-Type：`text/event-stream`
+- 请求体：`{ "config": { ... } }`
+- 每条 SSE `data` 为 JSON，共三种消息类型：
 
-响应为 `ExecutionResult`（步骤执行结果）：
+| type | 格式 | 说明 |
+| --- | --- | --- |
+| `log` | `{ "type": "log", "event": { ... } }` | 试运行期间的 `plugin:log` 事件（已序列化） |
+| `done` | `{ "type": "done", "result": { ... } }` | 步骤执行完成，`result` 为 `SerializedExecutionResult` |
+| `error` | `{ "type": "error", "message": "..." }` | 试运行失败 |
+
+`done.result` 字段说明：
 
 | 字段 | 说明 |
 | --- | --- |
 | `stepId` | 固定为 `"dry-run"` |
 | `status` | 步骤状态 |
 | `success` | 是否成功 |
-| `pluginResult` | 插件返回的 `PluginResult`（含 `success`、`message` 等） |
+| `pluginResult` | 插件返回的 `PluginResult` |
 | `error` / `failureKind` / `skipReason` | 失败或跳过时可选 |
+
+流结束后连接关闭。插件不存在时仍返回 HTTP `404`（非 SSE）。
 
 ---
 
@@ -264,7 +282,7 @@ HTTP 异常统一由 `AllExceptionsFilter` 返回：
 }
 ```
 
-`workflow` 为必填；省略 `traceId` 时服务端自动生成。
+`workflow` 为必填；省略 `traceId` 时服务端自动生成。`workflow` 亦接受 `WorkflowDraft` 格式。
 
 **GET /runs/:runId** 响应字段：
 
@@ -278,7 +296,7 @@ HTTP 异常统一由 `AllExceptionsFilter` 返回：
 | `counts` | `{ total, completed, failed, skipped }` |
 | `createdAt` / `startedAt` / `finishedAt` | 时间戳 |
 | `result` | 终态运行结果（序列化后的 `WorkflowRunResult`） |
-| `events` | 已缓冲的生命周期事件数组 |
+| `events` | 已缓冲的生命周期事件数组（含合并后的流式 log） |
 | `cancelled` | 取消时为 `"best-effort"` |
 
 **GET /runs/:runId/events** 响应：
@@ -384,6 +402,8 @@ HTTP 异常统一由 `AllExceptionsFilter` 返回：
 
 ## WebSocket 接口
 
+出站消息**均附带 `runId`**（`error` 可选），便于单连接订阅多个 Run。
+
 ### 主通道 · `/runs/ws`
 
 **连接地址**：`ws://localhost:3000/api/v1/devops/runs/ws`
@@ -400,11 +420,13 @@ HTTP 异常统一由 `AllExceptionsFilter` 返回：
 
 | type | 格式 | 说明 |
 | --- | --- | --- |
-| `event` | `{ "type": "event", "event": { ... } }` | 生命周期事件（6 类，已序列化） |
-| `done` | `{ "type": "done", "result": { ... } }` | Run 完成 |
-| `error` | `{ "type": "error", "message": "..." }` | 错误 |
+| `event` | `{ "type": "event", "runId": "uuid", "event": { ... } }` | 生命周期事件（已序列化） |
+| `done` | `{ "type": "done", "runId": "uuid", "result": { ... } }` | Run 完成 |
+| `error` | `{ "type": "error", "runId"?: "uuid", "message": "..." }` | 错误（协议/订阅错误可能无 runId） |
 
 **生命周期事件类型**：`workflow:start`、`workflow:finished`、`step:queued`、`step:start`、`step:finished`、`plugin:log`
+
+`plugin:log` 可含 `log.stream`（`stdout` / `stderr`）用于流式输出；缓冲中同 stream 连续 log 已合并。
 
 连接断开仅退订，Run 继续执行。订阅时若 Run 已终态，会立即推送 `done`。
 
@@ -422,7 +444,7 @@ HTTP 异常统一由 `AllExceptionsFilter` 返回：
 
 #### 出站消息
 
-与 `/runs/ws` 相同（`event` / `done` / `error`）。
+与 `/runs/ws` 相同（`event` / `done` / `error`，均含 `runId`）。
 
 ---
 
@@ -435,7 +457,7 @@ HTTP 异常统一由 `AllExceptionsFilter` 返回：
 | 3 | GET | `/plugins` | 插件 |
 | 4 | GET | `/plugins/:name` | 插件 |
 | 5 | GET | `/plugins/:name/config-schema` | 插件 |
-| 6 | POST | `/plugins/:name/dry-run` | 插件 |
+| 6 | POST | `/plugins/:name/dry-run` | 插件（SSE） |
 | 7 | GET | `/workflows` | 工作流 |
 | 8 | POST | `/workflows` | 工作流 |
 | 9 | POST | `/workflows/validate` | 工作流 |

@@ -184,7 +184,7 @@ export function applyRunEvent(state: RunState, event: SerializedWorkflowLifecycl
   const steps = { ...state.steps };
   let { runId, workflowName, workflowId, status, finalResult, startedAt } = state;
 
-  if (event.meta?.runId) runId = event.meta.runId;
+  if (event.workflowRunId) runId = event.workflowRunId;
   if (event.meta?.workflowId) workflowId = event.meta.workflowId;
 
   if (event.type === 'workflow:start') {

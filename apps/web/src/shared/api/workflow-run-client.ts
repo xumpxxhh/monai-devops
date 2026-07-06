@@ -110,7 +110,7 @@ export class WorkflowRunClient {
 
   private dispatchMessage(message: WsOutboundMessage): void {
     const runId =
-      message.runId ?? (message.type === 'event' ? message.event.meta?.runId : undefined);
+      message.runId ?? (message.type === 'event' ? message.event.workflowRunId : undefined);
 
     if (!runId) {
       if (message.type === 'error') {
