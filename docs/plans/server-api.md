@@ -164,11 +164,18 @@ stateDiagram-v2
 
 ### 5.6 决策 F · 取消语义（诚实暴露内核能力）
 
-内核**无 `AbortSignal`**，进行中插件不可中断。`POST /runs/:runId/cancel` 为**尽力取消**：
+内核支持两档取消，由请求体 `mode` 选择（默认 `best-effort`）：
 
-- `getResourceScheduler().cancelByRunId(runId)` 取消仍在排队的步骤 → `SKIPPED / workflow_aborted`。
-- 执行中步骤跑完；响应标注 `cancelled: 'best-effort'`。
-- 待内核补 `AbortSignal` 后升级，API 形态不变。
+| `mode` | 行为 |
+| --- | --- |
+| `best-effort` | 停止调度未开始步骤；资源队列中步骤取消；**in-flight 跑完**；响应 `cancelled: 'best-effort'` |
+| `hard` | 向 in-flight 步骤注入 `AbortSignal`（`getAbortSignal`）；插件应协作退出；`inFlightTimeoutMs` 超时后步骤 `SKIPPED / user_cancelled`；响应 `cancelled: 'hard'` |
+
+`POST /runs/:runId/cancel` 请求体：`{ "mode"?: "best-effort" | "hard" }`。
+
+`POST /runs/:runId/pause` 请求体：`{ "waitInFlight"?: boolean, "abortInFlight"?: boolean }`（默认 `waitInFlight: true`）。
+
+未协作插件的子进程强制回收仍属后续运维增强，见 [core-engine.md](./core-engine.md)。
 
 ### 5.7 决策 G · 配置与可观测性
 
@@ -248,7 +255,9 @@ Run 级 context 可选：`priority / traceId / maxParallelSteps / failFast`。
 | `GET` | `/runs` | 历史列表（`status / workflowId / search / page / pageSize`，活跃置顶） |
 | `GET` | `/runs/:runId` | Run 聚合（状态、counts、时间、result、workflow 快照） |
 | `GET` | `/runs/:runId/events` | 事件缓冲回放（6 类序列化事件） |
-| `POST` | `/runs/:runId/cancel` | 尽力取消 |
+| `POST` | `/runs/:runId/cancel` | 取消（body：`mode?: best-effort \| hard`） |
+| `POST` | `/runs/:runId/pause` | 暂停（body：`waitInFlight?, abortInFlight?`） |
+| `POST` | `/runs/:runId/resume` | 继续 |
 | `DELETE` | `/runs/:runId` | 删除历史（可选） |
 
 ### 7.4 Resources（调度可观测性）
@@ -303,7 +312,7 @@ type WsOutboundMessage =
 - 插件动态注册 API
 - `scheduleWorkflow` task 队列暴露
 - 数据库持久化（替换 `InMemory*` repo）
-- 内核 `AbortSignal` 真取消
+- 插件孤立任务强制回收（hard cancel 超时后）
 
 ---
 

@@ -55,7 +55,7 @@
 | API | 说明 |
 | --- | --- |
 | `cancelRun(workflowRunId, options?)` | 尽力取消；`options.mode: 'best-effort' \| 'hard'`；**非阻塞**返回 `cancelling` + `inFlightSteps` |
-| `pauseRun(workflowRunId, options?)` | 暂停调度；`waitInFlight` 默认 `true` |
+| `pauseRun(workflowRunId, options?)` | 暂停调度；`waitInFlight` 默认 `true`；`abortInFlight` 中断 in-flight |
 | `resumeRun(workflowRunId)` | 从 `paused` 恢复，不重复已成功步骤 |
 | `getRunStatus(workflowRunId)` | 活跃或终态缓存快照（含 progress） |
 | `destroy()` | 先取消所有活跃 Run，再释放资源与历史 |
@@ -115,7 +115,7 @@
 
 ## 测试
 
-`pnpm --filter @monai-devops/core-engine test` — **67** 项通过（+11 项 run control / scheduler cancel）。
+`pnpm --filter @monai-devops/core-engine test` — **73** 项通过（run control / scheduler cancel 等）。
 
 新增覆盖：
 
@@ -146,10 +146,26 @@
 
 ## 未完成 / 后续
 
-- [ ] `cancelScheduledTask(taskId)` 尚未在 engine 门面暴露
-- [ ] hard cancel 后插件孤立任务的处理策略
-- [ ] 并行步骤 cancel/pause 专项测试
-- [ ] `docs/plans/core-engine.md` 计划 A 条目标记为已完成并收束
+- [x] `cancelScheduledTask(taskId)` engine 门面暴露
+- [x] `pauseRun({ abortInFlight })` + `SkipReasons.PAUSE_INTERRUPTED`
+- [x] 并行 cancel/pause、依赖链 pause、协作 signal 测试
+- [x] server cancel/pause 请求体透传；web 强制取消
+- [x] `docs/plans/core-engine.md` 收束为剩余缺口
+- [ ] hard cancel 后插件孤立任务的处理策略（子进程 kill 等）
+
+---
+
+## 2026-07-06 补充（运行控制收尾）
+
+| 变更 | 说明 |
+| --- | --- |
+| `PauseRunOptions.abortInFlight` | 与 hard cancel 共用 AbortSignal；超时标 `pause_interrupted` |
+| 调度主循环 | `paused` / `pausing` 时即使 ready/inFlight 为空也保持等待 resume |
+| `engine.cancelScheduledTask` / `getScheduledTaskId` | 调度层撤销 API |
+| `plugin-sdk.getAbortSignal` | 插件读取取消信号辅助函数 |
+| server | `POST cancel/pause` 请求体；`cancelled: 'best-effort' \| 'hard'` |
+| web | 「强制取消」按钮（`mode: 'hard'`） |
+| 测试 | +6 项 run control（共 **73** 项通过） |
 
 ---
 

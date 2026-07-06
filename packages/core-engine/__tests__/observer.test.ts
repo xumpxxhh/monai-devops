@@ -339,14 +339,11 @@ describe('WorkflowObserver', () => {
       },
     });
 
-    await executor.executeWorkflow(
-      'injected-run-id',
-      {
-        id: 'wf-ctx',
-        name: 'ctx',
-        steps: [{ id: 's1', name: 'S1', plugin: 'p', config: {} }],
-      },
-    );
+    await executor.executeWorkflow('injected-run-id', {
+      id: 'wf-ctx',
+      name: 'ctx',
+      steps: [{ id: 's1', name: 'S1', plugin: 'p', config: {} }],
+    });
 
     assert.equal(capturedRunId, 'injected-run-id');
   });
@@ -601,9 +598,6 @@ describe('assertValidWorkflowRunId', () => {
     assert.throws(() => assertValidWorkflowRunId(''), WorkflowRunIdValidationError);
     assert.throws(() => assertValidWorkflowRunId('   '), WorkflowRunIdValidationError);
     assert.throws(() => assertValidWorkflowRunId('bad:id'), WorkflowRunIdValidationError);
-    assert.throws(
-      () => assertValidWorkflowRunId('a'.repeat(129)),
-      WorkflowRunIdValidationError,
-    );
+    assert.throws(() => assertValidWorkflowRunId('a'.repeat(129)), WorkflowRunIdValidationError);
   });
 });

@@ -86,7 +86,7 @@ flowchart TB
 | `PluginFailureCodes` | plugin-sdk  | `PLUGIN_NOT_FOUND`、`PLUGIN_EXECUTION_ERROR` |
 | `StepStatuses`       | core-engine | `COMPLETED`、`SKIPPED`、`FAILED`             |
 | `StepFailureKinds`   | core-engine | `PLUGIN`、`RESOURCE`、`INTERNAL`             |
-| `SkipReasons`        | core-engine | `CONDITION_NOT_MET`、`DEPENDENCY_FAILED`、`WORKFLOW_ABORTED`、`USER_CANCELLED` |
+| `SkipReasons`        | core-engine | `CONDITION_NOT_MET`、`DEPENDENCY_FAILED`、`WORKFLOW_ABORTED`、`USER_CANCELLED`、`PAUSE_INTERRUPTED` |
 
 **WorkflowValidationError**（启动前抛出）
 
@@ -129,7 +129,7 @@ if (step.pluginResult?.code === PluginFailureCodes.PLUGIN_NOT_FOUND) {
 | `status`       | `StepStatuses.COMPLETED` \| `SKIPPED` \| `FAILED`                                    |
 | `success`      | 与 status 同步：`status !== StepStatuses.FAILED`                                     |
 | `failureKind`  | 失败时：`StepFailureKinds.PLUGIN` \| `RESOURCE` \| `INTERNAL`                        |
-| `skipReason`   | 跳过时：`SkipReasons.CONDITION_NOT_MET` \| `DEPENDENCY_FAILED` \| `WORKFLOW_ABORTED` |
+| `skipReason`   | 跳过时：`SkipReasons.CONDITION_NOT_MET` \| `DEPENDENCY_FAILED` \| `WORKFLOW_ABORTED` \| `USER_CANCELLED` \| `PAUSE_INTERRUPTED` |
 | `pluginResult` | 插件返回的原始结果                                                                   |
 | `error`        | 失败时的 Error 对象                                                                  |
 | `result`       | 成功时为插件 data；跳过时保留 `{ skipped: true, reason }` 以兼容旧断言               |
@@ -166,9 +166,10 @@ if (step.pluginResult?.code === PluginFailureCodes.PLUGIN_NOT_FOUND) {
 
 - `runWorkflow(workflowRunId, workflow, context?)` → `WorkflowRunResult`
 - `scheduleWorkflow(workflowRunId, workflow, context?)` → `Promise<ScheduleResult>`（整次 workflow 作为调度任务）
-- `cancelRun(workflowRunId, options?)` → `Promise<RunControlResult>`（尽力取消，P0；`mode: 'hard'` 时向 in-flight 步骤注入 `AbortSignal`）
-- `pauseRun(workflowRunId, options?)` / `resumeRun(workflowRunId)` → `Promise<RunControlResult>`（P1）
+- `cancelRun(workflowRunId, options?)` → `Promise<RunControlResult>`（`mode: 'best-effort'` 默认；`'hard'` 向 in-flight 注入 `AbortSignal`）
+- `pauseRun(workflowRunId, options?)` / `resumeRun(workflowRunId)` → `Promise<RunControlResult>`（`waitInFlight` 默认 `true`；`abortInFlight` 中断 in-flight 步骤）
 - `getRunStatus(workflowRunId)` → `RunStatusSnapshot | undefined`
+- `cancelScheduledTask(taskId)` / `getScheduledTaskId(workflowRunId)` → 调度层撤销（`cancelRun` 已联动 `cancelScheduledTaskByWorkflowRunId`）
 - `registerPlugin` / `registerPlugins` / `unregisterPlugin` / `getPlugin` / `getPlugins` / `getPluginNames` / `hasPlugin`
 - `registerResource(resource)` — 动态注册资源并唤醒等待队列
 - `getExecutor()` / `getScheduler()` / `getResourceManager()` / `getResourceScheduler()` — 高级用法
@@ -464,7 +465,7 @@ pnpm --filter core-engine check-types
 pnpm --filter core-engine test
 ```
 
-测试覆盖：DAG 并行与 failFast、engine 集成、错误模型、observer（含 `plugin:log` 顺序与失败语义）、scheduler（含优先级与并发）、min-heap、resource 生命周期、resource-scheduler 队列与 cancel。
+测试覆盖：DAG 并行与 failFast、engine 集成、错误模型、observer（含 `plugin:log` 顺序与失败语义）、scheduler（含优先级与并发）、min-heap、resource 生命周期、resource-scheduler 队列与 cancel、**executor run control**（cancel/pause/resume、hard cancel、parallel、依赖链 pause、`abortInFlight`）、scheduler cancel。
 
 ## 子模块独立使用
 
@@ -482,4 +483,4 @@ import { createPluginManager } from '@monai-devops/core-engine';
 
 - 生产级工作流 HTTP API 与持久化（`apps/server` 已有 test-devops 闭环验证）
 - 表达式级 `condition`（当前仅为结构化条件）
-- 步骤级 `AbortSignal` 取消进行中的插件执行
+- 插件子进程 / 外部任务的强制回收策略（hard cancel 超时后的孤立任务）
