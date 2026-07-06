@@ -15,6 +15,8 @@ import {
   StepStatuses,
 } from '../errors.js';
 
+const TEST_RUN_ID = 'test-run-id';
+
 const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 function mockExecutor(
@@ -38,7 +40,10 @@ describe('executor DAG', () => {
         { id: 'b', name: 'B', plugin: 'p', config: {}, dependsOn: ['a'] },
       ],
     };
-    await assert.rejects(() => executor.executeWorkflow(workflow), WorkflowValidationError);
+    await assert.rejects(
+      () => executor.executeWorkflow(TEST_RUN_ID, workflow),
+      WorkflowValidationError,
+    );
   });
 
   it('runs independent steps in parallel', async () => {
@@ -66,7 +71,7 @@ describe('executor DAG', () => {
       ],
     };
 
-    const run = await executor.executeWorkflow(workflow);
+    const run = await executor.executeWorkflow(TEST_RUN_ID, workflow);
     assert.equal(run.success, true);
     assert.equal(startOrder.length, 3);
     assert.ok(
@@ -99,7 +104,7 @@ describe('executor DAG', () => {
       ],
     };
 
-    const run = await executor.executeWorkflow(workflow);
+    const run = await executor.executeWorkflow(TEST_RUN_ID, workflow);
     assert.equal(run.success, false);
     const a = run.results.find((r) => r.stepId === 'a');
     assert.equal(a?.status, StepStatuses.FAILED);
@@ -127,7 +132,7 @@ describe('executor DAG', () => {
       ],
     };
 
-    const run = await executor.executeWorkflow(workflow);
+    const run = await executor.executeWorkflow(TEST_RUN_ID, workflow);
     const b = run.results.find((r) => r.stepId === 'b');
     assert.equal(b?.status, StepStatuses.SKIPPED);
     assert.equal(b?.success, true);
@@ -175,7 +180,7 @@ describe('executor DAG', () => {
       ],
     };
 
-    const run = await executor.executeWorkflow(workflow);
+    const run = await executor.executeWorkflow(TEST_RUN_ID, workflow);
     const b = run.results.find((r) => r.stepId === 'b');
     assert.equal(b?.status, StepStatuses.SKIPPED);
     assert.equal(b?.skipReason, SkipReasons.WORKFLOW_ABORTED);
@@ -211,7 +216,7 @@ describe('executor DAG', () => {
       ],
     };
 
-    const run = await executor.executeWorkflow(workflow);
+    const run = await executor.executeWorkflow(TEST_RUN_ID, workflow);
     assert.equal(executed.length, 1);
     const b = run.results.find((r) => r.stepId === 'b');
     assert.equal(b?.status, StepStatuses.SKIPPED);

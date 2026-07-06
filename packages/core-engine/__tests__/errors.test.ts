@@ -6,6 +6,8 @@ import { createWorkflowExecutor } from '../executor/index.js';
 import { createPlugin, PluginFailureCodes } from '@monai-devops/plugin-sdk';
 import { StepFailureKinds, StepStatuses } from '../errors.js';
 
+const TEST_RUN_ID = 'test-run-id';
+
 describe('unified error model', () => {
   it('executePlugin returns PLUGIN_NOT_FOUND code', async () => {
     const plugins = createPluginManager();
@@ -26,7 +28,7 @@ describe('unified error model', () => {
     });
 
     const engine = createEngine({ plugins: [failingPlugin] });
-    const run = await engine.runWorkflow({
+    const run = await engine.runWorkflow(TEST_RUN_ID, {
       id: 'wf-fail',
       name: 'fail',
       steps: [{ id: 's1', name: 'S1', plugin: 'fail', config: {} }],
@@ -47,7 +49,7 @@ describe('unified error model', () => {
       },
     });
 
-    const run = await executor.executeWorkflow({
+    const run = await executor.executeWorkflow(TEST_RUN_ID, {
       id: 'wf-throw',
       name: 'throw',
       steps: [{ id: 's1', name: 'S1', plugin: 'p', config: {} }],
@@ -68,7 +70,7 @@ describe('unified error model', () => {
     });
 
     const engine = createEngine({ plugins: [okPlugin] });
-    const run = await engine.runWorkflow({
+    const run = await engine.runWorkflow(TEST_RUN_ID, {
       id: 'wf-ok',
       name: 'ok',
       steps: [{ id: 's1', name: 'S1', plugin: 'ok', config: {} }],

@@ -59,7 +59,7 @@ flowchart TB
 | `previousResults` | `previousResults` | 前序非 FAILED 步骤的 `result` map |
 | `artifacts` | `artifacts` | 调用方可传入的共享产物 |
 | `priority` | — | run 级调度优先级，步骤 `priority` 可覆盖 |
-| `runId` | `runId` | 单次 run 标识；未传时自动生成 UUID |
+| `runId` | `runId` | 单次 run 标识；由 `workflowRunId` 第一参注入，调用方勿通过 context 传入 |
 | `traceId` | `traceId` | 可选，供调用层追踪关联 |
 | `logger` | `logger` | 步骤级 `PluginLogger`（`step:start` 后可用） |
 
@@ -160,12 +160,12 @@ if (step.pluginResult?.code === PluginFailureCodes.PLUGIN_NOT_FOUND) {
 
 **默认资源池**：engine 启动时会注册 `defaultPoolSize` 个 `type: "default"` 的资源（id 形如 `default-0`）。步骤未在 `config.resourceType` 中指定类型时，经 resource-scheduler 从该池分配。
 
-**runId 与资源分配**：`onStepStart` 仅在 context 含非空 `runId` 时调用 resource-scheduler；未传 `runId` 时跳过资源 acquire/release（步骤仍可执行插件）。
+**workflowRunId 与资源分配**：`onStepStart` 使用内核注入的 `context.runId`（来自第一参 `workflowRunId`）调用 resource-scheduler。
 
 **主要 API**
 
-- `runWorkflow(workflow, context?)` → `WorkflowRunResult`
-- `scheduleWorkflow(workflow, context?)` → `Promise<ScheduleResult>`（整次 workflow 作为调度任务）
+- `runWorkflow(workflowRunId, workflow, context?)` → `WorkflowRunResult`
+- `scheduleWorkflow(workflowRunId, workflow, context?)` → `Promise<ScheduleResult>`（整次 workflow 作为调度任务）
 - `registerPlugin` / `registerPlugins` / `unregisterPlugin` / `getPlugin` / `getPlugins` / `getPluginNames` / `hasPlugin`
 - `registerResource(resource)` — 动态注册资源并唤醒等待队列
 - `getExecutor()` / `getScheduler()` / `getResourceManager()` / `getResourceScheduler()` — 高级用法
@@ -189,7 +189,7 @@ if (step.pluginResult?.code === PluginFailureCodes.PLUGIN_NOT_FOUND) {
 
 | 方法 | 说明 |
 | ---- | ---- |
-| `executeStep(step, context, meta?)` | 单步执行；无 `workflow:start` / `workflow:finished` |
+| `executeStep(workflowRunId, step, context, meta?)` | 单步执行；无 `workflow:start` / `workflow:finished` |
 | `getExecutionHistory(workflowId)` | 最近一次 `executeWorkflow` 的步骤结果 |
 | `clearHistory()` | 清空历史（`destroy()` 时也会调用） |
 
@@ -244,9 +244,8 @@ const observer: WorkflowObserver = {
 
 const engine = createEngine({ plugins: [...], observer });
 
-await engine.runWorkflow(workflow, {
-  runId: "550e8400-e29b-41d4-a716-446655440000",
-  traceId: "trace-from-request",
+await engine.runWorkflow('550e8400-e29b-41d4-a716-446655440000', workflow, {
+  traceId: 'trace-from-request',
 });
 ```
 
@@ -268,17 +267,18 @@ await engine.runWorkflow(workflow, {
 - 并发 `log.info` 等调用顺序与调用顺序一致
 - `onEvent` 处理 `plugin:log` 时若 **throw**，当前步骤标记为 `FAILED / INTERNAL`
 
-每条事件携带 **`WorkflowRunMeta`**：`runId`、`workflowId`、可选 `traceId`、原始 `context`。
+每条事件顶层携带 **`workflowRunId`**，以及 **`WorkflowRunMeta`**：`workflowId`、可选 `traceId`、原始 `context`（不含实例 ID）。
 
-- **`runId`**：调用方可在 `runWorkflow` 的 context 中传入；未传时 executor 自动生成 UUID，并注入到每步 `ExecutionContext`（键名见 `WorkflowContextKeys.runId`）。
-- **`traceId`**：同上，键名 `WorkflowContextKeys.traceId`；供调用层日志/追踪关联，engine 不接入 OTel。
+- **`workflowRunId`**：调用方通过 `runWorkflow` / `executeWorkflow` 第一参传入；内核校验后注入每步 `ExecutionContext.runId`（键名见 `WorkflowContextKeys.runId`）。
+- **`traceId`**：通过 `context` 传入，键名 `WorkflowContextKeys.traceId`；供调用层日志/追踪关联，engine 不接入 OTel。
 
 ### 语义说明
 
-- **并行步骤**：`step:finished` 顺序不保证，调用方按 `stepId` / `runId` 聚合。
+- **并行步骤**：`step:finished` 顺序不保证，调用方按 `stepId` / `workflowRunId` 聚合。
 - **DAG 非法**：抛出 `WorkflowValidationError`，**不**发 `workflow:start`。
+- **workflowRunId 非法**：抛出 `WorkflowRunIdValidationError`，**不**发 `workflow:start`。
 - **failFast**：仍在就绪队列但尚未开始的步骤会补发 `step:finished`（`skipReason: WORKFLOW_ABORTED`）；因依赖失败跳过的下游为 `DEPENDENCY_FAILED`。均写入最终 `result.results`。
-- **单独 `executeStep`**：无 `workflow:start` / `workflow:finished`，仅在有 `observer` 时发步骤事件（需传入 workflow 级 meta 的场景请用 `executeWorkflow`）。
+- **单独 `executeStep`**：无 `workflow:start` / `workflow:finished`；第一参为 `workflowRunId`，仅在有 `observer` 且传入 `meta` 时发步骤事件。
 
 ### ExecutorOptions.observer
 
@@ -321,14 +321,14 @@ await engine.runWorkflow(workflow, {
 
 ### resource-scheduler（Step 级资源调度队列）
 
-`createResourceStepScheduler` 按 **resourceType** 维护独立小顶堆队列，最小调度单元为单个 workflow 的单个 step（队列项 ID：`${runId}:${stepId}`）。
+`createResourceStepScheduler` 按 **resourceType** 维护独立小顶堆队列，最小调度单元为单个 workflow 的单个 step（队列项 ID：`${workflowRunId}:${stepId}`）。
 
 - **资源不足**：步骤挂起等待，**不**立即失败；`maxParallelSteps` 等待期间仍占用 inFlight 槽位
 - **排序**：`priority` 数值越小越优先；同 priority 按入队时间 FIFO
 - **优先级来源**：`step.priority ?? context.priority ?? 0`
-- **failFast**：`cancelByRunId` 取消同 run 下排队步骤，转为 `SKIPPED / WORKFLOW_ABORTED`
+- **failFast**：`cancelByWorkflowRunId` 取消同 run 下排队步骤，转为 `SKIPPED / WORKFLOW_ABORTED`
 - **唤醒**：`releaseResource` 或 `registerResource` 触发 `onResourceAvailable` 回调后重新 `processQueue`
-- **API**：`acquire` / `cancelByRunId` / `getQueueStatus` / `notifyResourceAvailable` / `destroy`
+- **API**：`acquire` / `cancelByWorkflowRunId` / `getQueueStatus` / `notifyResourceAvailable` / `destroy`
 
 ### resource（资源池）
 
@@ -370,7 +370,7 @@ const engine = createEngine({
   failFast: true,
 });
 
-const run = await engine.runWorkflow({
+const run = await engine.runWorkflow('demo-run-id', {
   id: 'demo',
   name: 'Demo Pipeline',
   steps: [
@@ -393,7 +393,7 @@ engine.destroy();
 异步投递到调度器：
 
 ```ts
-const scheduled = await engine.scheduleWorkflow({
+const scheduled = await engine.scheduleWorkflow('demo-async-run-id', {
   id: 'demo-async',
   name: 'Async',
   steps: [{ id: 's1', name: 'S1', plugin: 'echo', config: {} }],

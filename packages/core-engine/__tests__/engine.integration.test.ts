@@ -16,6 +16,8 @@ const testPlugin = createPlugin({
   },
 });
 
+const TEST_RUN_ID = 'test-run-id';
+
 describe('createEngine integration', () => {
   it('runs workflow with registered plugin', async () => {
     const engine = createEngine({
@@ -23,7 +25,7 @@ describe('createEngine integration', () => {
       maxParallelSteps: 2,
     });
 
-    const run = await engine.runWorkflow({
+    const run = await engine.runWorkflow(TEST_RUN_ID, {
       id: 'wf-1',
       name: 'test workflow',
       steps: [
@@ -43,7 +45,7 @@ describe('createEngine integration', () => {
 
   it('scheduleWorkflow executes via scheduler', async () => {
     const engine = createEngine({ plugins: [testPlugin] });
-    const result = await engine.scheduleWorkflow({
+    const result = await engine.scheduleWorkflow('scheduled-run-id', {
       id: 'wf-2',
       name: 'scheduled',
       steps: [
@@ -68,7 +70,7 @@ describe('createEngine integration', () => {
       resources: { autoCleanup: false },
     });
 
-    const runPromise = engine.runWorkflow({
+    const runPromise = engine.runWorkflow('queued-run-id', {
       id: 'wf-3',
       name: 'queued resource',
       steps: [
@@ -111,7 +113,7 @@ describe('createEngine integration', () => {
       status: 'available',
     });
 
-    const run = await engine.runWorkflow({
+    const run = await engine.runWorkflow(TEST_RUN_ID, {
       id: 'wf-4',
       name: 'compete',
       steps: [

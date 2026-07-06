@@ -8,9 +8,9 @@ import type { createResourceManager } from '../resource/index.js';
 import { MinHeap } from '../utils/min-heap.js';
 
 export interface ResourceAcquireRequest {
-  /** 全局唯一，建议 `${runId}:${stepId}` */
+  /** 全局唯一，建议 `${workflowRunId}:${stepId}` */
   id: string;
-  runId: string;
+  workflowRunId: string;
   resourceType: string;
   priority: number;
   enqueuedAt?: Date;
@@ -34,7 +34,7 @@ export interface ResourceStepSchedulerOptions {
 
 interface QueueEntry {
   id: string;
-  runId: string;
+  workflowRunId: string;
   resourceType: string;
   priority: number;
   enqueuedAt: Date;
@@ -116,7 +116,7 @@ export function createResourceStepScheduler(options: ResourceStepSchedulerOption
     return new Promise<ResourceAcquireResult>((resolve, reject) => {
       const entry: QueueEntry = {
         id: req.id,
-        runId: req.runId,
+        workflowRunId: req.workflowRunId,
         resourceType: req.resourceType,
         priority: req.priority,
         enqueuedAt,
@@ -135,12 +135,12 @@ export function createResourceStepScheduler(options: ResourceStepSchedulerOption
     });
   }
 
-  function cancelByRunId(runId: string): number {
+  function cancelByWorkflowRunId(workflowRunId: string): number {
     const affectedTypes = new Set<string>();
     let count = 0;
 
     for (const entry of pending.values()) {
-      if (entry.runId === runId && !entry.cancelled) {
+      if (entry.workflowRunId === workflowRunId && !entry.cancelled) {
         entry.cancelled = true;
         affectedTypes.add(entry.resourceType);
         count++;
@@ -193,7 +193,7 @@ export function createResourceStepScheduler(options: ResourceStepSchedulerOption
 
   return {
     acquire,
-    cancelByRunId,
+    cancelByWorkflowRunId,
     getQueueStatus,
     notifyResourceAvailable,
     destroy,

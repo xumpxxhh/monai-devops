@@ -102,6 +102,6 @@ export interface ExecutorOptions {
   onStepComplete?: (step: WorkflowStep, result: ExecutionResult, context: ExecutionContext) => void;
   /** 引擎内部/高级定制：步骤错误钩子（失败时在 onStepComplete 之前调用） */
   onStepError?: (step: WorkflowStep, error: Error, context: ExecutionContext) => void;
-  /** failFast 中止时取消同 runId 下排队中的资源等待 */
-  onWorkflowAbort?: (runId: string) => void;
+  /** failFast 中止时取消同 workflowRunId 下排队中的资源等待 */
+  onWorkflowAbort?: (workflowRunId: string) => void;
 }

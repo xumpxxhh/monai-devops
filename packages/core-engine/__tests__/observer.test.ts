@@ -2,7 +2,9 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { createEngine } from '../engine/index.js';
 import {
+  assertValidWorkflowRunId,
   createWorkflowExecutor,
+  WorkflowRunIdValidationError,
   WorkflowValidationError,
   type PluginExecutor,
 } from '../executor/index.js';
@@ -10,6 +12,8 @@ import { createPlugin, getContext, getLogger } from '@monai-devops/plugin-sdk';
 import { WorkflowContextKeys } from '../context-keys.js';
 import { SkipReasons, StepStatuses } from '../errors.js';
 import { WorkflowEventTypes, type WorkflowLifecycleEvent } from '../observer/index.js';
+
+const TEST_RUN_ID = 'test-run-id';
 
 const testPlugin = createPlugin({
   name: 'test-plugin',
@@ -54,7 +58,7 @@ describe('WorkflowObserver', () => {
       pluginExecutor: mockExecutor(),
     });
 
-    await executor.executeWorkflow({
+    await executor.executeWorkflow(TEST_RUN_ID, {
       id: 'wf-1',
       name: 'single',
       steps: [{ id: 's1', name: 'S1', plugin: 'p', config: {} }],
@@ -70,7 +74,7 @@ describe('WorkflowObserver', () => {
       ],
     );
     assert.equal(
-      events[0]?.type === WorkflowEventTypes.WORKFLOW_START && events[0].meta.runId.length > 0,
+      events[0]?.type === WorkflowEventTypes.WORKFLOW_START && events[0].workflowRunId.length > 0,
       true,
     );
     const finished = events.find((e) => e.type === WorkflowEventTypes.STEP_FINISHED);
@@ -80,7 +84,7 @@ describe('WorkflowObserver', () => {
     );
   });
 
-  it('uses custom runId and traceId from context', async () => {
+  it('uses workflowRunId first param and traceId from context', async () => {
     const { events, observer } = collectEvents();
     const executor = createWorkflowExecutor({
       observer,
@@ -88,17 +92,19 @@ describe('WorkflowObserver', () => {
     });
 
     await executor.executeWorkflow(
+      'custom-run-id',
       {
         id: 'wf-meta',
         name: 'meta',
         steps: [{ id: 's1', name: 'S1', plugin: 'p', config: {} }],
       },
-      { runId: 'custom-run-id', traceId: 'custom-trace-id' },
+      { traceId: 'custom-trace-id' },
     );
 
     for (const event of events) {
-      assert.equal(event.meta.runId, 'custom-run-id');
+      assert.equal(event.workflowRunId, 'custom-run-id');
       assert.equal(event.meta.traceId, 'custom-trace-id');
+      assert.equal('runId' in event.meta, false);
     }
   });
 
@@ -109,7 +115,7 @@ describe('WorkflowObserver', () => {
       pluginExecutor: mockExecutor(),
     });
 
-    await executor.executeWorkflow({
+    await executor.executeWorkflow(TEST_RUN_ID, {
       id: 'wf-cond',
       name: 'cond',
       steps: [
@@ -151,7 +157,7 @@ describe('WorkflowObserver', () => {
       })),
     });
 
-    const run = await executor.executeWorkflow({
+    const run = await executor.executeWorkflow(TEST_RUN_ID, {
       id: 'wf-fail',
       name: 'fail',
       steps: [{ id: 's1', name: 'S1', plugin: 'p', config: {} }],
@@ -180,7 +186,7 @@ describe('WorkflowObserver', () => {
       }),
     });
 
-    await executor.executeWorkflow({
+    await executor.executeWorkflow(TEST_RUN_ID, {
       id: 'wf-abort',
       name: 'abort',
       steps: [
@@ -224,7 +230,7 @@ describe('WorkflowObserver', () => {
       },
     });
 
-    await executor.executeWorkflow({
+    await executor.executeWorkflow(TEST_RUN_ID, {
       id: 'wf-par',
       name: 'parallel',
       steps: [
@@ -246,7 +252,7 @@ describe('WorkflowObserver', () => {
 
     await assert.rejects(
       () =>
-        executor.executeWorkflow({
+        executor.executeWorkflow(TEST_RUN_ID, {
           id: 'cycle',
           name: 'cycle',
           steps: [
@@ -260,6 +266,23 @@ describe('WorkflowObserver', () => {
     assert.equal(events.length, 0);
   });
 
+  it('does not emit workflow:start on invalid workflowRunId', async () => {
+    const { events, observer } = collectEvents();
+    const executor = createWorkflowExecutor({ observer, pluginExecutor: mockExecutor() });
+
+    await assert.rejects(
+      () =>
+        executor.executeWorkflow('', {
+          id: 'wf-invalid',
+          name: 'invalid',
+          steps: [{ id: 's1', name: 'S1', plugin: 'p', config: {} }],
+        }),
+      WorkflowRunIdValidationError,
+    );
+
+    assert.equal(events.length, 0);
+  });
+
   it('createEngine observer receives step:queued then step:start on resource wait', async () => {
     const { events, observer } = collectEvents();
     const engine = createEngine({
@@ -268,7 +291,7 @@ describe('WorkflowObserver', () => {
       resources: { autoCleanup: false },
     });
 
-    const runPromise = engine.runWorkflow({
+    const runPromise = engine.runWorkflow('resource-run-id', {
       id: 'wf-res',
       name: 'resource queue',
       steps: [
@@ -301,10 +324,13 @@ describe('WorkflowObserver', () => {
     const finishedIdx = types.indexOf(WorkflowEventTypes.STEP_FINISHED);
     assert.ok(queuedIdx >= 0 && startIdx > queuedIdx && finishedIdx > startIdx);
     assert.equal(events.at(-1)?.type, WorkflowEventTypes.WORKFLOW_FINISHED);
+    for (const event of events) {
+      assert.equal(event.workflowRunId, 'resource-run-id');
+    }
     engine.destroy();
   });
 
-  it('injects runId into step execution context', async () => {
+  it('injects workflowRunId into step execution context as runId', async () => {
     let capturedRunId: string | undefined;
     const executor = createWorkflowExecutor({
       pluginExecutor: async (_name, _config, ctx) => {
@@ -314,12 +340,12 @@ describe('WorkflowObserver', () => {
     });
 
     await executor.executeWorkflow(
+      'injected-run-id',
       {
         id: 'wf-ctx',
         name: 'ctx',
         steps: [{ id: 's1', name: 'S1', plugin: 'p', config: {} }],
       },
-      { runId: 'injected-run-id' },
     );
 
     assert.equal(capturedRunId, 'injected-run-id');
@@ -330,8 +356,9 @@ describe('WorkflowObserver', () => {
     const executor = createWorkflowExecutor({ observer, pluginExecutor: mockExecutor() });
 
     await executor.executeStep(
+      TEST_RUN_ID,
       { id: 'solo', name: 'Solo', plugin: 'p', config: {} },
-      { workflowId: 'wf-solo', stepId: 'solo' },
+      { workflowId: 'wf-solo', stepId: 'solo', runId: TEST_RUN_ID },
     );
 
     assert.equal(events.length, 0);
@@ -353,7 +380,7 @@ describe('WorkflowObserver', () => {
       observer,
     });
 
-    await engine.runWorkflow({
+    await engine.runWorkflow(TEST_RUN_ID, {
       id: 'wf-log',
       name: 'log',
       steps: [
@@ -379,7 +406,7 @@ describe('WorkflowObserver', () => {
       assert.equal(logEvent.log.message, 'plugin started');
       assert.equal(logEvent.log.level, 'info');
       assert.equal(logEvent.step.id, 's1');
-      assert.equal(logEvent.meta.runId.length > 0, true);
+      assert.equal(logEvent.workflowRunId, TEST_RUN_ID);
       assert.deepEqual(logEvent.log.data, { type: 'unit' });
     }
 
@@ -402,7 +429,7 @@ describe('WorkflowObserver', () => {
       observer,
     });
 
-    await engine.runWorkflow({
+    await engine.runWorkflow(TEST_RUN_ID, {
       id: 'wf-append',
       name: 'append',
       steps: [{ id: 's1', name: 'S1', plugin: 'append-plugin', config: {} }],
@@ -430,7 +457,7 @@ describe('WorkflowObserver', () => {
 
     const engine = createEngine({ plugins: [loggingPlugin] });
 
-    const run = await engine.runWorkflow({
+    const run = await engine.runWorkflow(TEST_RUN_ID, {
       id: 'wf-noop',
       name: 'noop',
       steps: [{ id: 's1', name: 'S1', plugin: 'noop-log-plugin', config: {} }],
@@ -456,7 +483,7 @@ describe('WorkflowObserver', () => {
     const { events, observer } = collectEvents();
     const engine = createEngine({ plugins: [loggingPlugin], observer });
 
-    await engine.runWorkflow({
+    await engine.runWorkflow(TEST_RUN_ID, {
       id: 'wf-order',
       name: 'order',
       steps: [{ id: 's1', name: 'S1', plugin: 'ordered-log-plugin', config: {} }],
@@ -502,7 +529,7 @@ describe('WorkflowObserver', () => {
       },
     });
 
-    const runPromise = engine.runWorkflow({
+    const runPromise = engine.runWorkflow(TEST_RUN_ID, {
       id: 'wf-slow-log',
       name: 'slow-log',
       steps: [{ id: 's1', name: 'S1', plugin: 'slow-log-plugin', config: {} }],
@@ -552,7 +579,7 @@ describe('WorkflowObserver', () => {
       },
     });
 
-    const run = await engine.runWorkflow({
+    const run = await engine.runWorkflow(TEST_RUN_ID, {
       id: 'wf-log-error',
       name: 'log-error',
       steps: [{ id: 's1', name: 'S1', plugin: 'throw-log-plugin', config: {} }],
@@ -561,5 +588,22 @@ describe('WorkflowObserver', () => {
     assert.equal(run.success, false);
     assert.equal(run.results[0]?.status, StepStatuses.FAILED);
     engine.destroy();
+  });
+});
+
+describe('assertValidWorkflowRunId', () => {
+  it('accepts UUID and dry-run prefix ids', () => {
+    assert.doesNotThrow(() => assertValidWorkflowRunId('550e8400-e29b-41d4-a716-446655440000'));
+    assert.doesNotThrow(() => assertValidWorkflowRunId('dry-run-abc_123'));
+  });
+
+  it('rejects empty, whitespace, illegal chars, and overlong ids', () => {
+    assert.throws(() => assertValidWorkflowRunId(''), WorkflowRunIdValidationError);
+    assert.throws(() => assertValidWorkflowRunId('   '), WorkflowRunIdValidationError);
+    assert.throws(() => assertValidWorkflowRunId('bad:id'), WorkflowRunIdValidationError);
+    assert.throws(
+      () => assertValidWorkflowRunId('a'.repeat(129)),
+      WorkflowRunIdValidationError,
+    );
   });
 });

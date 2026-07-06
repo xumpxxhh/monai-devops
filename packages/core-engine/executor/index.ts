@@ -3,7 +3,6 @@
  * @module executor
  */
 
-import { randomUUID } from 'node:crypto';
 import { noopLogger, PluginContextKeys, type PluginResult } from '@monai-devops/plugin-sdk';
 import {
   ResourceQueueCancelledError,
@@ -11,6 +10,7 @@ import {
   SkipReasons,
   StepFailureKinds,
   StepStatuses,
+  WorkflowRunIdValidationError,
   WorkflowValidationError,
 } from '../errors.js';
 import type { WorkflowLifecycleEvent, WorkflowRunMeta } from '../observer/index.js';
@@ -43,7 +43,31 @@ export type {
   WorkflowStep,
 } from './types.js';
 
-export { WorkflowValidationError } from '../errors.js';
+export { WorkflowRunIdValidationError, WorkflowValidationError } from '../errors.js';
+
+const WORKFLOW_RUN_ID_MAX_LENGTH = 128;
+const WORKFLOW_RUN_ID_PATTERN = /^[A-Za-z0-9_-]+$/;
+
+export function assertValidWorkflowRunId(id: unknown): asserts id is string {
+  if (typeof id !== 'string') {
+    throw new WorkflowRunIdValidationError('workflowRunId 必须为字符串');
+  }
+
+  const trimmed = id.trim();
+  if (trimmed.length === 0) {
+    throw new WorkflowRunIdValidationError('workflowRunId 不能为空');
+  }
+
+  if (trimmed.length > WORKFLOW_RUN_ID_MAX_LENGTH) {
+    throw new WorkflowRunIdValidationError(
+      `workflowRunId 长度不能超过 ${WORKFLOW_RUN_ID_MAX_LENGTH} 字符`,
+    );
+  }
+
+  if (!WORKFLOW_RUN_ID_PATTERN.test(trimmed)) {
+    throw new WorkflowRunIdValidationError('workflowRunId 仅允许字母、数字、下划线与连字符');
+  }
+}
 
 interface DagGraph {
   stepIds: Set<string>;
@@ -155,18 +179,28 @@ function toPreviousResults(results: Map<string, ExecutionResult>): Record<string
   return acc;
 }
 
+function stripCallerRunId(context: Partial<ExecutionContext>): Partial<ExecutionContext> {
+  const { runId, ...rest } = context;
+  void runId;
+  return rest;
+}
+
 function buildRunMeta(workflowId: string, context: Partial<ExecutionContext>): WorkflowRunMeta {
-  const runId =
-    typeof context.runId === 'string' && context.runId.length > 0 ? context.runId : randomUUID();
   const traceId =
     typeof context.traceId === 'string' && context.traceId.length > 0 ? context.traceId : undefined;
 
   return {
-    runId,
     workflowId,
     traceId,
-    context,
+    context: stripCallerRunId(context),
   };
+}
+
+function buildEvent(
+  workflowRunId: string,
+  event: { type: WorkflowLifecycleEvent['type'] } & Record<string, unknown>,
+): WorkflowLifecycleEvent {
+  return { ...event, workflowRunId } as WorkflowLifecycleEvent;
 }
 
 /**
@@ -191,6 +225,7 @@ export function createWorkflowExecutor(options: ExecutorOptions = {}) {
   }
 
   async function notifyStepComplete(
+    workflowRunId: string,
     step: WorkflowStep,
     executionResult: ExecutionResult,
     context: ExecutionContext,
@@ -198,16 +233,19 @@ export function createWorkflowExecutor(options: ExecutorOptions = {}) {
   ): Promise<void> {
     onStepComplete?.(step, executionResult, context);
     if (meta) {
-      await emit({
-        type: WorkflowEventTypes.STEP_FINISHED,
-        meta,
-        step,
-        result: executionResult,
-      });
+      await emit(
+        buildEvent(workflowRunId, {
+          type: WorkflowEventTypes.STEP_FINISHED,
+          meta,
+          step,
+          result: executionResult,
+        }),
+      );
     }
   }
 
   async function finalizeFailure(
+    workflowRunId: string,
     step: WorkflowStep,
     executionResult: ExecutionResult,
     context: ExecutionContext,
@@ -216,25 +254,35 @@ export function createWorkflowExecutor(options: ExecutorOptions = {}) {
     if (executionResult.error) {
       onStepError?.(step, executionResult.error, context);
     }
-    await notifyStepComplete(step, executionResult, context, meta);
+    await notifyStepComplete(workflowRunId, step, executionResult, context, meta);
     return executionResult;
   }
 
   async function executeStep(
+    workflowRunId: string,
     step: WorkflowStep,
     context: ExecutionContext,
     meta?: WorkflowRunMeta,
   ): Promise<ExecutionResult> {
+    if (meta) {
+      assertValidWorkflowRunId(workflowRunId);
+    }
     if (!checkCondition(step.condition, context.previousResults ?? {})) {
       const executionResult = buildSkippedResult(step.id, SkipReasons.CONDITION_NOT_MET);
-      await notifyStepComplete(step, executionResult, context, meta);
+      await notifyStepComplete(workflowRunId, step, executionResult, context, meta);
       return executionResult;
     }
 
     try {
       await onStepStart?.(step, context, meta);
       if (meta) {
-        await emit({ type: WorkflowEventTypes.STEP_START, meta, step });
+        await emit(
+          buildEvent(workflowRunId, {
+            type: WorkflowEventTypes.STEP_START,
+            meta,
+            step,
+          }),
+        );
       }
 
       let pluginResult: PluginResult;
@@ -245,7 +293,15 @@ export function createWorkflowExecutor(options: ExecutorOptions = {}) {
 
         if (meta) {
           const { logger, flush } = createContextLogger({
-            emit: (log) => emit({ type: WorkflowEventTypes.PLUGIN_LOG, meta, step, log }),
+            emit: (log) =>
+              emit(
+                buildEvent(workflowRunId, {
+                  type: WorkflowEventTypes.PLUGIN_LOG,
+                  meta,
+                  step,
+                  log,
+                }),
+              ),
           });
           flushLogs = flush;
           pluginContext = { ...context, [PluginContextKeys.logger]: logger };
@@ -267,6 +323,7 @@ export function createWorkflowExecutor(options: ExecutorOptions = {}) {
 
       if (!pluginResult.success) {
         return finalizeFailure(
+          workflowRunId,
           step,
           buildFailedResult(step.id, {
             pluginResult,
@@ -279,12 +336,12 @@ export function createWorkflowExecutor(options: ExecutorOptions = {}) {
       }
 
       const executionResult = buildCompletedResult(step.id, pluginResult);
-      await notifyStepComplete(step, executionResult, context, meta);
+      await notifyStepComplete(workflowRunId, step, executionResult, context, meta);
       return executionResult;
     } catch (error) {
       if (error instanceof ResourceQueueCancelledError) {
         const executionResult = buildSkippedResult(step.id, SkipReasons.WORKFLOW_ABORTED);
-        await notifyStepComplete(step, executionResult, context, meta);
+        await notifyStepComplete(workflowRunId, step, executionResult, context, meta);
         return executionResult;
       }
 
@@ -293,6 +350,7 @@ export function createWorkflowExecutor(options: ExecutorOptions = {}) {
         error instanceof StepExecutionError ? error.kind : StepFailureKinds.INTERNAL;
 
       return finalizeFailure(
+        workflowRunId,
         step,
         buildFailedResult(step.id, {
           error: err,
@@ -317,6 +375,7 @@ export function createWorkflowExecutor(options: ExecutorOptions = {}) {
   }
 
   async function propagateDependents(
+    workflowRunId: string,
     stepId: string,
     graph: DagGraph,
     results: Map<string, ExecutionResult>,
@@ -340,12 +399,14 @@ export function createWorkflowExecutor(options: ExecutorOptions = {}) {
         const skipped = buildSkippedResult(dependentId, SkipReasons.DEPENDENCY_FAILED);
         results.set(dependentId, skipped);
         await notifyStepComplete(
+          workflowRunId,
           dependent,
           skipped,
           buildStepContext(dependent, workflowId, runContext),
           meta,
         );
         await propagateDependents(
+          workflowRunId,
           dependentId,
           graph,
           results,
@@ -366,18 +427,28 @@ export function createWorkflowExecutor(options: ExecutorOptions = {}) {
    * 执行工作流
    */
   async function executeWorkflow(
+    workflowRunId: string,
     workflow: WorkflowDefinition,
     context: Partial<ExecutionContext> = {},
   ): Promise<WorkflowRunResult> {
+    assertValidWorkflowRunId(workflowRunId);
     const graph = validateDag(workflow.steps);
-    const runMeta = buildRunMeta(workflow.id, context);
+    const cleanContext = stripCallerRunId(context);
+    const runMeta = buildRunMeta(workflow.id, cleanContext);
+    const traceId = runMeta.traceId;
     const runContext: Partial<ExecutionContext> = {
-      ...context,
-      runId: runMeta.runId,
-      ...(runMeta.traceId !== undefined ? { traceId: runMeta.traceId } : {}),
+      ...cleanContext,
+      runId: workflowRunId,
+      ...(traceId !== undefined ? { traceId } : {}),
     };
 
-    await emit({ type: WorkflowEventTypes.WORKFLOW_START, meta: runMeta, workflow });
+    await emit(
+      buildEvent(workflowRunId, {
+        type: WorkflowEventTypes.WORKFLOW_START,
+        meta: runMeta,
+        workflow,
+      }),
+    );
 
     const results = new Map<string, ExecutionResult>();
     const inDegree = new Map(graph.inDegree);
@@ -399,7 +470,7 @@ export function createWorkflowExecutor(options: ExecutorOptions = {}) {
         previousResults: toPreviousResults(results),
       };
 
-      const result = await executeStep(step, executionContext, runMeta);
+      const result = await executeStep(workflowRunId, step, executionContext, runMeta);
       results.set(stepId, result);
 
       if (result.status === StepStatuses.FAILED) {
@@ -407,6 +478,7 @@ export function createWorkflowExecutor(options: ExecutorOptions = {}) {
       }
 
       await propagateDependents(
+        workflowRunId,
         stepId,
         graph,
         results,
@@ -424,7 +496,7 @@ export function createWorkflowExecutor(options: ExecutorOptions = {}) {
       if (workflowFailed && failFast) {
         if (!workflowAborted) {
           workflowAborted = true;
-          onWorkflowAbort?.(runMeta.runId);
+          onWorkflowAbort?.(workflowRunId);
         }
         ready.length = 0;
       }
@@ -454,6 +526,7 @@ export function createWorkflowExecutor(options: ExecutorOptions = {}) {
           const skipped = buildSkippedResult(step.id, SkipReasons.WORKFLOW_ABORTED);
           results.set(step.id, skipped);
           await notifyStepComplete(
+            workflowRunId,
             step,
             skipped,
             buildStepContext(step, workflow.id, runContext),
@@ -467,6 +540,7 @@ export function createWorkflowExecutor(options: ExecutorOptions = {}) {
           const skipped = buildSkippedResult(step.id, SkipReasons.DEPENDENCY_FAILED);
           results.set(step.id, skipped);
           await notifyStepComplete(
+            workflowRunId,
             step,
             skipped,
             buildStepContext(step, workflow.id, runContext),
@@ -488,11 +562,13 @@ export function createWorkflowExecutor(options: ExecutorOptions = {}) {
       results: finalResults,
     };
 
-    await emit({
-      type: WorkflowEventTypes.WORKFLOW_FINISHED,
-      meta: runMeta,
-      result: runResult,
-    });
+    await emit(
+      buildEvent(workflowRunId, {
+        type: WorkflowEventTypes.WORKFLOW_FINISHED,
+        meta: runMeta,
+        result: runResult,
+      }),
+    );
 
     return runResult;
   }

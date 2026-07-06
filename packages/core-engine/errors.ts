@@ -38,6 +38,16 @@ export class WorkflowValidationError extends Error {
 }
 
 /**
+ * 工作流执行实例 ID 校验错误（启动前 workflowRunId 非法时抛出）
+ */
+export class WorkflowRunIdValidationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'WorkflowRunIdValidationError';
+  }
+}
+
+/**
  * 步骤基础设施失败（资源分配等），由 executor 捕获并转为 ExecutionResult
  */
 export class StepExecutionError extends Error {

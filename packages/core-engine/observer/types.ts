@@ -14,10 +14,9 @@ import type { PluginLogEntry } from '@monai-devops/plugin-sdk';
 import { WorkflowEventTypes } from './event-types.js';
 
 /**
- * 单次工作流运行的元数据
+ * 单次工作流运行的元数据（不含实例 ID，实例 ID 见事件顶层 workflowRunId）
  */
 export interface WorkflowRunMeta {
-  runId: string;
   workflowId: string;
   traceId?: string;
   /** 调用方 runWorkflow 传入的其余 ExecutionContext 字段 */
@@ -30,16 +29,19 @@ export interface WorkflowRunMeta {
 export type WorkflowLifecycleEvent =
   | {
       type: typeof WorkflowEventTypes.WORKFLOW_START;
+      workflowRunId: string;
       meta: WorkflowRunMeta;
       workflow: WorkflowDefinition;
     }
   | {
       type: typeof WorkflowEventTypes.WORKFLOW_FINISHED;
+      workflowRunId: string;
       meta: WorkflowRunMeta;
       result: WorkflowRunResult;
     }
   | {
       type: typeof WorkflowEventTypes.STEP_QUEUED;
+      workflowRunId: string;
       meta: WorkflowRunMeta;
       step: WorkflowStep;
       resourceType: string;
@@ -47,17 +49,20 @@ export type WorkflowLifecycleEvent =
     }
   | {
       type: typeof WorkflowEventTypes.STEP_START;
+      workflowRunId: string;
       meta: WorkflowRunMeta;
       step: WorkflowStep;
     }
   | {
       type: typeof WorkflowEventTypes.STEP_FINISHED;
+      workflowRunId: string;
       meta: WorkflowRunMeta;
       step: WorkflowStep;
       result: ExecutionResult;
     }
   | {
       type: typeof WorkflowEventTypes.PLUGIN_LOG;
+      workflowRunId: string;
       meta: WorkflowRunMeta;
       step: WorkflowStep;
       log: PluginLogEntry;

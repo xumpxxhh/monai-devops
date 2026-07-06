@@ -7,6 +7,7 @@ import type { PluginDefinition } from '@monai-devops/plugin-sdk';
 import { createPluginManager } from '../plugin/index.js';
 import {
   createWorkflowExecutor,
+  assertValidWorkflowRunId,
   type WorkflowDefinition,
   type WorkflowRunResult,
   type ExecutionContext,
@@ -39,8 +40,8 @@ export interface EngineOptions {
   observer?: WorkflowObserver;
 }
 
-function stepResourceKey(runId: string, stepId: string): string {
-  return `${runId}:${stepId}`;
+function stepResourceKey(workflowRunId: string, stepId: string): string {
+  return `${workflowRunId}:${stepId}`;
 }
 
 const DEFAULT_RESOURCE_TYPE = 'default';
@@ -99,13 +100,14 @@ export function createEngine(options: EngineOptions = {}) {
       const id = stepResourceKey(runId, step.id);
       const { release } = await resourceScheduler.acquire({
         id,
-        runId,
+        workflowRunId: runId,
         resourceType,
         priority,
         onQueued: meta
           ? () =>
               options.observer?.onEvent?.({
                 type: WorkflowEventTypes.STEP_QUEUED,
+                workflowRunId: runId,
                 meta,
                 step,
                 resourceType,
@@ -136,8 +138,8 @@ export function createEngine(options: EngineOptions = {}) {
         releaseHandles.delete(key);
       }
     },
-    onWorkflowAbort: (runId) => {
-      resourceScheduler.cancelByRunId(runId);
+    onWorkflowAbort: (workflowRunId) => {
+      resourceScheduler.cancelByWorkflowRunId(workflowRunId);
     },
   });
 
@@ -146,23 +148,27 @@ export function createEngine(options: EngineOptions = {}) {
   }
 
   async function runWorkflow(
+    workflowRunId: string,
     workflow: WorkflowDefinition,
     context: Partial<ExecutionContext> = {},
   ): Promise<WorkflowRunResult> {
-    return executor.executeWorkflow(workflow, context);
+    return executor.executeWorkflow(workflowRunId, workflow, context);
   }
 
   function scheduleWorkflow(
+    workflowRunId: string,
     workflow: WorkflowDefinition,
     context: Partial<ExecutionContext> = {},
   ): Promise<ScheduleResult> {
+    assertValidWorkflowRunId(workflowRunId);
+
     const taskId = `workflow-${workflow.id}-${Date.now()}`;
     return scheduler.scheduleTask({
       id: taskId,
       name: workflow.name,
       priority: 0,
       createdAt: new Date(),
-      execute: () => runWorkflow(workflow, context),
+      execute: () => runWorkflow(workflowRunId, workflow, context),
     });
   }
 
