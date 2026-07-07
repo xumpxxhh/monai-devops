@@ -21,8 +21,8 @@
 | CE-004 | 中 | `pluginFailureKind` 分支死代码，`failureKind` 无法区分 | executor/helpers | 已修复 |
 | CE-005 | 中 | `assertValidWorkflowRunId` 校验 trim 值却使用原始 id | executor | 已修复 |
 | CE-006 | 中 | `registerResource` 池满时静默丢弃 | resource / engine | 已修复 |
-| CE-007 | 低 | `allocationLock` 伪互斥 + 死代码 | resource | 待清理 |
-| CE-008 | 低 | `step:queued` 语义不准且与调度性能耦合 | resource / engine | 待优化 |
+| CE-007 | 低 | `allocationLock` 伪互斥 + 死代码 | resource | 已修复 |
+| CE-008 | 低 | `step:queued` 语义需文档澄清（进入调度流程，不保证物理等待） | resource / engine | 已澄清 |
 | CE-009 | 低 | 堆取消为惰性删除，队列长度失真 | scheduler / resource | 待优化 |
 | CE-010 | 低 | `resourceType` 拼错静默降级到 default 池 | engine | 待增强 |
 | CE-011 | 低 | 全内存单进程，无持久化 | 整体 | 已知边界 |
@@ -182,25 +182,27 @@ export function pluginFailureKind(pluginResult: PluginResult): StepFailureKind {
 - `allocateResource` / `releaseResource` 用 `Set` 作锁，但逻辑全同步、无 `await`，JS 单线程下无法真正互斥。
 - `allocationLock.add` 后紧跟的 `if (resource.status !== 'available') return null` 在同步路径下不可达。
 
-**建议方向**
+**处理结果**
 
-- 移除误导性锁与死分支；若未来有异步分配，再引入真正的串行队列。
+- 已移除 `allocationLock` 相关伪互斥逻辑与不可达分支，保持 `allocateResource` / `releaseResource` 对外契约不变。
+- 若未来引入异步资源分配，再基于真实并发需求引入串行队列或 async mutex。
 
 ---
 
-### CE-008 step:queued 语义不准且耦合调度
+### CE-008 step:queued 语义澄清（进入调度流程）
 
 **位置**：`packages/core-engine/resource/wait-queue.ts`、`packages/core-engine/engine/index.ts`
 
-**现象**
+**现状**
 
-- `acquire` 无条件调用 `onQueued`，即使资源立即可用、未真正排队。
-- `processQueue` 在 `onQueued`（常为 observer 落库）resolve 后才执行 → **可观测性拖慢资源获取**。
+- 当前实现将 `step:queued` 定义为“步骤进入资源调度流程”的可观测事件。
+- 该事件**不等价于**“已经发生物理等待”；资源立即可用时也可能出现 `step:queued`，属于一致性优先的事件语义设计。
+- `onQueued` 在 `processQueue` 前执行，可能引入轻微调度延迟；是否优化取决于吞吐目标与事件顺序诉求。
 
-**建议方向**
+**文档结论**
 
-- 仅在真正入堆等待时 emit `step:queued`。
-- `onQueued` 与 `processQueue` 解耦（fire-and-forget 或并行）。
+- 对外语义统一为：`step:queued` 表示进入资源调度流程，不保证已发生物理等待。
+- 本项暂不作为代码缺陷处理，后续若以吞吐优先可再评估实现调整。
 
 ---
 
@@ -289,6 +291,8 @@ export function pluginFailureKind(pluginResult: PluginResult): StepFailureKind {
 | 日期 | 说明 |
 | --- | --- |
 | 2026-07-07 | resource-scheduler 并入 resource/wait-queue；API 重命名为 createResourceWaitQueue / getResourceWaitQueue |
+| 2026-07-07 | CE-007 修复：移除 resource manager 中 `allocationLock` 伪互斥与死代码 |
+| 2026-07-07 | CE-008 文档语义澄清：`step:queued` 表示进入资源调度流程，不保证物理等待 |
 | 2026-07-07 | CE-004 ~ CE-006 中优先级问题修复 |
 | 2026-07-07 | CE-001 ~ CE-003 高优先级问题修复 |
 | 2026-07-07 | 初版：源码审查问题归档（13 项） |

@@ -374,7 +374,7 @@ await engine.runWorkflow('550e8400-e29b-41d4-a716-446655440000', workflow, {
 | 事件                | 触发时机                                                                |
 | ------------------- | ----------------------------------------------------------------------- |
 | `workflow:start`    | DAG 校验通过后、任一步骤开始前                                          |
-| `step:queued`       | 步骤进入资源调度队列（条件跳过**不**触发）                              |
+| `step:queued`       | 步骤进入资源调度流程（条件跳过**不**触发；不保证已发生物理等待）         |
 | `step:start`        | 资源分配成功后、插件执行前（条件跳过**不**触发）                        |
 | `plugin:log`        | 插件通过 `getLogger(context)` 写日志；在 `step:start` 与 `step:finished` 之间 |
 | `step:finished`     | 步骤结束（成功、失败、跳过均触发；失败只发此事件，不发单独 error 事件） |
@@ -398,6 +398,7 @@ await engine.runWorkflow('550e8400-e29b-41d4-a716-446655440000', workflow, {
 ### 语义说明
 
 - **并行步骤**：`step:finished` 顺序不保证，调用方按 `stepId` / `workflowRunId` 聚合。
+- **`step:queued` 语义**：表示步骤已进入资源调度流程；该事件用于表达调度路径与可观测性，**不保证**此时已发生实际资源等待。
 - **DAG 非法**：抛出 `WorkflowValidationError`，**不**发 `workflow:start`。
 - **workflowRunId 非法**：抛出 `WorkflowRunIdValidationError`，**不**发 `workflow:start`。
 - **failFast**：仍在就绪队列但尚未开始的步骤会补发 `step:finished`（`skipReason: WORKFLOW_ABORTED`）；因依赖失败跳过的下游为 `DEPENDENCY_FAILED`。均写入最终 `result.results`。
