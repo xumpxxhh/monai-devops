@@ -151,7 +151,7 @@ export class EngineService implements OnModuleInit, OnModuleDestroy {
   }
 
   getQueueStatus() {
-    return this.engine.getResourceScheduler().getQueueStatus();
+    return this.engine.getResourceWaitQueue().getQueueStatus();
   }
 
   cancelRun(workflowRunId: string, mode?: 'best-effort' | 'hard') {

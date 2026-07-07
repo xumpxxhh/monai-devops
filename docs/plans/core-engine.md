@@ -1,6 +1,6 @@
 # core-engine 已知问题归档
 
-> 基于 `packages/core-engine` 源码审查（engine / executor / run-handle / run-registry / scheduler / resource-scheduler / resource / plugin / helpers）整理。
+> 基于 `packages/core-engine` 源码审查（engine / executor / run-handle / run-registry / scheduler / resource / plugin / helpers）整理。
 >
 > 整体评价：分层清晰、错误模型统一、Run 控制与观察者解耦做得较好；下列为当前已识别的 **Bug、隐患与设计债**，按优先级排列，供后续迭代排期。
 
@@ -22,8 +22,8 @@
 | CE-005 | 中 | `assertValidWorkflowRunId` 校验 trim 值却使用原始 id | executor | 已修复 |
 | CE-006 | 中 | `registerResource` 池满时静默丢弃 | resource / engine | 已修复 |
 | CE-007 | 低 | `allocationLock` 伪互斥 + 死代码 | resource | 待清理 |
-| CE-008 | 低 | `step:queued` 语义不准且与调度性能耦合 | resource-scheduler / engine | 待优化 |
-| CE-009 | 低 | 堆取消为惰性删除，队列长度失真 | scheduler / resource-scheduler | 待优化 |
+| CE-008 | 低 | `step:queued` 语义不准且与调度性能耦合 | resource / engine | 待优化 |
+| CE-009 | 低 | 堆取消为惰性删除，队列长度失真 | scheduler / resource | 待优化 |
 | CE-010 | 低 | `resourceType` 拼错静默降级到 default 池 | engine | 待增强 |
 | CE-011 | 低 | 全内存单进程，无持久化 | 整体 | 已知边界 |
 | CE-012 | 低 | observer 抛错导致步骤 FAILED | executor / observer | 待评估 |
@@ -190,7 +190,7 @@ export function pluginFailureKind(pluginResult: PluginResult): StepFailureKind {
 
 ### CE-008 step:queued 语义不准且耦合调度
 
-**位置**：`packages/core-engine/resource-scheduler/index.ts`、`packages/core-engine/engine/index.ts`
+**位置**：`packages/core-engine/resource/wait-queue.ts`、`packages/core-engine/engine/index.ts`
 
 **现象**
 
@@ -206,7 +206,7 @@ export function pluginFailureKind(pluginResult: PluginResult): StepFailureKind {
 
 ### CE-009 堆取消为惰性删除
 
-**位置**：`packages/core-engine/scheduler/index.ts`、`packages/core-engine/resource-scheduler/index.ts`
+**位置**：`packages/core-engine/scheduler/index.ts`、`packages/core-engine/resource/wait-queue.ts`
 
 **现象**
 
@@ -288,6 +288,7 @@ export function pluginFailureKind(pluginResult: PluginResult): StepFailureKind {
 
 | 日期 | 说明 |
 | --- | --- |
+| 2026-07-07 | resource-scheduler 并入 resource/wait-queue；API 重命名为 createResourceWaitQueue / getResourceWaitQueue |
 | 2026-07-07 | CE-004 ~ CE-006 中优先级问题修复 |
 | 2026-07-07 | CE-001 ~ CE-003 高优先级问题修复 |
 | 2026-07-07 | 初版：源码审查问题归档（13 项） |

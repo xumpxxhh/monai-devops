@@ -33,7 +33,7 @@
 
 - `runWorkflow` / `scheduleWorkflow`
 - 插件注册表：`getPlugins` / `registerPlugin` / …
-- 资源：`getResourceManager` / `getResourceScheduler().getQueueStatus()`
+- 资源：`getResourceManager` / `getResourceWaitQueue().getQueueStatus()`
 - 单步：`getExecutor().executeStep`
 - 观测：`observer.onEvent` → 6 种 `WorkflowLifecycleEvent`
 - 生命周期：`destroy`
@@ -123,7 +123,7 @@ stateDiagram-v2
 
 - **现状问题**：per-run `createEngine` → 资源池每 run 独享 → **永远不会排队**，`getQueueStatus` 失去意义。
 - **推荐：共享单例 Engine**。进程启动建一个 engine（注册全部插件、固定容量资源池、挂全局 observer），所有 Run 共用。
-  - 多 Run 并发时产生**真实排队** → `getResourceScheduler().getQueueStatus()` 成为有意义的可观测数据。
+  - 多 Run 并发时产生**真实排队** → `getResourceWaitQueue().getQueueStatus()` 成为有意义的可观测数据。
   - 插件/资源元数据查询有稳定数据源。
 - **代价与应对**：
   1. 事件按 `meta.runId` 分流（observer 回调天然带 meta）。
@@ -265,7 +265,7 @@ Run 级 context 可选：`priority / traceId / maxParallelSteps / failFast`。
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
 | `GET` | `/resources` | 资源池快照（`id / type / name / status`） |
-| `GET` | `/resources/queue` | `getResourceScheduler().getQueueStatus()`（`byType`） |
+| `GET` | `/resources/queue` | `getResourceWaitQueue().getQueueStatus()`（`byType`） |
 
 ### 7.5 Stats
 

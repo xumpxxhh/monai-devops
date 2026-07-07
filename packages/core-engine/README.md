@@ -22,20 +22,19 @@ flowchart TB
     EX[executor]
     RR[RunRegistry / RunHandle]
     SCH[scheduler]
-    RS[resource-scheduler]
     RES[resource]
+    WQ[resource/wait-queue]
   end
   SDK[plugin-sdk]
   CE --> PM
   CE --> EX
   CE --> SCH
-  CE --> RS
   CE --> RES
   EX --> RR
   PM --> SDK
   EX -->|"pluginExecutor"| PM
-  EX -->|"onStepStart acquire"| RS
-  RS --> RES
+  EX -->|"onStepStart acquire"| WQ
+  WQ --> RES
   SCH -->|"scheduleWorkflow"| EX
 ```
 
@@ -118,10 +117,10 @@ flowchart TB
 - `dependsOn` 引用不存在的步骤
 - 存在循环依赖
 
-**ResourceQueueCancelledError**（resource-scheduler 内部）
+**ResourceQueueCancelledError**（resource 等待队列内部）
 
 - failFast / 用户取消时 `cancelByWorkflowRunId` 取消排队中的资源等待
-- `resourceScheduler.destroy()` 销毁调度器
+- `resourceWaitQueue.destroy()` 销毁等待队列
 - 由 executor 捕获并转为 `SKIPPED`（`WORKFLOW_ABORTED` 或 `USER_CANCELLED`）
 
 **ResourceRegistrationError**（engine 配置/注册边界）
@@ -205,7 +204,7 @@ await engine.cancelRun(workflowRunId, { mode: 'hard' });
 | `best-effort`（默认） | 停止调度后续步骤；in-flight 步骤自然跑完 |
 | `hard` | 向所有 in-flight 步骤注入 `AbortSignal`；插件应在检查点响应；超时见 `inFlightTimeoutMs` |
 
-取消受理时发出 `workflow:cancelled`，并联动 `resourceScheduler.cancelByWorkflowRunId` 与 `scheduler.cancelScheduledTaskByWorkflowRunId`。未开始步骤补发 `step:finished`，`skipReason: USER_CANCELLED`。
+取消受理时发出 `workflow:cancelled`，并联动 `resourceWaitQueue.cancelByWorkflowRunId` 与 `scheduler.cancelScheduledTaskByWorkflowRunId`。未开始步骤补发 `step:finished`，`skipReason: USER_CANCELLED`。
 
 ### pauseRun / resumeRun
 
@@ -273,9 +272,9 @@ const snap = engine.getRunStatus(workflowRunId);
 | `defaultPoolSize`  | `5`    | `default` 类型资源池槽位数（未声明 `resourceType` 的步骤使用）     |
 | `observer`         | —      | 工作流生命周期观察者，见「可观测性」                                 |
 
-**默认资源池**：engine 启动时会注册 `defaultPoolSize` 个 `type: "default"` 的资源（id 形如 `default-0`）。步骤未在 `config.resourceType` 中指定类型时，经 resource-scheduler 从该池分配。
+**默认资源池**：engine 启动时会注册 `defaultPoolSize` 个 `type: "default"` 的资源（id 形如 `default-0`）。步骤未在 `config.resourceType` 中指定类型时，经资源等待队列从该池分配。
 
-**workflowRunId 与资源分配**：`onStepStart` 使用内核注入的 `context.runId`（来自第一参 `workflowRunId`）调用 resource-scheduler。
+**workflowRunId 与资源分配**：`onStepStart` 使用内核注入的 `context.runId`（来自第一参 `workflowRunId`）调用 `createResourceWaitQueue().acquire`。
 
 **主要 API**
 
@@ -287,8 +286,8 @@ const snap = engine.getRunStatus(workflowRunId);
 - `cancelScheduledTask(taskId)` / `getScheduledTaskId(workflowRunId)` → 调度层撤销（`cancelRun` 已联动 `cancelScheduledTaskByWorkflowRunId`）
 - `registerPlugin` / `registerPlugins` / `unregisterPlugin` / `getPlugin` / `getPlugins` / `getPluginNames` / `hasPlugin`
 - `registerResource(resource)` — 动态注册资源并唤醒等待队列；池满时抛 `ResourceRegistrationError`（`maxResources` 须覆盖 `defaultPoolSize + initialResources.length`）
-- `getExecutor()` / `getScheduler()` / `getResourceManager()` / `getResourceScheduler()` — 高级用法
-- `destroy()` — 取消所有活跃 Run 后释放 resource-scheduler、资源池定时器与执行历史
+- `getExecutor()` / `getScheduler()` / `getResourceManager()` / `getResourceWaitQueue()` — 高级用法
+- `destroy()` — 取消所有活跃 Run 后释放资源等待队列、资源池定时器与执行历史
 
 ### executor（DAG 工作流）
 
@@ -443,18 +442,9 @@ await engine.runWorkflow('550e8400-e29b-41d4-a716-446655440000', workflow, {
 | `clearPlugins()` | 清空注册表 |
 | `getStats()` | `{ total, plugins }` |
 
-### resource-scheduler（Step 级资源调度队列）
+### resource（资源池与 Step 级等待队列）
 
-`createResourceStepScheduler` 按 **resourceType** 维护独立小顶堆队列，最小调度单元为单个 workflow 的单个 step（队列项 ID：`${workflowRunId}:${stepId}`）。
-
-- **资源不足**：步骤挂起等待，**不**立即失败；`maxParallelSteps` 等待期间仍占用 inFlight 槽位
-- **排序**：`priority` 数值越小越优先；同 priority 按入队时间 FIFO
-- **优先级来源**：`step.priority ?? context.priority ?? 0`
-- **failFast / 取消**：`cancelByWorkflowRunId` 取消同 run 下排队步骤，转为 `SKIPPED`
-- **唤醒**：`releaseResource` 或 `registerResource` 触发 `onResourceAvailable` 回调后重新 `processQueue`
-- **API**：`acquire` / `cancelByWorkflowRunId` / `getQueueStatus` / `notifyResourceAvailable` / `destroy`
-
-### resource（资源池）
+#### 资源池
 
 `createResourceManager` 管理 `available` / `allocated` / `released` 状态。
 
@@ -465,12 +455,22 @@ await engine.runWorkflow('550e8400-e29b-41d4-a716-446655440000', workflow, {
 | `maxResources` | `10` | 池内资源数量上限 |
 | `autoCleanup` | `true` | 为 `true` 时 `release` 后延迟删除；engine 构造时覆盖为 `false` |
 | `cleanupInterval` | `60000` | 自动清理间隔（ms） |
-| `onResourceAvailable` | — | 有空闲资源时回调（engine 用于唤醒 resource-scheduler） |
+| `onResourceAvailable` | — | 有空闲资源时回调（engine 用于唤醒等待队列） |
 
-- 步骤 `config.resourceType` 为字符串时，engine 经 resource-scheduler `acquire` 分配、`onStepComplete` / `onStepError` 释放
+- 步骤 `config.resourceType` 为字符串时，engine 经等待队列 `acquire` 分配、`onStepComplete` / `onStepError` 释放
 - `autoCleanup: false`（engine 默认）时 `release` 将资源归还为 `available` 供复用
-- 分配/释放对同一 id 使用互斥，避免并发竞态
-- **API**：`registerResource` / `hasAvailable` / `allocateResource` / `releaseResource` / `getResource` / `getAllResources` / `getAvailableResources` / `cleanupResources` / `destroy`
+- **池 API**：`registerResource` / `hasAvailable` / `allocateResource` / `releaseResource` / `getResource` / `getAllResources` / `getAvailableResources` / `cleanupResources` / `destroy`
+
+#### 等待队列（`createResourceWaitQueue`）
+
+按 **resourceType** 维护独立小顶堆队列，最小调度单元为单个 workflow 的单个 step（队列项 ID：`${workflowRunId}:${stepId}`）。
+
+- **资源不足**：步骤挂起等待，**不**立即失败；`maxParallelSteps` 等待期间仍占用 inFlight 槽位
+- **排序**：`priority` 数值越小越优先；同 priority 按入队时间 FIFO
+- **优先级来源**：`step.priority ?? context.priority ?? 0`
+- **failFast / 取消**：`cancelByWorkflowRunId` 取消同 run 下排队步骤，转为 `SKIPPED`
+- **唤醒**：`releaseResource` 或 `registerResource` 触发 `onResourceAvailable` 回调后重新 `processQueue`
+- **队列 API**：`acquire` / `cancelByWorkflowRunId` / `getQueueStatus` / `notifyResourceAvailable` / `destroy`
 
 ## 快速开始
 
@@ -569,8 +569,7 @@ const result = await runPromise; // result.status === 'cancelled'
 | `./executor` | `createWorkflowExecutor`（`createExecutor`）、`assertValidWorkflowRunId`、`RunHandle`、`RunRegistry`、`WorkflowDefinition`、`ExecutionContext`、`ExecutionResult`、`WorkflowRunResult`、Run 控制类型与 API |
 | `./scheduler` | `createTaskScheduler`（`createScheduler`）、`Task`、`ScheduleResult` |
 | `./plugin` | `createPluginManager`（`createManager`）、`createContextLogger` |
-| `./resource` | `createResourceManager`、`Resource` |
-| `./resource-scheduler` | `createResourceStepScheduler` |
+| `./resource` | `createResourceManager`、`createResourceWaitQueue`、`Resource`、`ResourceAcquireRequest`、`ResourceAcquireResult` |
 | `./observer` | `WorkflowObserver`、`WorkflowLifecycleEvent`、`WorkflowRunMeta`、`WorkflowEventTypes` |
 | `./context-keys` | `WorkflowContextKeys`（含 `PluginContextKeys` re-export） |
 | `./errors` | `StepExecutionError`、`WorkflowValidationError`、`WorkflowRunIdValidationError`、`ResourceQueueCancelledError`、`ResourceRegistrationError`、`RunAlreadyActiveError`、`StepStatuses`、`StepFailureKinds`、`SkipReasons` 及对应类型 |
@@ -590,7 +589,7 @@ pnpm --filter core-engine test
 
 **要求**：Node.js ≥ 20。
 
-测试覆盖：DAG 并行与 failFast、engine 集成、错误模型、observer（含 `plugin:log` 顺序与失败语义）、scheduler（含优先级、并发与取消）、min-heap、resource 生命周期、resource-scheduler 队列与 cancel、**executor run control**（cancel/pause/resume、hard cancel、parallel、依赖链 pause、`abortInFlight`、`RunAlreadyActiveError`）、`workflowRunId` 校验。
+测试覆盖：DAG 并行与 failFast、engine 集成、错误模型、observer（含 `plugin:log` 顺序与失败语义）、scheduler（含优先级、并发与取消）、min-heap、resource 生命周期与等待队列、**executor run control**（cancel/pause/resume、hard cancel、parallel、依赖链 pause、`abortInFlight`、`RunAlreadyActiveError`）、`workflowRunId` 校验。
 
 ## 子模块独立使用
 
