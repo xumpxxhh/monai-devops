@@ -38,7 +38,6 @@ export function createResourceManager(options: ResourcePoolOptions = {}) {
 
   const resources: Map<string, Resource> = new Map();
   let cleanupTimer: NodeJS.Timeout | null = null;
-  const allocationLock = new Set<string>();
 
   if (autoCleanup) {
     startAutoCleanup();
@@ -57,7 +56,6 @@ export function createResourceManager(options: ResourcePoolOptions = {}) {
 
   function hasAvailable(type: string, name?: string): boolean {
     for (const resource of resources.values()) {
-      if (allocationLock.has(resource.id)) continue;
       if (
         resource.type === type &&
         resource.status === 'available' &&
@@ -71,52 +69,33 @@ export function createResourceManager(options: ResourcePoolOptions = {}) {
 
   function allocateResource(type: string, name?: string): Resource | null {
     for (const resource of resources.values()) {
-      if (allocationLock.has(resource.id)) continue;
-
       if (
         resource.type === type &&
         resource.status === 'available' &&
         (!name || resource.name === name)
       ) {
-        allocationLock.add(resource.id);
-        try {
-          if (resource.status !== 'available') {
-            return null;
-          }
-          resource.status = 'allocated';
-          return { ...resource };
-        } finally {
-          allocationLock.delete(resource.id);
-        }
+        resource.status = 'allocated';
+        return { ...resource };
       }
     }
     return null;
   }
 
   function releaseResource(id: string): boolean {
-    if (allocationLock.has(id)) {
-      return false;
-    }
-
-    allocationLock.add(id);
-    try {
-      const resource = resources.get(id);
-      if (resource && resource.status === 'allocated') {
-        if (autoCleanup) {
-          resource.status = 'released';
-          setTimeout(() => {
-            resources.delete(id);
-          }, cleanupInterval);
-        } else {
-          resource.status = 'available';
-          onResourceAvailable?.(resource.type);
-        }
-        return true;
+    const resource = resources.get(id);
+    if (resource && resource.status === 'allocated') {
+      if (autoCleanup) {
+        resource.status = 'released';
+        setTimeout(() => {
+          resources.delete(id);
+        }, cleanupInterval);
+      } else {
+        resource.status = 'available';
+        onResourceAvailable?.(resource.type);
       }
-      return false;
-    } finally {
-      allocationLock.delete(id);
+      return true;
     }
+    return false;
   }
 
   function getResource(id: string): Resource | undefined {
@@ -162,7 +141,6 @@ export function createResourceManager(options: ResourcePoolOptions = {}) {
   function destroy(): void {
     stopAutoCleanup();
     resources.clear();
-    allocationLock.clear();
   }
 
   return {

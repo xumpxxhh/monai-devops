@@ -51,6 +51,23 @@ describe('resource manager', () => {
     rm.destroy();
   });
 
+  it('returns false when releasing non-allocated resource', () => {
+    const rm = createResourceManager({ autoCleanup: false });
+    rm.registerResource({
+      id: 'r3',
+      type: 'runner',
+      name: 'runner-3',
+      status: 'available',
+    });
+
+    assert.equal(rm.releaseResource('r3'), false);
+
+    rm.allocateResource('runner');
+    assert.equal(rm.releaseResource('r3'), true);
+    assert.equal(rm.releaseResource('r3'), false);
+    rm.destroy();
+  });
+
   it('returns false when register exceeds maxResources', () => {
     const rm = createResourceManager({ maxResources: 1, autoCleanup: false });
     rm.registerResource({
