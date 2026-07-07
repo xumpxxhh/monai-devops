@@ -15,6 +15,11 @@ export interface Task {
   execute: () => Promise<unknown>;
   createdAt: Date;
   workflowRunId?: string;
+  /**
+   * 是否在 execute 抛错时重试；默认 true。
+   * workflow 级任务应设为 false（业务失败不 throw，且整次重跑非幂等）。
+   */
+  retryable?: boolean;
 }
 
 /**
@@ -112,7 +117,11 @@ export function createTaskScheduler(options: SchedulerOptions = {}) {
       pendingById.delete(popped.task.id);
       runningTasks++;
 
-      void executeWithRetry(popped.task, retryAttempts, retryDelay)
+      void executeWithRetry(
+        popped.task,
+        popped.task.retryable === false ? 1 : retryAttempts,
+        retryDelay,
+      )
         .then((result) => {
           if (popped.task.workflowRunId) {
             workflowRunIdToTaskId.delete(popped.task.workflowRunId);

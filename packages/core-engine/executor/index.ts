@@ -1,5 +1,14 @@
 /**
- * 流程执行器
+ * 流程执行器：DAG 校验、并行调度、单步执行、Run 生命周期控制。
+ *
+ * 职责边界：
+ * - 编排层（本模块）：依赖图、条件分支、failFast、取消/暂停、观察者事件
+ * - 插件层（plugin-sdk）：execute 契约与 PluginResult，永不 throw
+ * - 引擎层（engine）：资源分配钩子 onStepStart/onStepComplete
+ *
+ * 调度模型：基于 Kahn 拓扑的 ready 队列 + inFlight 池（上限 maxParallelSteps），
+ * 用 Promise.race 驱动直至无就绪步骤且无 in-flight 或进入暂停态。
+ *
  * @module executor
  */
 
@@ -46,6 +55,7 @@ import type {
   WorkflowRunResult,
   WorkflowRunStatus,
   WorkflowStep,
+  StepCompleteOptions,
 } from './types.js';
 
 export type {
@@ -60,6 +70,7 @@ export type {
   RunControlResult,
   RunControlStatus,
   RunStatusSnapshot,
+  StepCompleteOptions,
   StepCondition,
   WorkflowDefinition,
   WorkflowRunResult,
@@ -78,8 +89,13 @@ export {
 } from '../errors.js';
 
 const WORKFLOW_RUN_ID_MAX_LENGTH = 128;
+/** 允许字母、数字、下划线、连字符；拒绝首尾空白后校验主体字符集 */
 const WORKFLOW_RUN_ID_PATTERN = /^[A-Za-z0-9_-]+$/;
 
+/**
+ * 启动前校验 workflowRunId。非法时抛 WorkflowRunIdValidationError，不发出 workflow:start。
+ * 同一 id 的并发活跃 Run 由 RunRegistry 在 register 时拦截。
+ */
 export function assertValidWorkflowRunId(id: unknown): asserts id is string {
   if (typeof id !== 'string') {
     throw new WorkflowRunIdValidationError('workflowRunId 必须为字符串');
@@ -88,6 +104,10 @@ export function assertValidWorkflowRunId(id: unknown): asserts id is string {
   const trimmed = id.trim();
   if (trimmed.length === 0) {
     throw new WorkflowRunIdValidationError('workflowRunId 不能为空');
+  }
+
+  if (id !== trimmed) {
+    throw new WorkflowRunIdValidationError('workflowRunId 不能含首尾空白');
   }
 
   if (trimmed.length > WORKFLOW_RUN_ID_MAX_LENGTH) {
@@ -101,6 +121,7 @@ export function assertValidWorkflowRunId(id: unknown): asserts id is string {
   }
 }
 
+/** 内存中的 DAG 邻接表：入度、下游列表、步骤索引 */
 interface DagGraph {
   stepIds: Set<string>;
   inDegree: Map<string, number>;
@@ -108,6 +129,10 @@ interface DagGraph {
   stepById: Map<string, WorkflowStep>;
 }
 
+/**
+ * 从步骤列表构建 DAG 结构。仅做结构校验（重复 id、悬空 dependsOn），不检测环。
+ * 环检测由 validateDag 通过 Kahn 算法完成。
+ */
 function buildDag(steps: WorkflowStep[]): DagGraph {
   const stepById = new Map<string, WorkflowStep>();
   const inDegree = new Map<string, number>();
@@ -141,6 +166,9 @@ function buildDag(steps: WorkflowStep[]): DagGraph {
   };
 }
 
+/**
+ * 构建并校验 DAG 无环。visited !== stepIds.size 表示存在环，抛 WorkflowValidationError。
+ */
 function validateDag(steps: WorkflowStep[]): DagGraph {
   const graph = buildDag(steps);
   const queue: string[] = [];
@@ -170,6 +198,10 @@ function validateDag(steps: WorkflowStep[]): DagGraph {
   return graph;
 }
 
+/**
+ * 求值结构化步骤条件（基于 previousResults[when]）。
+ * 优先级：exists → equals → 默认「值非 null/undefined 即通过」。
+ */
 function checkCondition(
   condition: StepCondition | undefined,
   previousResults: Record<string, unknown>,
@@ -190,6 +222,7 @@ function checkCondition(
   return value !== undefined && value !== null;
 }
 
+/** 依赖步骤均已完成且非 FAILED（SKIPPED/COMPLETED 视为可继续下游） */
 function allDependenciesSucceeded(
   step: WorkflowStep,
   results: Map<string, ExecutionResult>,
@@ -201,6 +234,10 @@ function allDependenciesSucceeded(
   });
 }
 
+/**
+ * 将已完成步骤结果转为插件可见的 previousResults。
+ * FAILED 步骤不写入 map，下游 condition 无法读取其 result。
+ */
 function toPreviousResults(results: Map<string, ExecutionResult>): Record<string, unknown> {
   const acc: Record<string, unknown> = {};
   for (const [stepId, r] of results) {
@@ -211,12 +248,14 @@ function toPreviousResults(results: Map<string, ExecutionResult>): Record<string
   return acc;
 }
 
+/** 剥离调用方传入的 runId，避免覆盖内核注入的 workflowRunId */
 function stripCallerRunId(context: Partial<ExecutionContext>): Partial<ExecutionContext> {
   const { runId, ...rest } = context;
   void runId;
   return rest;
 }
 
+/** 构造观察者事件共用的 WorkflowRunMeta（不含 runId，runId 在事件顶层） */
 function buildRunMeta(workflowId: string, context: Partial<ExecutionContext>): WorkflowRunMeta {
   const traceId =
     typeof context.traceId === 'string' && context.traceId.length > 0 ? context.traceId : undefined;
@@ -228,6 +267,7 @@ function buildRunMeta(workflowId: string, context: Partial<ExecutionContext>): W
   };
 }
 
+/** 为生命周期事件补上顶层 workflowRunId 字段 */
 function buildEvent(
   workflowRunId: string,
   event: { type: WorkflowLifecycleEvent['type'] } & Record<string, unknown>,
@@ -235,23 +275,46 @@ function buildEvent(
   return { ...event, workflowRunId } as WorkflowLifecycleEvent;
 }
 
+/**
+ * 将 Run 中止原因映射为未执行/排队步骤的 skipReason。
+ * fail_fast → WORKFLOW_ABORTED；用户取消/destroy → USER_CANCELLED。
+ */
 function resolveAbortSkipReason(reason: AbortSchedulingReason): SkipReason {
   if (reason === 'fail_fast') return SkipReasons.WORKFLOW_ABORTED;
   if (reason === 'user_cancel' || reason === 'destroy') return SkipReasons.USER_CANCELLED;
   return SkipReasons.WORKFLOW_ABORTED;
 }
 
+/**
+ * 在 hard cancel / pause+abortInFlight 场景下，将插件执行与 AbortSignal 赛跑。
+ *
+ * - 无 signal：直接 await 插件，返回 completed。
+ * - signal 触发 abort 后启动 inFlightTimeoutMs 计时；超时则返回 timeout + pluginSettled，
+ *   调用方用 pluginSettled 推迟资源释放（插件可能仍在后台运行）。
+ * - 若在超时前插件先结束：返回 completed；超时后完成的插件结果会被忽略（raceDecided）。
+ */
 async function racePluginWithInFlightAbort(
   execute: () => Promise<PluginResult>,
   signal: AbortSignal | undefined,
   isInFlightAbortActive: () => boolean,
   timeoutMs: number,
-): Promise<PluginResult | 'in_flight_abort_timeout'> {
+): Promise<
+  | { outcome: 'completed'; result: PluginResult }
+  | { outcome: 'timeout'; pluginSettled: Promise<void> }
+> {
   if (!signal) {
-    return execute();
+    return { outcome: 'completed', result: await execute() };
   }
 
-  return new Promise<PluginResult | 'in_flight_abort_timeout'>((resolve, reject) => {
+  let raceDecided = false;
+  const pluginPromise = execute();
+  // 无论成功/失败，供超时路径等待插件真正结束后再释放资源
+  const pluginSettled = pluginPromise.then(
+    () => undefined,
+    () => undefined,
+  );
+
+  return new Promise((resolve, reject) => {
     let timeoutId: ReturnType<typeof setTimeout> | undefined;
 
     const cleanup = () => {
@@ -264,7 +327,10 @@ async function racePluginWithInFlightAbort(
       if (timeoutId !== undefined) clearTimeout(timeoutId);
       timeoutId = setTimeout(() => {
         cleanup();
-        resolve('in_flight_abort_timeout');
+        if (!raceDecided) {
+          raceDecided = true;
+          resolve({ outcome: 'timeout', pluginSettled });
+        }
       }, timeoutMs);
     };
 
@@ -274,12 +340,16 @@ async function racePluginWithInFlightAbort(
       signal.addEventListener('abort', onAbort);
     }
 
-    execute().then(
+    pluginPromise.then(
       (result) => {
+        if (raceDecided) return; // 已按超时收尾，忽略迟到的插件结果
+        raceDecided = true;
         cleanup();
-        resolve(result);
+        resolve({ outcome: 'completed', result });
       },
       (error: unknown) => {
+        if (raceDecided) return;
+        raceDecided = true;
         cleanup();
         reject(error);
       },
@@ -287,6 +357,10 @@ async function racePluginWithInFlightAbort(
   });
 }
 
+/**
+ * 汇总整次 Run 的最终状态。
+ * cancelled 仅当 abortReason 为 user_cancel/destroy；failFast 导致的中止仍为 failed/success。
+ */
 function buildWorkflowRunResult(
   workflowId: string,
   finalResults: ExecutionResult[],
@@ -311,7 +385,10 @@ function buildWorkflowRunResult(
 }
 
 /**
- * 创建流程执行器
+ * 创建流程执行器实例。
+ *
+ * 每个 workflowRunId 对应一个 RunHandle（RunRegistry 管理），支持 cancel/pause/resume。
+ * executionHistory 按 workflowRunId 键存储最近一次该 run 的步骤结果。
  */
 export function createWorkflowExecutor(options: ExecutorOptions = {}) {
   const {
@@ -329,18 +406,24 @@ export function createWorkflowExecutor(options: ExecutorOptions = {}) {
   const executionHistory: Map<string, ExecutionResult[]> = new Map();
   const registry = new RunRegistry();
 
+  /** 向 WorkflowObserver 派发事件；onEvent 支持 async，此处 await 保证顺序 */
   async function emit(event: WorkflowLifecycleEvent): Promise<void> {
     await observer?.onEvent?.(event);
   }
 
+  /**
+   * 步骤结束统一出口：先 onStepComplete（含资源释放），再 step:finished 事件。
+   * completeOptions.deferReleaseUntil 供 in-flight 超时场景推迟引擎侧资源归还。
+   */
   async function notifyStepComplete(
     workflowRunId: string,
     step: WorkflowStep,
     executionResult: ExecutionResult,
     context: ExecutionContext,
     meta: WorkflowRunMeta | undefined,
+    completeOptions?: StepCompleteOptions,
   ): Promise<void> {
-    onStepComplete?.(step, executionResult, context);
+    onStepComplete?.(step, executionResult, context, completeOptions);
     if (meta) {
       await emit(
         buildEvent(workflowRunId, {
@@ -353,6 +436,7 @@ export function createWorkflowExecutor(options: ExecutorOptions = {}) {
     }
   }
 
+  /** 失败步骤：onStepError → notifyStepComplete（仍发 step:finished，无单独 error 事件） */
   async function finalizeFailure(
     workflowRunId: string,
     step: WorkflowStep,
@@ -367,11 +451,13 @@ export function createWorkflowExecutor(options: ExecutorOptions = {}) {
     return executionResult;
   }
 
+  /** 资源队列被取消（failFast/onWorkflowAbort）时的 skipReason */
   function resolveQueueSkipReason(handle: RunHandle | undefined): SkipReason {
     if (!handle) return SkipReasons.WORKFLOW_ABORTED;
     return resolveAbortSkipReason(handle.getAbortReason());
   }
 
+  /** in-flight 被中断时的 skipReason；pause+abortInFlight 优先于 cancel/failFast */
   function resolveInFlightAbortSkipReason(handle: RunHandle | undefined): SkipReason {
     if (handle?.isPauseAbortInFlight()) {
       return SkipReasons.PAUSE_INTERRUPTED;
@@ -379,6 +465,16 @@ export function createWorkflowExecutor(options: ExecutorOptions = {}) {
     return resolveQueueSkipReason(handle);
   }
 
+  /**
+   * 执行单个步骤（可被 executeWorkflow 调度，也可单独调用）。
+   *
+   * 流程：条件求值 → onStepStart（资源 acquire）→ step:start → 注入 logger/signal →
+   * 插件执行 → flush 日志 → step:finished。
+   *
+   * 跳过路径（不发 step:start）：条件不满足、signal 已 aborted、PLUGIN_CANCELLED、
+   * PluginCancelledError、ResourceQueueCancelledError、in-flight 超时。
+   * 失败路径：插件返回 success:false（非 CANCELLED）、基础设施 throw（StepExecutionError 等）。
+   */
   async function executeStep(
     workflowRunId: string,
     step: WorkflowStep,
@@ -397,6 +493,7 @@ export function createWorkflowExecutor(options: ExecutorOptions = {}) {
     }
 
     try {
+      // onStepStart 在 step:start 之前 await，引擎在此挂起资源等待
       await onStepStart?.(step, context, meta);
       if (meta) {
         await emit(
@@ -427,6 +524,7 @@ export function createWorkflowExecutor(options: ExecutorOptions = {}) {
               ),
           });
           flushLogs = flush;
+          // hard cancel / abortInFlight 时注入 AbortSignal，供插件协作式退出
           pluginContext = {
             ...context,
             [PluginContextKeys.logger]: logger,
@@ -452,16 +550,19 @@ export function createWorkflowExecutor(options: ExecutorOptions = {}) {
           inFlightTimeoutMs,
         );
 
-        if (raced === 'in_flight_abort_timeout') {
+        if (raced.outcome === 'timeout') {
           const executionResult = buildSkippedResult(
             step.id,
             resolveInFlightAbortSkipReason(handle),
           );
-          await notifyStepComplete(workflowRunId, step, executionResult, context, meta);
+          // 插件可能仍在运行：推迟 onStepComplete 中的资源释放
+          await notifyStepComplete(workflowRunId, step, executionResult, context, meta, {
+            deferReleaseUntil: raced.pluginSettled,
+          });
           return executionResult;
         }
 
-        pluginResult = raced;
+        pluginResult = raced.result;
         await flushLogs?.();
       } else {
         pluginResult = {
@@ -473,6 +574,7 @@ export function createWorkflowExecutor(options: ExecutorOptions = {}) {
         };
       }
 
+      // PLUGIN_CANCELLED：协作取消，记 SKIPPED 而非 FAILED
       if (!pluginResult.success && pluginResult.code === PluginFailureCodes.PLUGIN_CANCELLED) {
         const executionResult = buildSkippedResult(step.id, resolveInFlightAbortSkipReason(handle));
         await notifyStepComplete(workflowRunId, step, executionResult, context, meta);
@@ -497,12 +599,14 @@ export function createWorkflowExecutor(options: ExecutorOptions = {}) {
       await notifyStepComplete(workflowRunId, step, executionResult, context, meta);
       return executionResult;
     } catch (error) {
+      // 插件层协作取消：转为 SKIPPED 而非 FAILED
       if (error instanceof PluginCancelledError) {
         const executionResult = buildSkippedResult(step.id, resolveInFlightAbortSkipReason(handle));
         await notifyStepComplete(workflowRunId, step, executionResult, context, meta);
         return executionResult;
       }
 
+      // onStepStart 资源等待被 cancelByWorkflowRunId 拒绝
       if (error instanceof ResourceQueueCancelledError) {
         const executionResult = buildSkippedResult(step.id, resolveQueueSkipReason(handle));
         await notifyStepComplete(workflowRunId, step, executionResult, context, meta);
@@ -526,6 +630,7 @@ export function createWorkflowExecutor(options: ExecutorOptions = {}) {
     }
   }
 
+  /** 为补发 step:finished 等场景构造最小 ExecutionContext */
   function buildStepContext(
     step: WorkflowStep,
     workflowId: string,
@@ -538,6 +643,10 @@ export function createWorkflowExecutor(options: ExecutorOptions = {}) {
     } as ExecutionContext;
   }
 
+  /**
+   * 某步骤完成后，更新下游入度并将新就绪步骤加入 ready 队列。
+   * 若依赖链上有 FAILED，直接标记 DEPENDENCY_FAILED 并递归传播（不再执行插件）。
+   */
   async function propagateDependents(
     workflowRunId: string,
     stepId: string,
@@ -587,6 +696,10 @@ export function createWorkflowExecutor(options: ExecutorOptions = {}) {
     }
   }
 
+  /**
+   * waitInFlight 模式下，最后一个 in-flight 结束时将 pausing → paused 并发出 workflow:paused。
+   * 避免在仍有步骤执行中时提前发 paused 事件。
+   */
   async function maybeEmitPaused(
     workflowRunId: string,
     handle: RunHandle,
@@ -606,7 +719,13 @@ export function createWorkflowExecutor(options: ExecutorOptions = {}) {
   }
 
   /**
-   * 执行工作流
+   * 执行完整工作流（DAG 调度主循环）。
+   *
+   * 1. 校验 workflowRunId + DAG，注册 RunHandle，发出 workflow:start
+   * 2. ready 队列 + inFlight 池并行执行，上限 maxParallelSteps
+   * 3. 每步完成后 propagateDependents 解锁下游
+   * 4. 循环内处理：failFast 中止、用户取消、暂停/恢复
+   * 5. 收尾：补发未执行步骤的 step:finished，汇总 WorkflowRunResult，workflow:finished
    */
   async function executeWorkflow(
     workflowRunId: string,
@@ -649,6 +768,7 @@ export function createWorkflowExecutor(options: ExecutorOptions = {}) {
       let workflowFailed = false;
       let workflowAborted = false;
 
+      /** 单步包装：track in-flight、执行、传播依赖、更新进度 */
       const runStep = async (stepId: string) => {
         const step = graph.stepById.get(stepId)!;
         const signal = handle.trackInFlight(stepId);
@@ -692,6 +812,7 @@ export function createWorkflowExecutor(options: ExecutorOptions = {}) {
         }
       };
 
+      // 主调度循环：有就绪步骤、in-flight 步骤或处于暂停态时持续运转
       while (ready.length > 0 || inFlight.size > 0 || handle.isPaused() || handle.isPausing()) {
         if (workflowFailed && failFast) {
           handle.setFailFastAbort();
@@ -699,12 +820,14 @@ export function createWorkflowExecutor(options: ExecutorOptions = {}) {
 
         const stopScheduling = handle.shouldStopScheduling() || (workflowFailed && failFast);
 
+        // 首次进入中止态：清空 ready、通知引擎取消资源排队
         if (stopScheduling && !workflowAborted) {
           workflowAborted = true;
           onWorkflowAbort?.(workflowRunId);
           ready.length = 0;
         }
 
+        // 暂停：阻塞调度直至 resume；pausing 等 in-flight 清空后转 paused
         if (handle.isPaused() || handle.isPausing()) {
           if (handle.isPaused()) {
             await handle.waitUntilResumed();
@@ -715,6 +838,7 @@ export function createWorkflowExecutor(options: ExecutorOptions = {}) {
           if (inFlight.size === 0) continue;
         }
 
+        // 从 ready 取出步骤填满 inFlight 池（受 maxParallelSteps 与 stopScheduling 约束）
         while (
           ready.length > 0 &&
           inFlight.size < maxParallelSteps &&
@@ -731,6 +855,7 @@ export function createWorkflowExecutor(options: ExecutorOptions = {}) {
           inFlight.set(stepId, task);
         }
 
+        // 等待任意 in-flight 步骤完成以释放槽位（或退出暂停等待）
         if (inFlight.size === 0) {
           if (handle.isPaused() || handle.isPausing()) continue;
           break;
@@ -739,6 +864,7 @@ export function createWorkflowExecutor(options: ExecutorOptions = {}) {
         await Promise.race(inFlight.values());
       }
 
+      // 用户取消 / destroy：为尚未执行的步骤补发 step:finished（USER_CANCELLED 等）
       if (handle.shouldStopScheduling()) {
         const skipReason = resolveAbortSkipReason(handle.getAbortReason());
         for (const step of workflow.steps) {
@@ -755,6 +881,7 @@ export function createWorkflowExecutor(options: ExecutorOptions = {}) {
           }
         }
       } else if (!failFast) {
+        // failFast:false 时，因依赖失败未能调度的步骤标记 DEPENDENCY_FAILED
         for (const step of workflow.steps) {
           if (!results.has(step.id)) {
             const skipped = buildSkippedResult(step.id, SkipReasons.DEPENDENCY_FAILED);
@@ -774,7 +901,7 @@ export function createWorkflowExecutor(options: ExecutorOptions = {}) {
         .map((s) => results.get(s.id))
         .filter((r): r is ExecutionResult => r !== undefined);
 
-      executionHistory.set(workflow.id, finalResults);
+      executionHistory.set(workflowRunId, finalResults);
 
       const runResult = buildWorkflowRunResult(workflow.id, finalResults, handle);
       handle.setTerminalStatus(runResult.status === 'success' ? 'finished' : runResult.status);
@@ -789,10 +916,12 @@ export function createWorkflowExecutor(options: ExecutorOptions = {}) {
 
       return runResult;
     } finally {
+      // Run 结束即从活跃表移除；终态写入 RunRegistry 缓存供 getRunStatus 查询
       registry.unregister(workflowRunId);
     }
   }
 
+  /** 请求取消 Run；首次进入 cancelling 时发 workflow:cancelled 并触发 onWorkflowAbort */
   async function cancelRun(
     workflowRunId: string,
     options: CancelRunOptions = {},
@@ -837,6 +966,10 @@ export function createWorkflowExecutor(options: ExecutorOptions = {}) {
     };
   }
 
+  /**
+   * 请求暂停 Run。waitInFlight 时先进入 pausing，待 in-flight 清空后由 maybeEmitPaused 发 workflow:paused。
+   * abortInFlight 会向 in-flight 注入 AbortSignal（与 hard cancel 共用超时语义）。
+   */
   async function pauseRun(
     workflowRunId: string,
     options: PauseRunOptions = {},
@@ -876,6 +1009,7 @@ export function createWorkflowExecutor(options: ExecutorOptions = {}) {
     return { ...result, currentStatus: handle.getStatus() };
   }
 
+  /** 从 paused 恢复为 running，发出 workflow:resumed */
   async function resumeRun(workflowRunId: string): Promise<RunControlResult> {
     const handle = registry.get(workflowRunId);
     if (!handle) {
@@ -904,10 +1038,12 @@ export function createWorkflowExecutor(options: ExecutorOptions = {}) {
     return result;
   }
 
+  /** 查询活跃或终态缓存的 Run 快照（含 inFlightSteps、进度） */
   function getRunStatus(workflowRunId: string): RunStatusSnapshot | undefined {
     return registry.getStatus(workflowRunId);
   }
 
+  /** destroy 前取消所有活跃 Run：先 onWorkflowAbort 清资源队列，再 hard abort in-flight */
   async function destroyActiveRuns(): Promise<void> {
     for (const handle of registry.getAllActive()) {
       onWorkflowAbort?.(handle.workflowRunId);
@@ -915,8 +1051,9 @@ export function createWorkflowExecutor(options: ExecutorOptions = {}) {
     await registry.destroyAll();
   }
 
-  function getExecutionHistory(workflowId: string): ExecutionResult[] | undefined {
-    return executionHistory.get(workflowId);
+  /** 按 workflowRunId 读取最近一次 executeWorkflow 的步骤结果 */
+  function getExecutionHistory(workflowRunId: string): ExecutionResult[] | undefined {
+    return executionHistory.get(workflowRunId);
   }
 
   function clearHistory(): void {

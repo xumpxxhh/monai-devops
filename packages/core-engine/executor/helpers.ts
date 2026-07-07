@@ -49,12 +49,16 @@ export function buildFailedResult(stepId: string, input: FailedResultInput): Exe
   };
 }
 
+/**
+ * 将插件失败 Result 映射为步骤 failureKind。
+ * PLUGIN_CANCELLED 由 executor 前置转为 SKIPPED，不会进入此函数。
+ */
 export function pluginFailureKind(pluginResult: PluginResult): StepFailureKind {
-  if (
-    pluginResult.code === PluginFailureCodes.PLUGIN_NOT_FOUND ||
-    pluginResult.code === PluginFailureCodes.PLUGIN_EXECUTION_ERROR
-  ) {
-    return StepFailureKinds.PLUGIN;
+  switch (pluginResult.code) {
+    case PluginFailureCodes.PLUGIN_NOT_FOUND:
+    case PluginFailureCodes.PLUGIN_CONFIG_INVALID:
+    case PluginFailureCodes.PLUGIN_EXECUTION_ERROR:
+    default:
+      return StepFailureKinds.PLUGIN;
   }
-  return StepFailureKinds.PLUGIN;
 }

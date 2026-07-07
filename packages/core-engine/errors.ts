@@ -82,3 +82,13 @@ export class RunAlreadyActiveError extends Error {
     this.name = 'RunAlreadyActiveError';
   }
 }
+
+/**
+ * 资源池注册失败（引擎配置/注册边界，池已满时由 engine 抛出）
+ */
+export class ResourceRegistrationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'ResourceRegistrationError';
+  }
+}

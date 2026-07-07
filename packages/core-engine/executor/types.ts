@@ -117,6 +117,14 @@ export interface WorkflowRunResult {
 }
 
 /**
+ * onStepComplete 可选控制项（引擎用于推迟资源释放等）
+ */
+export interface StepCompleteOptions {
+  /** 推迟资源释放，直至该 Promise settle（用于 in-flight abort 超时后插件仍在运行） */
+  deferReleaseUntil?: Promise<unknown>;
+}
+
+/**
  * 插件执行器类型
  */
 export type PluginExecutor = (
@@ -143,7 +151,12 @@ export interface ExecutorOptions {
     meta?: WorkflowRunMeta,
   ) => void | Promise<void>;
   /** 引擎内部/高级定制：步骤完成钩子（含失败与跳过） */
-  onStepComplete?: (step: WorkflowStep, result: ExecutionResult, context: ExecutionContext) => void;
+  onStepComplete?: (
+    step: WorkflowStep,
+    result: ExecutionResult,
+    context: ExecutionContext,
+    options?: StepCompleteOptions,
+  ) => void;
   /** 引擎内部/高级定制：步骤错误钩子（失败时在 onStepComplete 之前调用） */
   onStepError?: (step: WorkflowStep, error: Error, context: ExecutionContext) => void;
   /** failFast 中止时取消同 workflowRunId 下排队中的资源等待 */
