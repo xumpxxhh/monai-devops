@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { createEngine } from '../engine/index.js';
 import { createPluginManager } from '../plugin/index.js';
 import { createWorkflowExecutor } from '../executor/index.js';
-import { createPlugin, PluginFailureCodes } from '@monai-devops/plugin-sdk';
+import { createPlugin, PluginFailureCodes, z } from '@monai-devops/plugin-sdk';
 import { StepFailureKinds, StepStatuses } from '../errors.js';
 
 const TEST_RUN_ID = 'test-run-id';
@@ -39,6 +39,29 @@ describe('unified error model', () => {
     assert.equal(step?.status, StepStatuses.FAILED);
     assert.equal(step?.failureKind, StepFailureKinds.PLUGIN);
     assert.equal(step?.pluginResult?.message, 'business failure');
+    engine.destroy();
+  });
+
+  it('PLUGIN_CONFIG_INVALID maps to plugin failureKind', async () => {
+    const invalidConfigPlugin = createPlugin({
+      name: 'invalid-config',
+      version: '1.0.0',
+      configSchema: z.object({ required: z.string() }),
+      execute: async () => ({ success: true, data: {} }),
+    });
+
+    const engine = createEngine({ plugins: [invalidConfigPlugin] });
+    const run = await engine.runWorkflow(TEST_RUN_ID, {
+      id: 'wf-invalid-config',
+      name: 'invalid-config',
+      steps: [{ id: 's1', name: 'S1', plugin: 'invalid-config', config: {} }],
+    });
+
+    assert.equal(run.success, false);
+    const step = run.results[0];
+    assert.equal(step?.status, StepStatuses.FAILED);
+    assert.equal(step?.failureKind, StepFailureKinds.PLUGIN);
+    assert.equal(step?.pluginResult?.code, PluginFailureCodes.PLUGIN_CONFIG_INVALID);
     engine.destroy();
   });
 

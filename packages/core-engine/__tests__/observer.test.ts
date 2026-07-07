@@ -597,6 +597,7 @@ describe('assertValidWorkflowRunId', () => {
   it('rejects empty, whitespace, illegal chars, and overlong ids', () => {
     assert.throws(() => assertValidWorkflowRunId(''), WorkflowRunIdValidationError);
     assert.throws(() => assertValidWorkflowRunId('   '), WorkflowRunIdValidationError);
+    assert.throws(() => assertValidWorkflowRunId(' run-1 '), WorkflowRunIdValidationError);
     assert.throws(() => assertValidWorkflowRunId('bad:id'), WorkflowRunIdValidationError);
     assert.throws(() => assertValidWorkflowRunId('a'.repeat(129)), WorkflowRunIdValidationError);
   });

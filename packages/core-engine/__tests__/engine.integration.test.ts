@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { createEngine } from '../engine/index.js';
-import { StepStatuses } from '../errors.js';
+import { StepStatuses, ResourceRegistrationError } from '../errors.js';
 import { createPlugin } from '@monai-devops/plugin-sdk';
 
 const testPlugin = createPlugin({
@@ -134,6 +134,119 @@ describe('createEngine integration', () => {
 
     assert.equal(run.success, true);
     assert.equal(run.results.length, 2);
+    engine.destroy();
+  });
+
+  it('defers resource release until plugin settles after in-flight abort timeout', async () => {
+    let finishStep!: () => void;
+    const stepGate = new Promise<void>((resolve) => {
+      finishStep = resolve;
+    });
+
+    const engine = createEngine({
+      defaultPoolSize: 1,
+      inFlightTimeoutMs: 50,
+      plugins: [
+        createPlugin({
+          name: 'slow',
+          version: '1.0.0',
+          execute: async () => {
+            await stepGate;
+            return { success: true, data: {} };
+          },
+        }),
+      ],
+    });
+
+    const workflow = {
+      id: 'defer-release',
+      name: 'defer-release',
+      steps: [{ id: 'a', name: 'A', plugin: 'slow', config: {} }],
+    };
+
+    const runPromise = engine.runWorkflow('defer-run', workflow);
+    await new Promise((r) => setTimeout(r, 20));
+    await engine.cancelRun('defer-run', { mode: 'hard' });
+    await new Promise((r) => setTimeout(r, 80));
+
+    assert.equal(engine.getResourceManager().getAvailableResources('default').length, 0);
+
+    finishStep();
+    await new Promise((r) => setTimeout(r, 20));
+    assert.equal(engine.getResourceManager().getAvailableResources('default').length, 1);
+
+    const run = await runPromise;
+    assert.equal(run.status, 'cancelled');
+    await engine.destroy();
+  });
+
+  it('scheduleWorkflow does not retry on infrastructure throw', async () => {
+    const engine = createEngine({
+      plugins: [testPlugin],
+      scheduler: { retryAttempts: 5, retryDelay: 100 },
+    });
+
+    const cyclic = {
+      id: 'cycle',
+      name: 'cycle',
+      steps: [
+        {
+          id: 'a',
+          name: 'A',
+          plugin: 'test-plugin',
+          config: { type: 'unit' },
+          dependsOn: ['b'],
+        },
+        {
+          id: 'b',
+          name: 'B',
+          plugin: 'test-plugin',
+          config: { type: 'unit' },
+          dependsOn: ['a'],
+        },
+      ],
+    };
+
+    const started = Date.now();
+    const result = await engine.scheduleWorkflow('cycle-run', cyclic);
+    assert.equal(result.success, false);
+    assert.ok(Date.now() - started < 80);
+    engine.destroy();
+  });
+
+  it('throws ResourceRegistrationError when pool capacity is insufficient at construction', () => {
+    assert.throws(
+      () =>
+        createEngine({
+          defaultPoolSize: 8,
+          resources: { maxResources: 10 },
+          initialResources: Array.from({ length: 5 }, (_, i) => ({
+            id: `extra-${i}`,
+            type: 'runner',
+            name: `runner-${i}`,
+            status: 'available' as const,
+          })),
+        }),
+      ResourceRegistrationError,
+    );
+  });
+
+  it('throws ResourceRegistrationError when dynamic register exceeds pool limit', () => {
+    const engine = createEngine({
+      defaultPoolSize: 1,
+      resources: { maxResources: 1 },
+    });
+
+    assert.throws(
+      () =>
+        engine.registerResource({
+          id: 'overflow',
+          type: 'runner',
+          name: 'runner-overflow',
+          status: 'available',
+        }),
+      ResourceRegistrationError,
+    );
     engine.destroy();
   });
 });

@@ -50,4 +50,24 @@ describe('resource manager', () => {
     assert.equal(rm.allocateResource('slot'), null);
     rm.destroy();
   });
+
+  it('returns false when register exceeds maxResources', () => {
+    const rm = createResourceManager({ maxResources: 1, autoCleanup: false });
+    rm.registerResource({
+      id: 'only',
+      type: 'slot',
+      name: 's1',
+      status: 'available',
+    });
+    assert.equal(
+      rm.registerResource({
+        id: 'overflow',
+        type: 'slot',
+        name: 's2',
+        status: 'available',
+      }),
+      false,
+    );
+    rm.destroy();
+  });
 });

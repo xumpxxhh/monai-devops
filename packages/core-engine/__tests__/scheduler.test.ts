@@ -41,6 +41,29 @@ describe('scheduler', () => {
     assert.equal(attempts, 2);
   });
 
+  it('does not retry when retryable is false', async () => {
+    let attempts = 0;
+    const scheduler = createTaskScheduler({
+      retryAttempts: 3,
+      retryDelay: 10,
+    });
+
+    const result = await scheduler.scheduleTask({
+      id: 'no-retry',
+      name: 'no-retry',
+      priority: 0,
+      createdAt: new Date(),
+      retryable: false,
+      execute: async () => {
+        attempts++;
+        throw new Error('fail');
+      },
+    });
+
+    assert.equal(result.success, false);
+    assert.equal(attempts, 1);
+  });
+
   it('respects maxConcurrency', async () => {
     const scheduler = createTaskScheduler({ maxConcurrency: 1 });
     let concurrent = 0;

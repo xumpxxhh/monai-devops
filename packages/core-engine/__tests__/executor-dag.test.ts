@@ -225,4 +225,33 @@ describe('executor DAG', () => {
       reason: SkipReasons.CONDITION_NOT_MET,
     });
   });
+
+  it('stores execution history per workflowRunId', async () => {
+    const executor = createWorkflowExecutor({
+      pluginExecutor: async (_name, _config, ctx) => {
+        const stepId = getContext<string>(ctx, WorkflowContextKeys.stepId)!;
+        await delay(30);
+        return { success: true, data: { stepId } };
+      },
+    });
+
+    const workflow: WorkflowDefinition = {
+      id: 'shared-wf',
+      name: 'shared',
+      steps: [{ id: 'a', name: 'A', plugin: 'p', config: {} }],
+    };
+
+    const first = executor.executeWorkflow('run-a', workflow);
+    const second = executor.executeWorkflow('run-b', workflow);
+    await Promise.all([first, second]);
+
+    const historyA = executor.getExecutionHistory('run-a');
+    const historyB = executor.getExecutionHistory('run-b');
+    assert.equal(historyA?.length, 1);
+    assert.equal(historyB?.length, 1);
+    assert.notEqual(historyA, historyB);
+    assert.equal(historyA?.[0]?.stepId, 'a');
+    assert.equal(historyB?.[0]?.stepId, 'a');
+    assert.equal(executor.getExecutionHistory('shared-wf'), undefined);
+  });
 });
