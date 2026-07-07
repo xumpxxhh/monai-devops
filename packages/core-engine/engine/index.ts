@@ -31,10 +31,10 @@ import {
 } from '../scheduler/index.js';
 import {
   createResourceManager,
+  createResourceWaitQueue,
   type Resource,
   type ResourcePoolOptions,
 } from '../resource/index.js';
-import { createResourceStepScheduler } from '../resource-scheduler/index.js';
 import type { WorkflowObserver } from '../observer/index.js';
 import { WorkflowEventTypes } from '../observer/event-types.js';
 import { ResourceRegistrationError } from '../errors.js';
@@ -56,7 +56,7 @@ export interface EngineOptions {
   inFlightTimeoutMs?: number;
 }
 
-/** resource-scheduler 队列项与 releaseHandles 的键：${workflowRunId}:${stepId} */
+/** 资源等待队列项与 releaseHandles 的键：${workflowRunId}:${stepId} */
 function stepResourceKey(workflowRunId: string, stepId: string): string {
   return `${workflowRunId}:${stepId}`;
 }
@@ -78,7 +78,7 @@ function getResourceType(step: WorkflowStep): string {
 /**
  * 创建引擎实例（长生命周期，由 apps/server 等持有至 destroy）。
  *
- * 接线顺序：resourceManager ← resourceScheduler ← executor 钩子；
+ * 接线顺序：resourceManager ← resourceWaitQueue ← executor 钩子；
  * scheduler 与 executor 通过 runWorkflow 间接协作。
  */
 export function createEngine(options: EngineOptions = {}) {
@@ -86,15 +86,15 @@ export function createEngine(options: EngineOptions = {}) {
   const scheduler = createTaskScheduler(options.scheduler);
   const maxResources = options.resources?.maxResources ?? 10;
 
-  // 延迟绑定：resourceManager 构造时需要 onResourceAvailable，但 resourceScheduler 尚未创建
-  const schedulerHolder: { notify?: (type: string) => void } = {};
+  // 延迟绑定：resourceManager 构造时需要 onResourceAvailable，但 waitQueue 尚未创建
+  const waitQueueHolder: { notify?: (type: string) => void } = {};
   const resources = createResourceManager({
     autoCleanup: false,
     ...options.resources,
-    onResourceAvailable: (type) => schedulerHolder.notify?.(type),
+    onResourceAvailable: (type) => waitQueueHolder.notify?.(type),
   });
-  const resourceScheduler = createResourceStepScheduler({ resourceManager: resources });
-  schedulerHolder.notify = (type) => resourceScheduler.notifyResourceAvailable(type);
+  const resourceWaitQueue = createResourceWaitQueue({ resourceManager: resources });
+  waitQueueHolder.notify = (type) => resourceWaitQueue.notifyResourceAvailable(type);
 
   function assertResourceRegistered(resource: Resource): void {
     if (!resources.registerResource(resource)) {
@@ -140,7 +140,7 @@ export function createEngine(options: EngineOptions = {}) {
 
       const priority = step.priority ?? context.priority ?? 0;
       const id = stepResourceKey(runId, step.id);
-      const { release } = await resourceScheduler.acquire({
+      const { release } = await resourceWaitQueue.acquire({
         id,
         workflowRunId: runId,
         resourceType,
@@ -197,7 +197,7 @@ export function createEngine(options: EngineOptions = {}) {
     },
     // failFast 中止 / 用户取消：取消同 run 下仍在资源队列中的步骤
     onWorkflowAbort: (workflowRunId) => {
-      resourceScheduler.cancelByWorkflowRunId(workflowRunId);
+      resourceWaitQueue.cancelByWorkflowRunId(workflowRunId);
     },
   });
 
@@ -273,12 +273,12 @@ export function createEngine(options: EngineOptions = {}) {
   }
 
   /**
-   * 销毁引擎：取消所有活跃 Run，释放资源调度器/池与执行历史。
+   * 销毁引擎：取消所有活跃 Run，释放资源等待队列/池与执行历史。
    * 不自动 unregister 插件，调用方若需清空插件表应自行处理。
    */
   async function destroy(): Promise<void> {
     await executor.destroyActiveRuns();
-    resourceScheduler.destroy();
+    resourceWaitQueue.destroy();
     resources.destroy();
     executor.clearHistory();
     releaseHandles.clear();
@@ -304,7 +304,7 @@ export function createEngine(options: EngineOptions = {}) {
     // 高级用法：直接访问子模块（定制编排、测试、监控队列状态）
     getResourceManager: () => resources,
     registerResource: assertResourceRegistered,
-    getResourceScheduler: () => resourceScheduler,
+    getResourceWaitQueue: () => resourceWaitQueue,
     getScheduler: () => scheduler,
     getExecutor: () => executor,
     destroy,

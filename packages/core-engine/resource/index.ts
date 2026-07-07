@@ -21,7 +21,7 @@ export interface ResourcePoolOptions {
   maxResources?: number;
   autoCleanup?: boolean;
   cleanupInterval?: number;
-  /** 有新空闲资源时回调（供 resource-scheduler 唤醒等待队列） */
+  /** 有新空闲资源时回调（供资源等待队列唤醒排队步骤） */
   onResourceAvailable?: (type: string) => void;
 }
 
@@ -179,3 +179,11 @@ export function createResourceManager(options: ResourcePoolOptions = {}) {
     destroy,
   };
 }
+
+export {
+  createResourceWaitQueue,
+  type ResourceAcquireRequest,
+  type ResourceAcquireResult,
+  type ResourcePoolHandle,
+  type ResourceWaitQueueOptions,
+} from './wait-queue.js';
