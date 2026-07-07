@@ -1,8 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { ResourceQueueCancelledError } from '../errors.js';
-import { createResourceManager } from '../resource/index.js';
-import { createResourceStepScheduler } from '../resource-scheduler/index.js';
+import { createResourceManager, createResourceWaitQueue } from '../resource/index.js';
 
 const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -10,7 +9,7 @@ function createPool(autoCleanup = false) {
   return createResourceManager({ autoCleanup, maxResources: 10 });
 }
 
-describe('resource-scheduler', () => {
+describe('resource wait queue', () => {
   it('acquires immediately when resource is available', async () => {
     const rm = createPool();
     rm.registerResource({
@@ -20,8 +19,8 @@ describe('resource-scheduler', () => {
       status: 'available',
     });
 
-    const scheduler = createResourceStepScheduler({ resourceManager: rm });
-    const result = await scheduler.acquire({
+    const waitQueue = createResourceWaitQueue({ resourceManager: rm });
+    const result = await waitQueue.acquire({
       id: 'run1:s1',
       workflowRunId: 'run1',
       resourceType: 'runner',
@@ -31,7 +30,7 @@ describe('resource-scheduler', () => {
     assert.equal(result.resourceId, 'r1');
     result.release();
     rm.destroy();
-    scheduler.destroy();
+    waitQueue.destroy();
   });
 
   it('queues second acquire until first releases', async () => {
@@ -43,10 +42,10 @@ describe('resource-scheduler', () => {
       status: 'available',
     });
 
-    const scheduler = createResourceStepScheduler({ resourceManager: rm });
+    const waitQueue = createResourceWaitQueue({ resourceManager: rm });
     const order: string[] = [];
 
-    const first = await scheduler.acquire({
+    const first = await waitQueue.acquire({
       id: 'run1:s1',
       workflowRunId: 'run1',
       resourceType: 'runner',
@@ -54,7 +53,7 @@ describe('resource-scheduler', () => {
     });
     order.push('first-acquired');
 
-    const secondPromise = scheduler
+    const secondPromise = waitQueue
       .acquire({
         id: 'run1:s2',
         workflowRunId: 'run1',
@@ -69,14 +68,14 @@ describe('resource-scheduler', () => {
 
     await delay(20);
     assert.deepEqual(order, ['first-acquired']);
-    assert.equal(scheduler.getQueueStatus('runner').queueLength, 1);
+    assert.equal(waitQueue.getQueueStatus('runner').queueLength, 1);
 
     first.release();
     await secondPromise;
     assert.deepEqual(order, ['first-acquired', 'second-acquired']);
 
     rm.destroy();
-    scheduler.destroy();
+    waitQueue.destroy();
   });
 
   it('schedules by lower priority number first', async () => {
@@ -88,24 +87,24 @@ describe('resource-scheduler', () => {
       status: 'available',
     });
 
-    const scheduler = createResourceStepScheduler({ resourceManager: rm });
+    const waitQueue = createResourceWaitQueue({ resourceManager: rm });
     const order: string[] = [];
 
-    const hold = await scheduler.acquire({
+    const hold = await waitQueue.acquire({
       id: 'hold',
       workflowRunId: 'run-hold',
       resourceType: 'gpu',
       priority: 0,
     });
 
-    const low = scheduler.acquire({
+    const low = waitQueue.acquire({
       id: 'low',
       workflowRunId: 'run-low',
       resourceType: 'gpu',
       priority: 10,
       enqueuedAt: new Date('2024-01-01T00:00:00.000Z'),
     });
-    const high = scheduler.acquire({
+    const high = waitQueue.acquire({
       id: 'high',
       workflowRunId: 'run-high',
       resourceType: 'gpu',
@@ -128,7 +127,7 @@ describe('resource-scheduler', () => {
 
     assert.deepEqual(order, ['high', 'low']);
     rm.destroy();
-    scheduler.destroy();
+    waitQueue.destroy();
   });
 
   it('schedules same priority in FIFO order', async () => {
@@ -140,10 +139,10 @@ describe('resource-scheduler', () => {
       status: 'available',
     });
 
-    const scheduler = createResourceStepScheduler({ resourceManager: rm });
+    const waitQueue = createResourceWaitQueue({ resourceManager: rm });
     const order: string[] = [];
 
-    const hold = await scheduler.acquire({
+    const hold = await waitQueue.acquire({
       id: 'hold',
       workflowRunId: 'run-hold',
       resourceType: 'slot',
@@ -151,14 +150,14 @@ describe('resource-scheduler', () => {
     });
 
     const base = new Date('2024-06-01T00:00:00.000Z');
-    const first = scheduler.acquire({
+    const first = waitQueue.acquire({
       id: 'first',
       workflowRunId: 'run-1',
       resourceType: 'slot',
       priority: 5,
       enqueuedAt: new Date(base.getTime()),
     });
-    const second = scheduler.acquire({
+    const second = waitQueue.acquire({
       id: 'second',
       workflowRunId: 'run-2',
       resourceType: 'slot',
@@ -180,7 +179,7 @@ describe('resource-scheduler', () => {
 
     assert.deepEqual(order, ['first', 'second']);
     rm.destroy();
-    scheduler.destroy();
+    waitQueue.destroy();
   });
 
   it('isolates queues by resourceType', async () => {
@@ -198,16 +197,16 @@ describe('resource-scheduler', () => {
       status: 'available',
     });
 
-    const scheduler = createResourceStepScheduler({ resourceManager: rm });
+    const waitQueue = createResourceWaitQueue({ resourceManager: rm });
 
-    const gpuHold = await scheduler.acquire({
+    const gpuHold = await waitQueue.acquire({
       id: 'gpu-hold',
       workflowRunId: 'run-gpu',
       resourceType: 'gpu',
       priority: 0,
     });
 
-    const runner = await scheduler.acquire({
+    const runner = await waitQueue.acquire({
       id: 'runner-1',
       workflowRunId: 'run-runner',
       resourceType: 'runner',
@@ -219,7 +218,7 @@ describe('resource-scheduler', () => {
     gpuHold.release();
 
     rm.destroy();
-    scheduler.destroy();
+    waitQueue.destroy();
   });
 
   it('cancelByWorkflowRunId rejects waiting acquire', async () => {
@@ -231,15 +230,15 @@ describe('resource-scheduler', () => {
       status: 'available',
     });
 
-    const scheduler = createResourceStepScheduler({ resourceManager: rm });
-    const hold = await scheduler.acquire({
+    const waitQueue = createResourceWaitQueue({ resourceManager: rm });
+    const hold = await waitQueue.acquire({
       id: 'hold',
       workflowRunId: 'run-hold',
       resourceType: 'runner',
       priority: 0,
     });
 
-    const waiting = scheduler.acquire({
+    const waiting = waitQueue.acquire({
       id: 'wait',
       workflowRunId: 'run-cancel',
       resourceType: 'runner',
@@ -247,26 +246,26 @@ describe('resource-scheduler', () => {
     });
 
     await delay(10);
-    assert.equal(scheduler.cancelByWorkflowRunId('run-cancel'), 1);
+    assert.equal(waitQueue.cancelByWorkflowRunId('run-cancel'), 1);
 
     await assert.rejects(waiting, ResourceQueueCancelledError);
     hold.release();
 
     rm.destroy();
-    scheduler.destroy();
+    waitQueue.destroy();
   });
 
   it('wakes queue when resource is registered later', async () => {
     // eslint-disable-next-line
-    let scheduler!: ReturnType<typeof createResourceStepScheduler>;
+    let waitQueue!: ReturnType<typeof createResourceWaitQueue>;
     const rm = createResourceManager({
       autoCleanup: false,
       maxResources: 10,
-      onResourceAvailable: (type) => scheduler.notifyResourceAvailable(type),
+      onResourceAvailable: (type) => waitQueue.notifyResourceAvailable(type),
     });
-    scheduler = createResourceStepScheduler({ resourceManager: rm });
+    waitQueue = createResourceWaitQueue({ resourceManager: rm });
 
-    const waiting = scheduler.acquire({
+    const waiting = waitQueue.acquire({
       id: 'wait',
       workflowRunId: 'run-1',
       resourceType: 'runner',
@@ -274,7 +273,7 @@ describe('resource-scheduler', () => {
     });
 
     await delay(10);
-    assert.equal(scheduler.getQueueStatus('runner').queueLength, 1);
+    assert.equal(waitQueue.getQueueStatus('runner').queueLength, 1);
 
     rm.registerResource({
       id: 'r1',
@@ -288,6 +287,6 @@ describe('resource-scheduler', () => {
     result.release();
 
     rm.destroy();
-    scheduler.destroy();
+    waitQueue.destroy();
   });
 });

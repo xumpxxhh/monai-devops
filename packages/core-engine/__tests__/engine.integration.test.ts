@@ -84,7 +84,7 @@ describe('createEngine integration', () => {
     });
 
     await new Promise((r) => setTimeout(r, 30));
-    assert.equal(engine.getResourceScheduler().getQueueStatus('runner').queueLength, 1);
+    assert.equal(engine.getResourceWaitQueue().getQueueStatus('runner').queueLength, 1);
 
     engine.getResourceManager().registerResource({
       id: 'r1',
