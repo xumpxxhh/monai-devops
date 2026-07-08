@@ -28,6 +28,29 @@ describe('toPluginConfigJsonSchema', () => {
   });
 });
 
+describe('PluginsService.listConfigSchemas', () => {
+  it('returns config schemas for all plugins', () => {
+    const schemas = [
+      {
+        name: 'test-plugin',
+        configJsonSchema: {
+          type: 'object',
+          properties: { type: { type: 'string', enum: ['unit'] } },
+        },
+      },
+      { name: 'no-schema-plugin', configJsonSchema: null },
+    ];
+    const mockEngineService = {
+      getAllPluginConfigJsonSchemas: () => schemas,
+    };
+    const service = new PluginsService(mockEngineService as unknown as EngineService);
+
+    const result = service.listConfigSchemas();
+
+    assert.deepEqual(result, schemas);
+  });
+});
+
 describe('PluginsService.getConfigSchema', () => {
   it('returns name and configJsonSchema when plugin has schema', () => {
     const configJsonSchema = {

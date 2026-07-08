@@ -7,6 +7,7 @@ describe('PluginsService', () => {
     getPlugins: jest.fn(),
     getPlugin: jest.fn(),
     getPluginConfigJsonSchema: jest.fn(),
+    getAllPluginConfigJsonSchemas: jest.fn(),
     dryRunPlugin: jest.fn(),
   };
 
@@ -14,6 +15,27 @@ describe('PluginsService', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+  });
+
+  describe('listConfigSchemas', () => {
+    it('returns config schemas for all plugins', () => {
+      const schemas = [
+        {
+          name: 'test-plugin',
+          configJsonSchema: {
+            type: 'object',
+            properties: { type: { type: 'string', enum: ['unit'] } },
+          },
+        },
+        { name: 'no-schema-plugin', configJsonSchema: null },
+      ];
+      mockEngineService.getAllPluginConfigJsonSchemas.mockReturnValue(schemas);
+
+      const result = service.listConfigSchemas();
+
+      expect(result).toEqual(schemas);
+      expect(mockEngineService.getAllPluginConfigJsonSchemas).toHaveBeenCalled();
+    });
   });
 
   describe('getConfigSchema', () => {

@@ -28,7 +28,7 @@ export class EngineService implements OnModuleInit, OnModuleDestroy {
   constructor(private readonly config: ConfigService) {}
 
   onModuleInit(): void {
-    const maxParallelSteps = this.config.get<number>('MAX_PARALLEL_STEPS', 1);
+    const maxParallelSteps = this.config.get<number>('MAX_PARALLEL_STEPS', 2);
     const resourcePoolSize = this.config.get<number>('RESOURCE_POOL_SIZE', 5);
 
     this.engine = createEngine({
@@ -136,6 +136,13 @@ export class EngineService implements OnModuleInit, OnModuleDestroy {
     const plugin = this.engine.getPlugin(name);
     if (!plugin?.configSchema) return undefined;
     return toPluginConfigJsonSchema(plugin.configSchema);
+  }
+
+  getAllPluginConfigJsonSchemas() {
+    return this.engine.getPlugins().map((plugin) => ({
+      name: plugin.name,
+      configJsonSchema: plugin.configSchema ? toPluginConfigJsonSchema(plugin.configSchema) : null,
+    }));
   }
 
   getResources() {

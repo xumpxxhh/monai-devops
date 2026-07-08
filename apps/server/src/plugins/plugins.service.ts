@@ -31,6 +31,10 @@ export class PluginsService {
     return plugin;
   }
 
+  listConfigSchemas() {
+    return this.engineService.getAllPluginConfigJsonSchemas();
+  }
+
   getConfigSchema(name: string) {
     const schema = this.engineService.getPluginConfigJsonSchema(name);
     if (!schema) {
