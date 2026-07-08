@@ -100,6 +100,7 @@ export default function RunsListPage() {
                 <th className="px-4 py-3 font-medium">Run ID</th>
                 <th className="px-4 py-3 font-medium">开始时间</th>
                 <th className="px-4 py-3 font-medium w-48">进度</th>
+                <th className="px-4 py-3 font-medium w-28">操作</th>
               </tr>
             </thead>
             <tbody>
@@ -143,6 +144,14 @@ export default function RunsListPage() {
                     </td>
                     <td className="px-4 py-3">
                       <ProgressBar {...counts} />
+                    </td>
+                    <td className="px-4 py-3">
+                      <Link
+                        to={`/runs/${run.runId}`}
+                        className="inline-flex items-center h-8 px-3 rounded-ctrl border border-line hover:bg-raised text-xs font-medium"
+                      >
+                        查看详情
+                      </Link>
                     </td>
                   </tr>
                 );

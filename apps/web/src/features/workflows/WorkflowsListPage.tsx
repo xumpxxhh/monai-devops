@@ -2,7 +2,12 @@ import { useCallback, useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { faEllipsisVertical, faPlay, faPlus } from '@fortawesome/free-solid-svg-icons';
+import {
+  faEllipsisVertical,
+  faPenToSquare,
+  faPlay,
+  faPlus,
+} from '@fortawesome/free-solid-svg-icons';
 import type { WorkflowDefinition } from '@monai-devops/core-engine';
 import { workflowsApi, type WorkflowDraft } from '../../shared/api/workflows';
 import { DropdownMenu } from '../../shared/ui/DropdownMenu';
@@ -132,7 +137,7 @@ export default function WorkflowsListPage() {
                 <th className="px-4 py-3 font-medium">名称</th>
                 <th className="px-4 py-3 font-medium">ID</th>
                 <th className="px-4 py-3 font-medium">步骤数</th>
-                <th className="px-4 py-3 font-medium w-32">操作</th>
+                <th className="px-4 py-3 font-medium w-40">操作</th>
               </tr>
             </thead>
             <tbody>
@@ -155,6 +160,13 @@ export default function WorkflowsListPage() {
                       >
                         <FontAwesomeIcon icon={faPlay} />
                       </button>
+                      <Link
+                        to={`/workflows/${record.id}/edit`}
+                        className="p-2 rounded-ctrl hover:bg-raised text-muted"
+                        title="编辑"
+                      >
+                        <FontAwesomeIcon icon={faPenToSquare} />
+                      </Link>
                       <DropdownMenu
                         trigger={
                           <button
@@ -166,6 +178,10 @@ export default function WorkflowsListPage() {
                           </button>
                         }
                         items={[
+                          {
+                            label: '编辑',
+                            onSelect: () => navigate(`/workflows/${record.id}/edit`),
+                          },
                           { label: '复制', onSelect: () => handleCopy(record.definition) },
                           { label: '导出 JSON', onSelect: () => handleExport(record.definition) },
                           {

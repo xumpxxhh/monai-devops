@@ -19,13 +19,19 @@ function KpiCard({
   href?: string;
 }) {
   const inner = (
-    <div className="bg-surface rounded-card border border-line shadow-card p-5 hover:border-brand/30 transition-colors">
+    <div className="bg-surface rounded-card border border-line shadow-card p-5 hover:border-brand/30 transition-colors h-full">
       <div className="text-xs text-faint uppercase tracking-wider mb-2">{label}</div>
       <div className="text-2xl font-semibold text-ink">{value}</div>
-      {sub && <div className="text-xs text-muted mt-1">{sub}</div>}
+      <div className="text-xs text-muted mt-1 min-h-[1.25rem]">{sub ?? ''}</div>
     </div>
   );
-  return href ? <Link to={href}>{inner}</Link> : inner;
+  return href ? (
+    <Link to={href} className="block h-full">
+      {inner}
+    </Link>
+  ) : (
+    inner
+  );
 }
 
 export default function DashboardPage() {
