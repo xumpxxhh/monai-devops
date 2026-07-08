@@ -6,7 +6,12 @@
 
 :root {
   font-family:
-    'PingFang SC', 'Microsoft YaHei', 'Segoe UI', system-ui, -apple-system, sans-serif;
+    'PingFang SC',
+    'Microsoft YaHei',
+    'Segoe UI',
+    system-ui,
+    -apple-system,
+    sans-serif;
   --mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
 
@@ -119,6 +124,21 @@ samp,
 }
 .node-idle {
   box-shadow: 0 0 0 1px rgba(228, 232, 241, 1);
+}
+.node-selected {
+  box-shadow:
+    0 0 0 1px rgba(109, 94, 246, 0.45),
+    0 4px 20px -6px rgba(109, 94, 246, 0.35);
+}
+
+.dag-flow-canvas .react-flow__handle {
+  opacity: 0.45;
+  transition: opacity 0.15s ease;
+}
+.dag-flow-canvas .react-flow__node:hover .react-flow__handle,
+.dag-flow-canvas .react-flow__node.selected .react-flow__handle,
+.dag-flow-canvas .react-flow.connecting .react-flow__handle {
+  opacity: 1;
 }
 
 .edge {
