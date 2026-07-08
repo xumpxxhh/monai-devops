@@ -18,7 +18,8 @@ async function executeTestPlugin(
   log.info('开始执行测试', { type });
   await sleep(3000, context);
   throwIfAborted(context);
-  log.append('[runner] building...\n', 'stdout');
+  log.append('[runner] starting...\n', 'stdout');
+  log.append('[runner] ' + type + '...\n', 'stdout');
 
   await sleep(3000, context);
   throwIfAborted(context);

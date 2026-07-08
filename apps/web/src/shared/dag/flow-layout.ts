@@ -1,7 +1,12 @@
 import dagre from '@dagrejs/dagre';
 import { MarkerType, Position, type Edge, type Node } from '@xyflow/react';
 
-export const HANDLE_POSITIONS = [Position.Top, Position.Right, Position.Bottom, Position.Left] as const;
+export const HANDLE_POSITIONS = [
+  Position.Top,
+  Position.Right,
+  Position.Bottom,
+  Position.Left,
+] as const;
 
 export type LayoutDirection = 'LR' | 'TB';
 
