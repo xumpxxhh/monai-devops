@@ -43,6 +43,23 @@ export function mergeWithDefaults(
   return { ...buildDefaultValues(schema), ...value };
 }
 
+/** 仅合并 JSON Schema 声明的 default，不填充 enum 首项（与运行时 Zod 校验对齐） */
+export function mergeSchemaDeclaredDefaults(
+  schema: JsonObjectSchema,
+  value: Record<string, unknown>,
+): Record<string, unknown> {
+  const merged = { ...value };
+  const properties = schema.properties ?? {};
+
+  for (const [key, prop] of Object.entries(properties)) {
+    if (prop.default !== undefined && (merged[key] === undefined || merged[key] === null)) {
+      merged[key] = prop.default;
+    }
+  }
+
+  return merged;
+}
+
 export function validateAgainstSchema(
   schema: JsonObjectSchema,
   value: Record<string, unknown>,

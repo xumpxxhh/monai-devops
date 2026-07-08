@@ -21,8 +21,8 @@ export const pluginsApi = {
   get(name: string) {
     return apiGet<PluginInfo>(`/plugins/${name}`);
   },
-  getConfigSchema(name: string) {
-    return apiGet<PluginConfigSchemaResponse>(`/plugins/${name}/config-schema`);
+  listConfigSchemas() {
+    return apiGet<PluginConfigSchemaResponse[]>('/plugins/config-schemas');
   },
   dryRun(name: string, config: Record<string, unknown>, options: DryRunOptions = {}) {
     return new Promise<ExecutionResultSerialized>((resolve, reject) => {

@@ -5,6 +5,23 @@ import { coerceValidatedValues, mergeWithDefaults, validateAgainstSchema } from 
 
 const EMPTY_INITIAL: Record<string, unknown> = {};
 
+let schemaMapPromise: Promise<Map<string, JsonObjectSchema | null>> | null = null;
+
+function loadPluginConfigSchemaMap() {
+  schemaMapPromise ??= pluginsApi
+    .listConfigSchemas()
+    .then(
+      (items) =>
+        new Map(items.map((item) => [item.name, item.configJsonSchema as JsonObjectSchema | null])),
+    );
+  return schemaMapPromise;
+}
+
+/** 供页面并行预加载，与 hook 共享同一次请求 */
+export function preloadPluginConfigSchemas() {
+  return loadPluginConfigSchemaMap();
+}
+
 export interface UsePluginConfigSchemaOptions {
   enabled?: boolean;
   initialValue?: Record<string, unknown>;
@@ -37,11 +54,20 @@ export function usePluginConfigSchema(
     setLoadError('');
     setFieldErrors({});
     /* eslint-enable react-hooks/set-state-in-effect */
-    pluginsApi
-      .getConfigSchema(pluginName)
-      .then((response) => {
+    loadPluginConfigSchemaMap()
+      .then((map) => {
         if (cancelled) return;
-        const jsonSchema = response.configJsonSchema;
+        if (!map.has(pluginName)) {
+          setSchema(null);
+          setLoadError('插件不存在');
+          return;
+        }
+        const jsonSchema = map.get(pluginName) ?? null;
+        if (jsonSchema === null) {
+          setSchema(null);
+          setLoadError('该插件无可配置项');
+          return;
+        }
         setSchema(jsonSchema);
         setFormValue(mergeWithDefaults(jsonSchema, initial));
       })

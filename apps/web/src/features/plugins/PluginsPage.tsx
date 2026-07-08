@@ -4,7 +4,11 @@ import { pluginsApi } from '../../shared/api/misc';
 import type { ExecutionResultSerialized, PluginInfo } from '../../shared/types';
 import { StatusBadge } from '../../shared/ui/StatusBadge';
 import { EmptyState } from '../../shared/ui/EmptyState';
-import { PluginConfigForm, type PluginConfigFormHandle } from '../../shared/ui/json-schema-form';
+import {
+  PluginConfigForm,
+  type PluginConfigFormHandle,
+  preloadPluginConfigSchemas,
+} from '../../shared/ui/json-schema-form';
 import { appendPluginLogEvent, type LogLine } from '../run-detail/run-state';
 
 export default function PluginsPage() {
@@ -27,9 +31,8 @@ export default function PluginsPage() {
   }, [logs.length, lastLogMessage, running]);
 
   useEffect(() => {
-    pluginsApi
-      .list()
-      .then((list) => {
+    void Promise.all([pluginsApi.list(), preloadPluginConfigSchemas()])
+      .then(([list]) => {
         setPlugins(list);
         if (list[0]) setSelected(list[0]);
       })

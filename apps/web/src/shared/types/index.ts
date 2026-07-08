@@ -135,7 +135,7 @@ export interface PluginConfigSchemaResponse {
     >;
     required?: string[];
     additionalProperties?: boolean;
-  };
+  } | null;
 }
 
 export interface ResourceSlot {
