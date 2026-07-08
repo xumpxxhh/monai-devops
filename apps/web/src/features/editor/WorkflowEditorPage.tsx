@@ -5,29 +5,57 @@ import {
   Background,
   Controls,
   MiniMap,
+  Panel,
   addEdge,
   useNodesState,
   useEdgesState,
+  useReactFlow,
+  ReactFlowProvider,
   type Connection,
   type Node,
+  type NodeProps,
   type Edge,
-  Handle,
-  Position,
+  ConnectionLineType,
+  ConnectionMode,
+  type OnNodesChange,
+  type OnEdgesChange,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import type { WorkflowDefinition } from '@monai-devops/core-engine';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { faCog, faPlay, faSave } from '@fortawesome/free-solid-svg-icons';
+import {
+  faCog,
+  faPlay,
+  faSave,
+  faGripLinesVertical,
+  faGripLines,
+} from '@fortawesome/free-solid-svg-icons';
 import { workflowsApi, type WorkflowDraft } from '../../shared/api/workflows';
 import { runsApi } from '../../shared/api/runs';
 import { ApiError } from '../../shared/api/http';
 import { pluginsApi } from '../../shared/api/misc';
 import type { PluginInfo } from '../../shared/types';
 import { validateDag } from './dag-utils';
+import {
+  formatStepConfigIssues,
+  validateAllStepConfigs,
+  validateStepConfig,
+} from './step-config-validation';
 import { FullscreenLayout } from '../../layouts/FullscreenLayout';
 import { Field, Input, Select, Checkbox } from '../../shared/ui/form';
-import { PluginConfigFormModal } from '../../shared/ui/json-schema-form';
+import {
+  PluginConfigFormModal,
+  preloadPluginConfigSchemas,
+} from '../../shared/ui/json-schema-form';
+import type { JsonObjectSchema } from '../../shared/ui/json-schema-form/types';
 import { toast } from 'sonner';
+import {
+  assignEdgeHandles,
+  directedEdgeOptions,
+  getLayoutedNodes,
+  type LayoutDirection,
+} from '../../shared/dag/flow-layout';
+import { FlowNodeHandles } from '../../shared/dag/FlowNodeHandles';
 
 interface StepNodeData {
   label: string;
@@ -36,16 +64,36 @@ interface StepNodeData {
   stepId?: string;
   config?: Record<string, unknown>;
   priority?: number;
+  configInvalid?: boolean;
   [key: string]: unknown;
 }
 
-function StepNode({ data }: { data: StepNodeData }) {
+function StepNode({ data, selected }: NodeProps<Node<StepNodeData>>) {
+  const handleClass = selected
+    ? '!w-2 !h-2 !bg-brand !border-2 !border-white'
+    : '!w-1.5 !h-1.5 !bg-line !border !border-white';
+
+  const borderClass = data.configInvalid
+    ? 'border-failed bg-failed/5'
+    : selected
+      ? 'border-brand/50'
+      : 'border-line node-idle hover:border-faint/40';
+
   return (
-    <div className="px-4 py-3 rounded-ctrl bg-surface border border-line min-w-[140px] node-idle">
-      <Handle type="target" position={Position.Top} className="!bg-line" />
-      <div className="text-sm font-medium truncate">{data.label}</div>
-      <div className="text-xs text-faint font-mono truncate">{data.plugin}</div>
-      <Handle type="source" position={Position.Bottom} className="!bg-line" />
+    <div
+      className={`px-2.5 py-1.5 rounded-ctrl min-w-[100px] max-w-[140px] border transition-[border-color,background-color,box-shadow] duration-150 ${
+        selected ? 'bg-brand-soft node-selected' : 'bg-surface'
+      } ${borderClass}`}
+    >
+      <FlowNodeHandles className={`${handleClass} !z-10`} />
+      <div className={`text-xs font-medium truncate leading-tight ${selected ? 'text-ink' : ''}`}>
+        {data.label}
+      </div>
+      <div
+        className={`text-[10px] font-mono truncate leading-tight mt-0.5 ${selected ? 'text-brand' : 'text-faint'}`}
+      >
+        {data.plugin}
+      </div>
     </div>
   );
 }
@@ -60,10 +108,10 @@ function definitionToFlow(definition: WorkflowDefinition): {
   nodes: Node<StepNodeData>[];
   edges: Edge[];
 } {
-  const nodes: Node[] = definition.steps.map((step, i) => ({
+  const nodes: Node<StepNodeData>[] = definition.steps.map((step) => ({
     id: step.id,
     type: 'step',
-    position: { x: 120 + (i % 3) * 200, y: 80 + Math.floor(i / 3) * 120 },
+    position: { x: 0, y: 0 },
     data: {
       label: step.name,
       plugin: step.plugin,
@@ -76,10 +124,16 @@ function definitionToFlow(definition: WorkflowDefinition): {
   const edges: Edge[] = [];
   for (const step of definition.steps) {
     for (const dep of step.dependsOn ?? []) {
-      edges.push({ id: `${dep}->${step.id}`, source: dep, target: step.id, animated: false });
+      edges.push({
+        id: `${dep}->${step.id}`,
+        source: dep,
+        target: step.id,
+        ...directedEdgeOptions,
+      });
     }
   }
-  return { nodes: nodes as Node<StepNodeData>[], edges };
+  const layoutedNodes = getLayoutedNodes(nodes, edges, 'LR');
+  return { nodes: layoutedNodes, edges: assignEdgeHandles(layoutedNodes, edges) };
 }
 
 function resolveNodeRef(node: Node<StepNodeData>): string {
@@ -136,6 +190,92 @@ function dagStepsFromNodes(nodes: Node<StepNodeData>[], edges: Edge[]) {
   }));
 }
 
+function WorkflowCanvas({
+  nodes,
+  edges,
+  onNodesChange,
+  onEdgesChange,
+  onConnect,
+  onLayout,
+  validationErrors,
+  fitViewToken,
+}: {
+  nodes: Node<StepNodeData>[];
+  edges: Edge[];
+  onNodesChange: OnNodesChange<Node<StepNodeData>>;
+  onEdgesChange: OnEdgesChange<Edge>;
+  onConnect: (connection: Connection) => void;
+  onLayout: (direction: LayoutDirection) => void;
+  validationErrors: string[];
+  /** 每次变化都会触发画布重新居中，用于工作流(重新)加载后自动 fitView */
+  fitViewToken: number;
+}) {
+  const { fitView } = useReactFlow();
+
+  const handleLayout = (direction: LayoutDirection) => {
+    onLayout(direction);
+    requestAnimationFrame(() => fitView({ padding: 0.2, duration: 200 }));
+  };
+
+  useEffect(() => {
+    if (fitViewToken === 0) return;
+    requestAnimationFrame(() => fitView({ padding: 0.2, duration: 200 }));
+  }, [fitViewToken, fitView]);
+
+  return (
+    <div className="flex-1 bg-panel relative dag-flow-canvas">
+      <ReactFlow
+        nodes={nodes}
+        edges={edges}
+        onNodesChange={onNodesChange}
+        onEdgesChange={onEdgesChange}
+        onConnect={onConnect}
+        nodeTypes={nodeTypes}
+        connectionMode={ConnectionMode.Loose}
+        defaultEdgeOptions={directedEdgeOptions}
+        connectionLineType={ConnectionLineType.SmoothStep}
+        connectionLineStyle={directedEdgeOptions.style}
+        proOptions={{ hideAttribution: true }}
+        fitView
+      >
+        <Background />
+        <Controls />
+        <MiniMap />
+        <Panel position="top-right" className="flex gap-1.5">
+          <button
+            type="button"
+            onClick={() => handleLayout('LR')}
+            title="水平自动布局"
+            className="inline-flex items-center gap-1.5 h-8 px-2.5 rounded-ctrl border border-line bg-surface text-xs hover:bg-raised"
+          >
+            <FontAwesomeIcon icon={faGripLinesVertical} />
+            水平
+          </button>
+          <button
+            type="button"
+            onClick={() => handleLayout('TB')}
+            title="垂直自动布局"
+            className="inline-flex items-center gap-1.5 h-8 px-2.5 rounded-ctrl border border-line bg-surface text-xs hover:bg-raised"
+          >
+            <FontAwesomeIcon icon={faGripLines} />
+            垂直
+          </button>
+        </Panel>
+      </ReactFlow>
+      {nodes.length === 0 && (
+        <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+          <p className="text-sm text-faint">从左侧插件库添加步骤开始编排</p>
+        </div>
+      )}
+      {validationErrors.length > 0 && (
+        <div className="absolute bottom-4 left-4 right-4 bg-failed/10 border border-failed/30 text-failed text-sm px-4 py-2 rounded-ctrl">
+          {validationErrors.join(' · ')}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function WorkflowEditorPage() {
   const { id } = useParams();
   const navigate = useNavigate();
@@ -145,8 +285,9 @@ export default function WorkflowEditorPage() {
   const [workflowName, setWorkflowName] = useState('');
   const [workflowNameError, setWorkflowNameError] = useState('');
   const [plugins, setPlugins] = useState<PluginInfo[]>([]);
-  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
+  const [schemaMap, setSchemaMap] = useState<Map<string, JsonObjectSchema | null> | null>(null);
   const [configModalOpen, setConfigModalOpen] = useState(false);
+  const [configInvalidNodeIds, setConfigInvalidNodeIds] = useState<Set<string>>(() => new Set());
   const [saving, setSaving] = useState(false);
   const [running, setRunning] = useState(false);
   const [failFast, setFailFast] = useState(true);
@@ -154,6 +295,7 @@ export default function WorkflowEditorPage() {
 
   const [nodes, setNodes, onNodesChange] = useNodesState<Node<StepNodeData>>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
+  const [fitViewToken, setFitViewToken] = useState(0);
 
   const syncFlowFromDefinition = useCallback(
     (definition: WorkflowDefinition) => {
@@ -162,18 +304,28 @@ export default function WorkflowEditorPage() {
       setEdges(flow.edges);
       setWorkflowId(definition.id);
       setWorkflowName(definition.name);
+      setFitViewToken((t) => t + 1);
     },
     [setNodes, setEdges],
   );
 
   useEffect(() => {
-    pluginsApi
-      .list()
-      .then(setPlugins)
-      .catch(() => {
-        toast.warning('加载插件列表失败，使用本地兜底数据');
-        setPlugins([{ name: 'test-plugin', version: '1.0.0' }]);
-      });
+    void Promise.allSettled([pluginsApi.list(), preloadPluginConfigSchemas()]).then(
+      ([listResult, schemaResult]) => {
+        if (listResult.status === 'fulfilled') {
+          setPlugins(listResult.value);
+        } else {
+          toast.warning('加载插件列表失败，使用本地兜底数据');
+          setPlugins([{ name: 'test-plugin', version: '1.0.0' }]);
+        }
+
+        if (schemaResult.status === 'fulfilled') {
+          setSchemaMap(schemaResult.value);
+        } else {
+          toast.warning('加载插件配置规则失败');
+        }
+      },
+    );
   }, []);
 
   useEffect(() => {
@@ -190,19 +342,42 @@ export default function WorkflowEditorPage() {
   }, [id, isNew, syncFlowFromDefinition]);
 
   const onConnect = useCallback(
-    (connection: Connection) => setEdges((eds) => addEdge(connection, eds)),
+    (connection: Connection) =>
+      setEdges((eds) => addEdge({ ...connection, ...directedEdgeOptions }, eds)),
     [setEdges],
+  );
+
+  const handleLayout = useCallback(
+    (direction: LayoutDirection) => {
+      const layoutedNodes = getLayoutedNodes(nodes, edges, direction);
+      setNodes(layoutedNodes);
+      setEdges((eds) => assignEdgeHandles(layoutedNodes, eds));
+    },
+    [nodes, edges, setNodes, setEdges],
   );
 
   const dagValidation = useMemo(() => validateDag(dagStepsFromNodes(nodes, edges)), [nodes, edges]);
   const validationErrors = dagValidation.errors;
 
-  const selectedNode = selectedNodeId ? nodes.find((n) => n.id === selectedNodeId) : null;
-  const selectedStepId = selectedNode?.data.stepId;
+  // 将 configInvalid 直接写回节点状态，而不是在每次渲染时派生一份新的节点数组。
+  // 拖拽节点时 nodes 引用会随位置高频变化，若在此处用 map 重新生成所有节点的 data 对象，
+  // 会导致 React Flow 认为「所有」节点都变了（丢失未拖拽节点的引用稳定性），
+  // 从而在每一次 mousemove 都重新渲染全部节点，造成明显卡顿。
+  useEffect(() => {
+    setNodes((nds) => {
+      let changed = false;
+      const next = nds.map((n) => {
+        const configInvalid = configInvalidNodeIds.has(n.id);
+        if (n.data.configInvalid === configInvalid) return n;
+        changed = true;
+        return { ...n, data: { ...n.data, configInvalid } };
+      });
+      return changed ? next : nds;
+    });
+  }, [configInvalidNodeIds, setNodes]);
 
-  const selectNode = (nodeId: string) => {
-    setSelectedNodeId(nodeId);
-  };
+  const selectedNode = useMemo(() => nodes.find((n) => n.selected) ?? null, [nodes]);
+  const selectedStepId = selectedNode?.data.stepId;
 
   const addStep = (plugin: string) => {
     const clientRef = createClientRef();
@@ -217,47 +392,110 @@ export default function WorkflowEditorPage() {
         config: {},
       },
     };
-    setNodes((nds) => [...nds, newNode]);
-    setSelectedNodeId(clientRef);
+    setNodes((nds) => [
+      ...nds.map((n) => ({ ...n, selected: false })),
+      { ...newNode, selected: true },
+    ]);
   };
 
   const updateSelected = (
     patch: Partial<Pick<StepNodeData, 'label' | 'plugin' | 'config' | 'priority'>>,
   ) => {
-    if (!selectedNodeId) return;
+    if (!selectedNode) return;
+
+    const pluginChanged = patch.plugin !== undefined && patch.plugin !== selectedNode.data.plugin;
+    const configChanged = patch.config !== undefined;
+    if (pluginChanged || configChanged) {
+      setConfigInvalidNodeIds(new Set());
+    }
+
     setNodes((nds) =>
-      nds.map((n) =>
-        n.id === selectedNodeId
-          ? {
-              ...n,
-              data: {
-                ...n.data,
-                label: patch.label ?? n.data.label,
-                plugin: patch.plugin ?? n.data.plugin,
-                config: patch.config ?? n.data.config,
-                priority: patch.priority,
-              },
-            }
-          : n,
-      ),
+      nds.map((n) => {
+        if (n.id !== selectedNode.id) return n;
+
+        const nextPlugin = patch.plugin ?? n.data.plugin;
+
+        return {
+          ...n,
+          data: {
+            ...n.data,
+            label: patch.label ?? n.data.label,
+            plugin: nextPlugin,
+            config: pluginChanged ? {} : (patch.config ?? n.data.config),
+            priority: patch.priority,
+          },
+        };
+      }),
     );
   };
 
-  const buildCurrentDraft = () => buildDraft(nodes, edges, workflowName, workflowId);
+  const buildCurrentDraft = () => {
+    const draft = buildDraft(nodes, edges, workflowName, workflowId);
+    if (!schemaMap) return draft;
+
+    return {
+      ...draft,
+      steps: draft.steps.map((step, index) => {
+        const node = nodes[index];
+        if (!node) return step;
+
+        const result = validateStepConfig(step.plugin, step.config ?? {}, schemaMap);
+        return result.ok ? { ...step, config: result.config } : step;
+      }),
+    };
+  };
 
   const isWorkflowNameValid = !validateWorkflowName(workflowName);
 
-  const handleSave = async () => {
+  const selectNodeById = useCallback(
+    (nodeId: string) => {
+      setNodes((nds) => nds.map((n) => ({ ...n, selected: n.id === nodeId })));
+    },
+    [setNodes],
+  );
+
+  const assertWorkflowReady = useCallback((): boolean => {
     const nameError = validateWorkflowName(workflowName);
     if (nameError) {
       toast.warning(nameError);
-      return;
-    }
-    if (nodes.length === 0) {
-      toast.warning('请至少添加一个步骤');
-      return;
+      setWorkflowNameError(nameError);
+      return false;
     }
     setWorkflowNameError('');
+
+    if (nodes.length === 0) {
+      toast.warning('请至少添加一个步骤');
+      return false;
+    }
+
+    if (!schemaMap) {
+      toast.warning('插件配置规则未加载');
+      return false;
+    }
+
+    if (!dagValidation.valid) {
+      toast.warning(dagValidation.errors[0] ?? '工作流结构不合法');
+      return false;
+    }
+
+    const configValidation = validateAllStepConfigs(nodes, schemaMap);
+    if (!configValidation.valid) {
+      setConfigInvalidNodeIds(new Set(configValidation.issues.map((issue) => issue.nodeId)));
+      const configErrors = formatStepConfigIssues(configValidation.issues);
+      toast.error(configErrors[0] ?? '步骤配置不完整');
+      const firstIssue = configValidation.issues[0];
+      if (firstIssue) {
+        selectNodeById(firstIssue.nodeId);
+      }
+      return false;
+    }
+
+    setConfigInvalidNodeIds(new Set());
+    return true;
+  }, [workflowName, nodes, schemaMap, dagValidation, selectNodeById]);
+
+  const handleSave = async () => {
+    if (!assertWorkflowReady()) return;
 
     setSaving(true);
     try {
@@ -284,12 +522,8 @@ export default function WorkflowEditorPage() {
   };
 
   const handleRun = async () => {
-    const nameError = validateWorkflowName(workflowName);
-    if (nameError) {
-      setWorkflowNameError(nameError);
-      return;
-    }
-    if (!dagValidation.valid || nodes.length === 0) return;
+    if (!assertWorkflowReady()) return;
+
     setRunning(true);
     try {
       const draft = buildCurrentDraft();
@@ -307,7 +541,8 @@ export default function WorkflowEditorPage() {
       <button
         type="button"
         onClick={handleSave}
-        disabled={saving}
+        disabled={saving || !dagValidation.valid || nodes.length === 0 || !isWorkflowNameValid}
+        title={validationErrors.join('; ') || undefined}
         className="inline-flex items-center gap-2 h-9 px-4 rounded-ctrl border border-line text-sm hover:bg-raised disabled:opacity-50"
       >
         <FontAwesomeIcon icon={faSave} />
@@ -351,32 +586,18 @@ export default function WorkflowEditorPage() {
           </div>
         </aside>
 
-        <div className="flex-1 bg-panel relative">
-          <ReactFlow
+        <ReactFlowProvider>
+          <WorkflowCanvas
             nodes={nodes}
             edges={edges}
             onNodesChange={onNodesChange}
             onEdgesChange={onEdgesChange}
             onConnect={onConnect}
-            onNodeClick={(_, node) => selectNode(node.id)}
-            nodeTypes={nodeTypes}
-            fitView
-          >
-            <Background />
-            <Controls />
-            <MiniMap />
-          </ReactFlow>
-          {nodes.length === 0 && (
-            <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-              <p className="text-sm text-faint">从左侧插件库添加步骤开始编排</p>
-            </div>
-          )}
-          {validationErrors.length > 0 && (
-            <div className="absolute bottom-4 left-4 right-4 bg-failed/10 border border-failed/30 text-failed text-sm px-4 py-2 rounded-ctrl">
-              {validationErrors.join(' · ')}
-            </div>
-          )}
-        </div>
+            onLayout={handleLayout}
+            validationErrors={validationErrors}
+            fitViewToken={fitViewToken}
+          />
+        </ReactFlowProvider>
 
         <aside className="w-72 shrink-0 border-l border-line bg-surface p-4 overflow-auto">
           <h3 className="text-xs font-medium text-faint uppercase tracking-wider mb-3">工作流</h3>
