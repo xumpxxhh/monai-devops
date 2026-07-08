@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { applyRunEvent, createInitialRunState } from './run-state';
+import { applyRunEvent, createInitialRunState, runStepsToFlow } from './run-state';
 
 describe('run-state reducer', () => {
   const workflow = {
@@ -72,5 +72,21 @@ describe('run-state reducer', () => {
       result: { success: true, workflowId: 'wf-1', results: [] },
     });
     expect(state.status).toBe('finished');
+  });
+
+  it('converts steps and edges to flow data', () => {
+    const state = createInitialRunState('run-1', {
+      id: 'wf-1',
+      name: 'DAG',
+      steps: [
+        { id: 'a', name: 'A', plugin: 'p1', dependsOn: [] },
+        { id: 'b', name: 'B', plugin: 'p2', dependsOn: ['a'] },
+      ],
+    });
+    const flow = runStepsToFlow(state.steps, state.edges);
+    expect(flow.nodes).toHaveLength(2);
+    expect(flow.edges).toHaveLength(1);
+    expect(flow.edges[0]).toMatchObject({ source: 'a', target: 'b' });
+    expect(flow.nodes.find((n) => n.id === 'b')?.data.status).toBe('idle');
   });
 });

@@ -1,10 +1,25 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { toast } from 'sonner';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faCopy, faBan, faPause, faPlay } from '@fortawesome/free-solid-svg-icons';
+import {
+  ReactFlow,
+  useNodesState,
+  useEdgesState,
+  useReactFlow,
+  ReactFlowProvider,
+  type Node,
+  type Edge,
+} from '@xyflow/react';
+import '@xyflow/react/dist/style.css';
 import { runsApi } from '../../shared/api/runs';
 import { useWorkflowRun } from '../../shared/hooks/useWorkflowRun';
+import {
+  assignEdgeHandles,
+  directedEdgeOptions,
+  getLayoutedNodes,
+} from '../../shared/dag/flow-layout';
 import { StatusBadge } from '../../shared/ui/StatusBadge';
 import { ProgressBar } from '../../shared/ui/ProgressBar';
 import { TabsBar } from '../../shared/ui/Tabs';
@@ -13,10 +28,13 @@ import { Checkbox } from '../../shared/ui/form';
 import { WsPill } from '../../shared/ui/WsPill';
 import { RUN_STATUS_META } from '../../shared/types/status';
 import type { RunStatus, WorkflowRunResultSerialized } from '../../shared/types';
+import { DagStepNode } from './DagStepNode';
 import {
   applyRunEvent,
   createInitialRunState,
   hydrateRunState,
+  runStepsToFlow,
+  type DagStepNodeData,
   type RunState,
   type StepView,
 } from './run-state';
@@ -34,19 +52,156 @@ function terminalStatusFromResult(result: WorkflowRunResultSerialized): RunStatu
   return 'finished';
 }
 
-function DagNodeView({ step, onClick }: { step: StepView; onClick: () => void }) {
-  const ringClass = `node-${step.status}`;
-  const isRunning = step.status === 'running';
+const nodeTypes = { step: DagStepNode };
+
+function RunDagCanvas({
+  nodes,
+  edges,
+  onNodeClick,
+  fitViewKey,
+}: {
+  nodes: Node<DagStepNodeData>[];
+  edges: Edge[];
+  onNodeClick: (nodeId: string) => void;
+  fitViewKey: string;
+}) {
+  const { fitView } = useReactFlow();
+
+  useEffect(() => {
+    if (!fitViewKey) return;
+    requestAnimationFrame(() => fitView({ padding: 0.2, duration: 200 }));
+  }, [fitViewKey, fitView]);
+
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={`px-4 py-3 rounded-ctrl bg-surface border border-line text-left min-w-[120px] ${ringClass} ${isRunning ? 'running-ring' : ''}`}
-    >
-      <div className="text-sm font-medium truncate">{step.name}</div>
-      <div className="text-xs text-faint font-mono">{step.id}</div>
-      <StatusBadge status={step.status} />
-    </button>
+    <div className="flex-1 relative dag-flow-canvas min-h-0">
+      <ReactFlow
+        nodes={nodes}
+        edges={edges}
+        nodeTypes={nodeTypes}
+        nodesDraggable={false}
+        nodesConnectable={false}
+        elementsSelectable={false}
+        onNodeClick={(_, node) => onNodeClick(node.id)}
+        proOptions={{ hideAttribution: true }}
+        fitView
+      />
+      {nodes.length === 0 && (
+        <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+          <p className="text-sm text-faint">暂无步骤</p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function RunDagPanel({
+  runState,
+  onNodeClick,
+}: {
+  runState: RunState | null;
+  onNodeClick: (step: StepView) => void;
+}) {
+  const [nodes, setNodes] = useNodesState<Node<DagStepNodeData>>([]);
+  const [edges, setEdges] = useEdgesState<Edge>([]);
+  const layoutKeyRef = useRef('');
+
+  const structureKey = useMemo(() => {
+    if (!runState) return '';
+    const stepIds = Object.keys(runState.steps).sort().join(',');
+    const edgeList = runState.edges
+      .map((e) => `${e.from}->${e.to}`)
+      .sort()
+      .join(',');
+    return `${stepIds}|${edgeList}`;
+  }, [runState]);
+
+  useEffect(() => {
+    if (!runState || !structureKey) {
+      setNodes([]);
+      setEdges([]);
+      layoutKeyRef.current = '';
+      return;
+    }
+
+    if (layoutKeyRef.current === structureKey) return;
+
+    const flow = runStepsToFlow(runState.steps, runState.edges);
+    const layoutedNodes = getLayoutedNodes(flow.nodes, flow.edges, 'LR');
+    const layoutedEdges = assignEdgeHandles(layoutedNodes, flow.edges);
+    setNodes(layoutedNodes);
+    setEdges(layoutedEdges);
+    layoutKeyRef.current = structureKey;
+  }, [structureKey, runState, setNodes, setEdges]);
+
+  useEffect(() => {
+    if (!runState) return;
+
+    setNodes((prevNodes) => {
+      let changed = false;
+      const nextNodes = prevNodes.map((node) => {
+        const step = runState.steps[node.id];
+        if (!step) return node;
+
+        const current = node.data;
+        if (
+          current.label === step.name &&
+          current.plugin === step.plugin &&
+          current.status === step.status
+        ) {
+          return node;
+        }
+
+        changed = true;
+        return {
+          ...node,
+          data: {
+            ...current,
+            label: step.name,
+            plugin: step.plugin,
+            status: step.status,
+          },
+        };
+      });
+      return changed ? nextNodes : prevNodes;
+    });
+
+    setEdges((prevEdges) => {
+      let changed = false;
+      const nextEdges = prevEdges.map((edge) => {
+        const isActive = runState.steps[edge.target]?.status === 'running';
+        if (!!edge.animated === isActive) return edge;
+
+        changed = true;
+        return {
+          ...edge,
+          animated: isActive,
+          style: isActive ? { stroke: '#0EA5E9', strokeWidth: 2 } : directedEdgeOptions.style,
+          markerEnd: isActive
+            ? { ...directedEdgeOptions.markerEnd, color: '#0EA5E9' }
+            : directedEdgeOptions.markerEnd,
+        };
+      });
+      return changed ? nextEdges : prevEdges;
+    });
+  }, [runState, setNodes, setEdges]);
+
+  return (
+    <div className="flex-1 flex flex-col min-h-0 bg-panel border-r border-line">
+      <h2 className="shrink-0 text-xs font-medium text-faint uppercase tracking-wider px-6 pt-6 pb-4">
+        DAG 状态
+      </h2>
+      <ReactFlowProvider>
+        <RunDagCanvas
+          nodes={nodes}
+          edges={edges}
+          onNodeClick={(nodeId) => {
+            const step = runState?.steps[nodeId];
+            if (step) onNodeClick(step);
+          }}
+          fitViewKey={structureKey}
+        />
+      </ReactFlowProvider>
+    </div>
   );
 }
 
@@ -198,7 +353,6 @@ export default function RunDetailPage() {
   });
 
   const meta = RUN_STATUS_META[recordStatus] ?? RUN_STATUS_META.running;
-  const steps = runState ? Object.values(runState.steps) : [];
   const canCancel = CANCELLABLE_STATUSES.has(recordStatus);
   const canPause = PAUSABLE_STATUSES.has(recordStatus);
   const canResume = RESUMABLE_STATUSES.has(recordStatus);
@@ -296,21 +450,9 @@ export default function RunDetailPage() {
       )}
 
       <div className="flex-1 flex min-h-0">
-        <div className="flex-1 p-6 overflow-auto bg-panel border-r border-line">
-          <h2 className="text-xs font-medium text-faint uppercase tracking-wider mb-4">DAG 状态</h2>
-          <div className="flex flex-wrap gap-6 items-start">
-            {steps.map((step) => (
-              <DagNodeView key={step.id} step={step} onClick={() => setDrawerStep(step)} />
-            ))}
-          </div>
-          {runState && runState.edges.length > 0 && (
-            <p className="text-xs text-faint mt-6">
-              依赖边: {runState.edges.map((e) => `${e.from}→${e.to}`).join(', ')}
-            </p>
-          )}
-        </div>
+        <RunDagPanel runState={runState} onNodeClick={setDrawerStep} />
 
-        <div className="w-[480px] shrink-0 flex flex-col bg-surface">
+        <div className="w-[560px] shrink-0 flex flex-col bg-surface">
           <div className="flex items-center justify-between px-4 py-3 border-b border-line">
             <TabsBar
               items={[

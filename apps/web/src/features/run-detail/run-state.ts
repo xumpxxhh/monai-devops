@@ -4,6 +4,15 @@ import type {
   WorkflowRunResultSerialized,
 } from '../../shared/types';
 import type { StepUiStatus } from '../../shared/types/status';
+import type { Edge, Node } from '@xyflow/react';
+import { directedEdgeOptions } from '../../shared/dag/flow-layout';
+
+export interface DagStepNodeData {
+  label: string;
+  plugin: string;
+  status: StepUiStatus;
+  [key: string]: unknown;
+}
 
 export interface StepView {
   id: string;
@@ -326,4 +335,29 @@ export function hydrateRunState(
     state = { ...state, status: terminalStatus, finalResult };
   }
   return state;
+}
+
+export function runStepsToFlow(
+  steps: Record<string, StepView>,
+  edges: Array<{ from: string; to: string }>,
+): { nodes: Node<DagStepNodeData>[]; edges: Edge[] } {
+  const nodes: Node<DagStepNodeData>[] = Object.values(steps).map((step) => ({
+    id: step.id,
+    type: 'step',
+    position: { x: 0, y: 0 },
+    data: {
+      label: step.name,
+      plugin: step.plugin,
+      status: step.status,
+    },
+  }));
+
+  const flowEdges: Edge[] = edges.map((edge) => ({
+    id: `${edge.from}->${edge.to}`,
+    source: edge.from,
+    target: edge.to,
+    ...directedEdgeOptions,
+  }));
+
+  return { nodes, edges: flowEdges };
 }
