@@ -1,98 +1,314 @@
-<p align="center">
-  <a href="http://nestjs.com/" target="blank"><img src="https://nestjs.com/img/logo-small.svg" width="120" alt="Nest Logo" /></a>
-</p>
+# Server（apps/server）
 
-[circleci-image]: https://img.shields.io/circleci/build/github/nestjs/nest/master?token=abc123def456
-[circleci-url]: https://circleci.com/gh/nestjs/nest
+`apps/server` 是 `monai-devops` 的后端服务，基于 NestJS，负责：
 
-  <p align="center">A progressive <a href="http://nodejs.org" target="_blank">Node.js</a> framework for building efficient and scalable server-side applications.</p>
-    <p align="center">
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/v/@nestjs/core.svg" alt="NPM Version" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/l/@nestjs/core.svg" alt="Package License" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/dm/@nestjs/common.svg" alt="NPM Downloads" /></a>
-<a href="https://circleci.com/gh/nestjs/nest" target="_blank"><img src="https://img.shields.io/circleci/build/github/nestjs/nest/master" alt="CircleCI" /></a>
-<a href="https://discord.gg/G7Qnnhy" target="_blank"><img src="https://img.shields.io/badge/discord-online-brightgreen.svg" alt="Discord"/></a>
-<a href="https://opencollective.com/nest#backer" target="_blank"><img src="https://opencollective.com/nest/backers/badge.svg" alt="Backers on Open Collective" /></a>
-<a href="https://opencollective.com/nest#sponsor" target="_blank"><img src="https://opencollective.com/nest/sponsors/badge.svg" alt="Sponsors on Open Collective" /></a>
-  <a href="https://paypal.me/kamilmysliwiec" target="_blank"><img src="https://img.shields.io/badge/Donate-PayPal-ff3f59.svg" alt="Donate us"/></a>
-    <a href="https://opencollective.com/nest#sponsor"  target="_blank"><img src="https://img.shields.io/badge/Support%20us-Open%20Collective-41B883.svg" alt="Support us"></a>
-  <a href="https://twitter.com/nestframework" target="_blank"><img src="https://img.shields.io/twitter/follow/nestframework.svg?style=social&label=Follow" alt="Follow us on Twitter"></a>
-</p>
-  <!--[![Backers on Open Collective](https://opencollective.com/nest/backers/badge.svg)](https://opencollective.com/nest#backer)
-  [![Sponsors on Open Collective](https://opencollective.com/nest/sponsors/badge.svg)](https://opencollective.com/nest#sponsor)-->
+- 注册并管理插件（Plugin）
+- 管理工作流（Workflow）定义
+- 提交/查询/控制运行实例（Run）
+- 通过 HTTP + WebSocket/SSE 提供实时状态与日志
+- 暴露资源与统计信息，便于前端或外部系统接入
 
-## Description
+---
 
-[Nest](https://github.com/nestjs/nest) framework TypeScript starter repository.
+## 1. 功能概览
 
-## Project setup
+### 核心能力
 
-```bash
-$ pnpm install
+- **工作流管理**：创建、更新、校验、删除、触发执行。
+- **运行管理**：提交运行、查询详情、事件回放、暂停/恢复/取消、删除历史。
+- **插件能力**：查看插件元数据、导出插件配置 schema、插件 dry-run（SSE 流式返回日志）。
+- **实时通道**：
+  - `runs` WebSocket：订阅单个 run 的事件流。
+  - `test-devops` WebSocket：直接通过消息执行 workflow 并自动订阅结果。
+- **观测能力**：健康检查、运行统计、资源队列状态。
+
+### 当前实现特性（重要）
+
+- **存储层为内存实现**（非持久化）：
+  - workflow 使用 `InMemoryWorkflowRepository`
+  - run 使用 `InMemoryRunRepository`
+- 服务重启后，内存数据会丢失。
+- 默认内置一个初始 workflow（`new-workflow`），便于快速联调。
+
+---
+
+## 2. 项目结构（apps/server）
+
+```txt
+src/
+  engine/          # core-engine 封装与生命周期管理
+  workflows/       # 工作流 CRUD + 触发运行
+  runs/            # 运行状态机、事件流、WebSocket
+  plugins/         # 插件信息、配置 schema、dry-run
+  resources/       # 资源与队列状态
+  stats/           # 聚合统计
+  health/          # 健康检查
+  test-devops/     # DevOps 联调入口（HTTP + WS）
+  common/          # 通用校验、序列化、异常过滤器
 ```
 
-## Compile and run the project
+---
+
+## 3. 前置要求
+
+- Node.js `>= 20`
+- pnpm（仓库根目录 `packageManager` 当前为 `pnpm@10.18.2`）
+
+在仓库根目录安装依赖：
 
 ```bash
-# development
-$ pnpm run start
-
-# watch mode
-$ pnpm run start:dev
-
-# production mode
-$ pnpm run start:prod
+pnpm install
 ```
 
-## Run tests
+---
+
+## 4. 环境变量
+
+服务会按顺序加载 `.env.local`、`.env`（若环境变量已存在则不覆盖）。
+
+> `GLOBAL_API_PREFIX` 是**必填项**，未配置会在启动时直接退出。
+
+| 变量名 | 是否必填 | 默认值 | 说明 |
+| --- | --- | --- | --- |
+| `GLOBAL_API_PREFIX` | 是 | 无 | 全局 API 前缀，例如 `api`。影响 HTTP、WS 路径。 |
+| `PORT` | 否 | `3000` | HTTP 服务端口。 |
+| `MAX_PARALLEL_STEPS` | 否 | `2` | 引擎内单个 workflow 的默认并行步数上限。 |
+| `RESOURCE_POOL_SIZE` | 否 | `5` | 引擎默认资源池容量。 |
+| `MAX_ACTIVE_RUNS` | 否 | `50` | 活跃 run 上限（超过返回 429）。 |
+| `RUN_HISTORY_LIMIT` | 否 | `500` | Run 事件历史与内存回收相关上限。 |
+
+示例（`apps/server/.env.local`）：
+
+```env
+GLOBAL_API_PREFIX=api
+PORT=3000
+MAX_PARALLEL_STEPS=2
+RESOURCE_POOL_SIZE=5
+MAX_ACTIVE_RUNS=50
+RUN_HISTORY_LIMIT=500
+```
+
+---
+
+## 5. 启动与构建
+
+建议在仓库根目录执行（Turbo 会按 workspace 过滤）：
 
 ```bash
-# unit tests
-$ pnpm run test
-
-# e2e tests
-$ pnpm run test:e2e
-
-# test coverage
-$ pnpm run test:cov
+# 仅启动 server（开发模式）
+pnpm dev:server
 ```
 
-## Deployment
-
-When you're ready to deploy your NestJS application to production, there are some key steps you can take to ensure it runs as efficiently as possible. Check out the [deployment documentation](https://docs.nestjs.com/deployment) for more information.
-
-If you are looking for a cloud-based platform to deploy your NestJS application, check out [Mau](https://mau.nestjs.com), our official platform for deploying NestJS applications on AWS. Mau makes deployment straightforward and fast, requiring just a few simple steps:
+也可在 `apps/server` 目录直接执行：
 
 ```bash
-$ pnpm install -g @nestjs/mau
-$ mau deploy
+# 开发热更新
+pnpm dev
+
+# 生产编译
+pnpm build
+
+# 生产启动
+pnpm start:prod
 ```
 
-With Mau, you can deploy your application in just a few clicks, allowing you to focus on building features rather than managing infrastructure.
+---
 
-## Resources
+## 6. 插件注册机制
 
-Check out a few resources that may come in handy when working with NestJS:
+- `src/plugins/plugin-registry.ts` 为**自动生成文件**，由根脚本同步：
+  - 根目录执行：`pnpm sync:plugins`
+- `apps/server/package.json` 中 `prebuild` 会自动触发同步脚本。
+- 当前 `plugins.config.json` 中启用：
+  - `test-plugin`
+  - `model-call-plugin`
 
-- Visit the [NestJS Documentation](https://docs.nestjs.com) to learn more about the framework.
-- For questions and support, please visit our [Discord channel](https://discord.gg/G7Qnnhy).
-- To dive deeper and get more hands-on experience, check out our official video [courses](https://courses.nestjs.com/).
-- Deploy your application to AWS with the help of [NestJS Mau](https://mau.nestjs.com) in just a few clicks.
-- Visualize your application graph and interact with the NestJS application in real-time using [NestJS Devtools](https://devtools.nestjs.com).
-- Need help with your project (part-time to full-time)? Check out our official [enterprise support](https://enterprise.nestjs.com).
-- To stay in the loop and get updates, follow us on [X](https://x.com/nestframework) and [LinkedIn](https://linkedin.com/company/nestjs).
-- Looking for a job, or have a job to offer? Check out our official [Jobs board](https://jobs.nestjs.com).
+如新增/删除插件，请先更新插件配置并执行同步，再启动服务。
 
-## Support
+---
 
-Nest is an MIT-licensed open source project. It can grow thanks to the sponsors and support by the amazing backers. If you'd like to join them, please [read more here](https://docs.nestjs.com/support).
+## 7. API 一览
 
-## Stay in touch
+以下示例默认：
 
-- Author - [Kamil Myśliwiec](https://twitter.com/kammysliwiec)
-- Website - [https://nestjs.com](https://nestjs.com/)
-- Twitter - [@nestframework](https://twitter.com/nestframework)
+- `GLOBAL_API_PREFIX=api`
+- 服务地址为 `http://localhost:3000`
 
-## License
+即基础前缀为：`/api`
 
-Nest is [MIT licensed](https://github.com/nestjs/nest/blob/master/LICENSE).
+### 7.1 健康与基础
+
+- `GET /api/healthz`：健康检查（包含 `engineReady`）
+- `GET /api/`：基础探活（返回 `Hello World!`）
+
+### 7.2 Workflows
+
+- `GET /api/workflows?search=&page=1&pageSize=20`
+- `POST /api/workflows`
+- `POST /api/workflows/validate`
+- `GET /api/workflows/:id`
+- `PUT /api/workflows/:id`
+- `DELETE /api/workflows/:id`
+- `POST /api/workflows/:id/run`（触发运行）
+
+创建 workflow 示例：
+
+```bash
+curl -X POST "http://localhost:3000/api/workflows" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "id": "demo-workflow",
+    "name": "Demo Workflow",
+    "steps": [
+      {
+        "id": "step-1",
+        "name": "Run Unit Test",
+        "plugin": "test-plugin",
+        "config": { "type": "unit" }
+      }
+    ]
+  }'
+```
+
+### 7.3 Runs
+
+- `GET /api/runs?status=&workflowId=&search=&page=1&pageSize=20`
+- `POST /api/runs`（内联 workflow 提交）
+- `GET /api/runs/:runId`
+- `GET /api/runs/:runId/events`
+- `POST /api/runs/:runId/cancel`（`{ "mode": "best-effort" | "hard" }`）
+- `POST /api/runs/:runId/pause`（`{ "waitInFlight": true, "abortInFlight": false }`）
+- `POST /api/runs/:runId/resume`
+- `DELETE /api/runs/:runId`（仅允许删除终态 run）
+
+内联提交 run 示例：
+
+```bash
+curl -X POST "http://localhost:3000/api/runs" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "workflow": {
+      "id": "inline-workflow",
+      "name": "Inline Workflow",
+      "steps": [
+        {
+          "id": "inline-step",
+          "name": "Inline Step",
+          "plugin": "test-plugin",
+          "config": { "type": "integration" }
+        }
+      ]
+    },
+    "priority": 1,
+    "traceId": "trace-demo-001"
+  }'
+```
+
+### 7.4 Plugins
+
+- `GET /api/plugins`
+- `GET /api/plugins/config-schemas`
+- `GET /api/plugins/:name/config-schema`
+- `GET /api/plugins/:name`
+- `POST /api/plugins/:name/dry-run`（SSE）
+
+插件 dry-run（SSE）示例：
+
+```bash
+curl -N -X POST "http://localhost:3000/api/plugins/test-plugin/dry-run" \
+  -H "Content-Type: application/json" \
+  -d '{ "config": { "type": "unit" } }'
+```
+
+SSE 事件数据类型：
+
+- `log`：插件日志事件
+- `done`：执行完成结果
+- `error`：执行失败信息
+
+### 7.5 Resources / Stats / Test-DevOps
+
+- `GET /api/resources`：资源列表
+- `GET /api/resources/queue`：资源等待队列
+- `GET /api/stats/overview`：聚合统计（活跃/完成/失败/successRate/pluginCount/queue）
+- `GET /api/test-devops`：运行集成测试 workflow（HTTP 触发）
+
+---
+
+## 8. WebSocket 协议
+
+### 8.1 Runs WS
+
+- 路径：`ws://localhost:3000/api/runs/ws`
+
+客户端可发送：
+
+- `{"type":"subscribe","runId":"<run-id>"}`
+- `{"type":"unsubscribe","runId":"<run-id>"}`
+- `{"type":"run","workflow":{...}}`
+
+服务端消息：
+
+- `event`：`{ type, runId, event }`
+- `done`：`{ type, runId, result }`
+- `error`：`{ type, runId?, message }`
+
+### 8.2 Test-DevOps WS
+
+- 路径：`ws://localhost:3000/api/test-devops/ws`
+- 客户端发送：`{"type":"run","workflow":{...}}`
+- 服务端回放/推送 run 事件与完成结果（同 `runs` 流格式）
+
+---
+
+## 9. 错误处理约定
+
+全局使用 `AllExceptionsFilter` 统一错误返回格式：
+
+```json
+{
+  "statusCode": 400,
+  "message": "错误描述",
+  "error": "ErrorName",
+  "code": "OPTIONAL_CODE",
+  "details": {}
+}
+```
+
+典型场景：
+
+- Workflow 校验失败：`400` + `WORKFLOW_VALIDATION_ERROR`
+- 活跃 run 达上限：`429` + `MAX_ACTIVE_RUNS_EXCEEDED`
+- 资源不存在：`404`
+- 状态冲突（如非运行态暂停）：`409`
+
+---
+
+## 10. 测试命令
+
+在 `apps/server` 目录：
+
+```bash
+# 单测
+pnpm test
+
+# e2e
+pnpm test:e2e
+
+# 覆盖率
+pnpm test:cov
+
+# 插件测试
+pnpm test:plugins
+```
+
+---
+
+## 11. 已知限制与后续建议
+
+- 当前仓储层为内存实现，不适合生产数据保留场景。
+- 可优先将 `WorkflowRepository` / `RunRepository` 抽象对接持久化存储（如 PostgreSQL / Redis）。
+- 若接入生产环境，建议补充：
+  - 鉴权与权限控制
+  - API 限流策略
+  - 可观测性（日志、指标、链路追踪）
