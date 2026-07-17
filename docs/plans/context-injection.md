@@ -7,8 +7,8 @@
 
 - 内核说明：[packages/core-engine/README.md](../../packages/core-engine/README.md)
 - 已知问题归档：[core-engine.md](./core-engine.md)
-- 服务侧设计：[server-api.md](../../apps/server/README.md)
-- 前端设计：[web-ui.md](../../apps/server/README.md)
+- 服务侧设计：[server.md](../../apps/server/README.md)
+- 前端设计：[web.md](../../apps/server/README.md)
 - SDK 说明：[packages/plugin-sdk/README.md](../../packages/plugin-sdk/README.md)
 
 ---
@@ -343,49 +343,57 @@ export function getAncestorIds(
 
 ## 6. 分层改动清单（汇总）
 
+> 状态说明：`[x]` 已落地 · `[ ]` 未做 / 文档或测试仍缺 · `(extra)` 原清单外、实现中补上的项
+
 ### 6.1 `packages/plugin-sdk`
 
-- [ ] `base/index.ts`：`PluginDefinition` / 两个 `CreatePluginOptions*` 新增 `resultSchema?: z.ZodType`
-- [ ] `README.md`：补充 `resultSchema` 说明与示例
-- [ ] `__tests__/create-plugin.test.ts`：补充 `resultSchema` 透传的用例
+- [x] `base/index.ts`：`PluginDefinition` / 两个 `CreatePluginOptions*` 新增 `resultSchema?: z.ZodType`
+- [x] `README.md`：补充 `resultSchema` 说明与示例
+- [x] `__tests__/create-plugin.test.ts`：补充 `resultSchema` 透传的用例
+- [x] `(extra)` `scripts/create-plugin.mjs` 模板补充 `resultSchema` + `data` 返回示例
 
 ### 6.2 `packages/core-engine`
 
-- [ ] `errors.ts`：新增 `StepFailureKinds.CONFIG_RESOLUTION`
-- [ ] `context-keys.ts`：新增 `WorkflowContextKeys.previousResultsData`
-- [ ] `executor/types.ts`：`ExecutionContext` 新增 `previousResultsData?`；`ExecutorOptions` 新增 `resolvePluginResultSchema?`
-- [ ] `executor/index.ts`：
-  - [ ] 新增 `toPreviousResultsData(results)`，在 `runStep` 内与 `previousResults` 一起注入
-  - [ ] 新增引用解析模块（建议拆文件 `executor/context-reference.ts`）：`isContextRef` 结构判定、`extractContextReferences`、按 `path: string[]` 逐段取值、`resolveConfigReferences`
-  - [ ] `executeStep` 中调用 `resolveConfigReferences`，失败转 `StepExecutionError(CONFIG_RESOLUTION)`
-  - [ ] 新增 `validateWorkflowContextReferences`（校验祖先可达性 + `resultSchema` 声明），在 `executeWorkflow` 内 `validateDag` 之后调用；同时作为导出 API
-- [ ] `engine/index.ts`：`createWorkflowExecutor` 调用处新增 `resolvePluginResultSchema: (name) => plugins.getPlugin(name)?.resultSchema`
-- [ ] `index.ts`：导出新增的类型/函数（`validateWorkflowContextReferences`、`ContextReference` 等）
-- [ ] `README.md`：
-  - [ ] `ExecutionContext` 字段表新增 `previousResultsData`
-  - [ ] 错误模型表新增 `CONFIG_RESOLUTION`
-  - [ ] 新增一节说明「上下文引用语法与解析规则」
-- [ ] 测试：新增 `__tests__/context-reference.test.ts`（见 §7）
+- [x] `errors.ts`：新增 `StepFailureKinds.CONFIG_RESOLUTION`
+- [x] `context-keys.ts`：新增 `WorkflowContextKeys.previousResultsData`
+- [x] `executor/types.ts`：`ExecutionContext` 新增 `previousResultsData?`；`ExecutorOptions` 新增 `resolvePluginResultSchema?`
+- [x] `executor/index.ts`：
+  - [x] 新增 `toPreviousResultsData(results)`，在 `runStep` 内与 `previousResults` 一起注入
+  - [x] 新增引用解析模块 `executor/context-reference.ts`：`isContextRef`、`extractContextReferences`、路径取值、`resolveConfigReferences`
+  - [x] `executeStep` 中调用 `resolveConfigReferences`，失败转 `StepExecutionError(CONFIG_RESOLUTION)`
+  - [x] 新增 `validateWorkflowContextReferences`（祖先可达性 + `resultSchema` 声明），在 `executeWorkflow` 内 `validateDag` 之后调用；同时作为导出 API
+- [x] `engine/index.ts`：接线 `resolvePluginResultSchema: (name) => plugins.getPlugin(name)?.resultSchema`
+- [x] 导出：`ContextRef`、`ValidateWorkflowContextReferencesOptions`、`validateWorkflowContextReferences`、`isContextRef`、`extractContextReferences`、`getAncestorIds`、`resolveConfigReferences`、`toPreviousResultsData` 等
+- [x] `README.md`：
+  - [x] `ExecutionContext` 字段表新增 `previousResultsData`
+  - [x] 错误模型表新增 `CONFIG_RESOLUTION`
+  - [x] 新增一节说明「上下文引用语法与解析规则」
+- [x] 测试：新增 `__tests__/context-reference.test.ts`（见 §7，核心路径已覆盖）
 
 ### 6.3 `apps/server`
 
-- [ ] `src/plugins/plugin-result-schema.ts`（新增，镜像 `plugin-config-schema.ts`）
-- [ ] `src/engine/engine.service.ts`：`getPluginResultJsonSchema` / `getAllPluginResultJsonSchemas` / `resolvePluginResultSchema` / `getPlugins/getPlugin` 补 `hasResultSchema`
-- [ ] `src/plugins/plugins.service.ts`：`listResultSchemas` / `getResultSchema`
-- [ ] `src/plugins/plugins.controller.ts`：新增两个路由
-- [ ] `src/common/validation/validate-workflow.ts`：调用核心 `validateWorkflowContextReferences`（通过 `EngineService` 注入 `resolvePluginResultSchema`）—— **注意其调用方需要能拿到 EngineService 实例**，若当前 `validateWorkflowDefinition` 是纯函数被多处直接 `import` 调用，需要评估改造为接收回调参数或迁移到一个可注入 EngineService 的 service 方法
-- [ ] `apps/server/__tests__/plugin-config-schema.test.ts` 同款新增 `plugin-result-schema.spec.ts`
-- [ ] `plugins/test-plugin`、`plugins/model-call-plugin` 补充 `resultSchema`（否则示例插件在编辑器里选不到可注入来源，功能演示会显得「装了但用不了」）
+- [x] `src/plugins/plugin-result-schema.ts`（新增，镜像 `plugin-config-schema.ts`）
+- [x] `src/engine/engine.service.ts`：`getPluginResultJsonSchema` / `getAllPluginResultJsonSchemas` / `resolvePluginResultSchema` / `getPlugins/getPlugin` 补 `hasResultSchema`
+- [x] `src/plugins/plugins.service.ts`：`listResultSchemas` / `getResultSchema`；dry-run 遇 `$ref` 提前 400
+- [x] `src/plugins/plugins.controller.ts`：`GET /plugins/result-schemas`、`GET /plugins/:name/result-schema`
+- [x] `src/common/validation/validate-workflow.ts`：可选回调 `resolvePluginResultSchema`；`EngineService.validateWorkflow` / `RunManager.submitRun` 经 EngineService 注入
+- [x] `plugin-result-schema.spec.ts` / `plugins.service.spec.ts` / `normalize-workflow-ids.spec.ts`（Jest ESM 已修，可稳定跑通）
+- [x] `plugins/test-plugin`、`plugins/model-call-plugin` 补充 `resultSchema`（并返回对应 `data`）
+- [x] `(extra)` `normalize-workflow-ids.ts`：ID 规范化时同步 remap config 内 `$ref.fromStepId`（与 `dependsOn` 同一 `refMap`）
+- [x] `(extra)` `RunManager.submitRun`：对草稿中已有 `step.id` 传入 `knownStepIds`，避免每次 Run 无谓轮换步骤 ID
+- [x] `validateWorkflowDefinition` 引用校验分支的**独立单测**（`validate-workflow.spec.ts`）
+- [x] server README：补充 result-schema 两个端点、`hasResultSchema`、dry-run 拒 `$ref`
 
 ### 6.4 `apps/web`
 
-- [ ] `shared/types/index.ts`：`PluginResultSchemaResponse`、`PluginInfo.hasResultSchema`
-- [ ] `shared/api/misc.ts`：`pluginsApi.listResultSchemas()`
-- [ ] `shared/ui/json-schema-form/`：新增「手填 / 引用上游」字段级切换 + 上游字段树选择器
-- [ ] `features/editor/dag-utils.ts`：`getAncestorIds`
-- [ ] `features/editor/step-config-validation.ts` + `shared/ui/json-schema-form/schema-utils.ts`：`ContextRef` 字段识别、跳过类型校验
-- [ ] `features/editor/WorkflowEditorPage.tsx`：`assertWorkflowReady` 追加引用合法性检查
-- [ ] `features/run-detail/RunDetailPage.tsx`：`failureKind === 'config_resolution'` 的展示文案
+- [x] `shared/types/index.ts`：`PluginResultSchemaResponse`、`PluginInfo.hasResultSchema`；`failureKind` 含 `config_resolution`
+- [x] `shared/api/misc.ts`：`pluginsApi.listResultSchemas()`
+- [x] `shared/ui/json-schema-form/`：「手填 / 引用上游」字段级切换 + 上游步骤/字段路径下拉（`context-ref.ts` + `JsonSchemaForm`）
+- [x] `features/editor/dag-utils.ts`：`getAncestorIds`（含单测）
+- [x] `schema-utils` / `step-config-validation`：`ContextRef` 识别、跳过类型校验、仍计入已填、`coerce` 原样保留（含单测）
+- [x] `features/editor/WorkflowEditorPage.tsx`：加载 result schemas；计算可引用祖先；`assertWorkflowReady` 追加引用合法性检查
+- [x] `features/run-detail/RunDetailPage.tsx`：`config_resolution` →「配置引用解析失败」文案
+- [x] web README：补充「配置引用上游」编排说明
 
 ---
 
@@ -393,36 +401,34 @@ export function getAncestorIds(
 
 ### `packages/core-engine`
 
-- [ ] `toPreviousResultsData`：`COMPLETED+success` 写入 data；`SKIPPED`/`FAILED`/`success:false` 不写入；`data === undefined` 不写入
-- [ ] `isContextRef` 结构判定：正例/反例（缺 `fromStepId`、`path` 非字符串数组、误把普通对象当 `$ref` 等）
-- [ ] 整字段替换：类型保留（注入结果可以是 object/array/number/boolean/null/string）
-- [ ] 路径穿透：对象属性（含特殊字符的 key，如空格/中文/`.`）、数组下标（字符串数字段自动转 index）、对象与数组混合下钻（多级路径）
-- [ ] `path: []`：引用整个 `data`
-- [ ] 嵌套 `ContextRef`：config 中对象/数组任意深度嵌套的 `$ref` 均能被递归替换
-- [ ] 解析失败：`fromStepId` 缺失（上游被跳过/失败/未执行）→ `FAILED / CONFIG_RESOLUTION`
-- [ ] 解析失败：path 不存在 → `FAILED / CONFIG_RESOLUTION`
-- [ ] `null` 值不是失败（能正确取到 `null` 并继续）
-- [ ] `validateWorkflowContextReferences`：
-  - [ ] 引用非祖先节点（兄弟/下游/自身）→ `WorkflowValidationError`
-  - [ ] 引用不存在的 `fromStepId` → `WorkflowValidationError`
-  - [ ] 引用未声明 `resultSchema` 的插件对应步骤 → `WorkflowValidationError`
-  - [ ] 合法引用 → 不抛错
-- [ ] `executeStep` 独立调用（dry-run 场景）：含引用但无 `previousResultsData` → 解析失败
+- [x] `toPreviousResultsData`：`COMPLETED+success` 写入 data；`SKIPPED`/`FAILED`/`success:false` 不写入；`data === undefined` 不写入
+- [x] `isContextRef` 结构判定：正例/反例
+- [x] 整字段替换：类型保留
+- [x] 路径穿透：特殊字符 key、数组下标、混合下钻
+- [x] `path: []`：引用整个 `data`
+- [x] 嵌套 `ContextRef`：任意深度递归替换（由 `extract`/`resolve` 用例覆盖）
+- [x] 解析失败：`fromStepId` 缺失 → `FAILED / CONFIG_RESOLUTION`
+- [x] 解析失败：path 不存在 → `FAILED / CONFIG_RESOLUTION`
+- [x] `null` 值不是失败
+- [x] `validateWorkflowContextReferences`：非祖先 / 不存在 / 无 resultSchema / 合法引用
+- [x] `executeStep` 独立调用（dry-run 风格）：含引用但无 `previousResultsData` → 解析失败
+- [x] `(extra)` 完整工作流注入：上游 data 出现在下游 pluginExecutor 收到的 config
 
 ### `packages/plugin-sdk`
 
-- [ ] `createPlugin` 透传 `resultSchema` 到 `PluginDefinition`（带/不带 `configSchema` 两种重载）
+- [x] `createPlugin` 透传 `resultSchema`（带/不带 `configSchema`）
 
 ### `apps/server`
 
-- [ ] `toPluginResultJsonSchema` 单测（镜像现有 `plugin-config-schema.spec.ts`）
-- [ ] `validateWorkflowDefinition` 新增引用校验分支的单测
-- [ ] `PluginsController`/`PluginsService` 新增端点的单测
+- [x] `toPluginResultJsonSchema` 单测（Jest ESM 已修，可跑通）
+- [x] `validateWorkflowDefinition` 引用校验分支单测（`validate-workflow.spec.ts`）
+- [x] `PluginsService` result-schema / dry-run `$ref` 用例（`plugins.service.spec.ts`）
+- [x] `(extra)` `normalize-workflow-ids.spec.ts`：补充 ContextRef remap 用例
 
 ### `apps/web`
 
-- [ ] `dag-utils.getAncestorIds` 单测
-- [ ] `step-config-validation`：`ContextRef` 字段跳过类型校验、仍计入「已填」
+- [x] `dag-utils.getAncestorIds` 单测
+- [x] `step-config-validation` / `schema-utils`：`ContextRef` 跳过类型校验、仍计入「已填」
 
 ---
 
@@ -438,6 +444,15 @@ export function getAncestorIds(
 ---
 
 ## 9. 分阶段实施顺序
+
+```
+阶段 1 · core-engine 内核能力     ✅ 已完成（单测通过；README 已补）
+阶段 2 · plugin-sdk + 示例插件   ✅ 已完成（含 README）
+阶段 3 · server 暴露能力         ✅ 已完成（Jest ESM 已修；result-schema / dry-run / 文档已齐）
+阶段 4 · web 编排体验             ✅ MVP 已完成（复杂 JSON Schema 字段树仍为降级策略；README 已补）
+```
+
+原阶段明细（归档，便于对照）：
 
 ```
 阶段 1 · core-engine 内核能力（可独立发布验证）
@@ -474,8 +489,48 @@ export function getAncestorIds(
 
 ## 10. 遗留的不确定点（实现中需要留意，非阻塞性）
 
-以下是设计推演中发现的细节问题，倾向性建议已给出，但由于影响面较小、可以在实现阶段随时调整，未逐一发起确认；如实现时发现与预期不符，请再次确认：
+以下是设计推演中发现的细节问题；实现后状态已更新：
 
-1. **`apps/server` 的 `validateWorkflowDefinition` 从纯函数改为需要 `resolvePluginResultSchema` 回调**，会改变它当前「零依赖纯函数」的调用方式，需要梳理所有调用点（`workflows.service.ts` 等）如何拿到 `EngineService` 实例或回调。
-2. **前端「引用上游字段」选择器的具体交互形式**（Popover / 侧边栏 / 下拉级联）未做 UI 细节设计，实现时按现有设计系统（`shared/ui`）风格自行决定。
-3. **`resultSchema` 的 JSON Schema 转换对 `z.union` / `z.discriminatedUnion` 等复杂 Zod 结构的字段树展示**，`zod-to-json-schema` 会产出 `oneOf`/`anyOf`，前端字段树选择器如何呈现暂未设计，可先只良好支持 `z.object` / `z.array` / 基础类型，复杂类型降级为「不可展开，仅整体引用」。
+1. ~~**`validateWorkflowDefinition` 从纯函数改为需要 `resolvePluginResultSchema` 回调**~~ → **已解决**：改为可选 `options`；`EngineService.validateWorkflow` 注入回调；`RunManager` 改走 EngineService，不再直接裸调。
+2. ~~**前端「引用上游字段」选择器交互形式**~~ → **已落地为 MVP**：字段级「手填 / 引用上游」切换 + 两级 Select（上游步骤 → 结果路径）；未做 Popover/侧边栏。
+3. **`resultSchema` 复杂 Zod（`oneOf`/`anyOf`）字段树** → **仍按降级**：仅良好支持 object/array/基础类型；复杂联合类型只提供「整个节点」引用，未单独做 UI。仍属可接受的 MVP 边界。
+
+---
+
+## 11. 实现后补充：缺失 / 待办 / 已知问题
+
+> 本节记录落地后相对原计划的偏差、额外修复与仍未关闭的事项，便于后续迭代。
+
+### 11.1 原计划外但已补上的修复
+
+| 项 | 说明 |
+| --- | --- |
+| `normalizeWorkflowIds` remap `$ref` | 规范化步骤 ID 时，原先只改写 `dependsOn`。若不改写 config 内 `$ref.fromStepId`，保存/Run 后会出现「步骤 ID 已换新、引用仍指向旧 ID」的校验失败。已在 `refMap` 上同步 remap。 |
+| `submitRun` 保留已知 `step.id` | Run 提交时传入 `knownStepIds`，避免每次运行都轮换步骤 UUID（与引用稳定性相关）。 |
+
+### 11.2 仍缺失或待补充
+
+> 收尾批次（文档 / Jest ESM / dry-run 友好报错 / validate 专项单测）已完成。当前清单无阻塞项。
+
+| 优先级 | 项 | 说明 |
+| --- | --- | --- |
+| — | （无） | §11.3 步骤身份体验仍为可选后续，暂不改代码 |
+
+### 11.3 已知产品/体验问题（暂不改代码，已讨论）
+
+**新建工作流编排期的步骤身份（`clientRef` vs `stepId`）**
+
+- 现象：新建节点只有前端 `clientRef`（`crypto.randomUUID()`），`data.stepId` 要等保存后由后端规范化并回写。
+- 设计实情：编辑器引用用 `resolveNodeRef = stepId ?? clientRef`，**未保存时本可用 `clientRef` 作为 `$ref.fromStepId`**；保存时靠 `normalizeWorkflowIds` 的 remap 换成最终 UUID。
+- 用户感知：容易理解为「没有后端 id 就不能引用」；若未连依赖边或 `resultSchema` 未加载，上游列表为空，也会表现为「没法引用」。
+- 可选后续方案（未实施）：
+  - **A**：维持 clientRef 临时身份 + 依赖 remap（现状）；加强空上游文案（未连线 / 无 resultSchema）。
+  - **B（更清晰）**：`addStep` 时预分配 UUID 同时写入 `clientRef` 与 `stepId`，create/update/run 一律 `knownStepIds` 保留，编辑期与落库同一套 id。
+  - **C**：引用永久绑 `clientRef` 并持久化 —— 改动面大，不推荐。
+
+### 11.4 MVP 能力边界（与 §8 呼应，实现现状）
+
+- 不做 `resultSchema` ↔ 实际 `data` 运行时一致性校验；声明不准只会在运行时 `CONFIG_RESOLUTION` 暴露。
+- 不做保存期对 `path` 是否落在 `resultSchema` 内的静态深校验。
+- 不做字符串模板/混合插值。
+- 前端字段树对 `oneOf`/`anyOf` 仅整体引用，不展开联合分支。
