@@ -3,7 +3,7 @@
  * @module executor/types
  */
 
-import type { PluginConfig, PluginContext, PluginResult } from '@monai-devops/plugin-sdk';
+import type { PluginConfig, PluginContext, PluginResult, ZodType } from '@monai-devops/plugin-sdk';
 import type { SkipReason, StepFailureKind, StepStatus } from '../errors.js';
 import type { WorkflowObserver, WorkflowRunMeta } from '../observer/index.js';
 
@@ -46,6 +46,8 @@ export interface ExecutionContext extends PluginContext {
   workflowId: string;
   stepId: string;
   previousResults?: Record<string, unknown>;
+  /** 仅 COMPLETED 且 pluginResult.success 的 data（供 config $ref 解析） */
+  previousResultsData?: Record<string, unknown>;
   artifacts?: Record<string, unknown>;
   /** run 级默认调度优先级，步骤 priority 可覆盖 */
   priority?: number;
@@ -161,4 +163,6 @@ export interface ExecutorOptions {
   onStepError?: (step: WorkflowStep, error: Error, context: ExecutionContext) => void;
   /** failFast 中止时取消同 workflowRunId 下排队中的资源等待 */
   onWorkflowAbort?: (workflowRunId: string) => void;
+  /** 查询插件 resultSchema；用于启动前校验 ContextRef 来源是否允许被引用 */
+  resolvePluginResultSchema?: (pluginName: string) => ZodType | undefined;
 }

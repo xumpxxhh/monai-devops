@@ -9,6 +9,7 @@ export const WorkflowContextKeys = {
   workflowId: 'workflowId',
   stepId: 'stepId',
   previousResults: 'previousResults',
+  previousResultsData: 'previousResultsData',
   artifacts: 'artifacts',
   runId: 'runId',
   traceId: 'traceId',

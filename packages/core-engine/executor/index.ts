@@ -41,6 +41,7 @@ import {
 } from './helpers.js';
 import { RunHandle } from './run-handle.js';
 import { RunRegistry } from './run-registry.js';
+import { resolveConfigReferences, validateWorkflowContextReferences } from './context-reference.js';
 import type {
   AbortSchedulingReason,
   CancelRunOptions,
@@ -77,6 +78,16 @@ export type {
   WorkflowRunStatus,
   WorkflowStep,
 } from './types.js';
+
+export type { ContextRef, ValidateWorkflowContextReferencesOptions } from './context-reference.js';
+export {
+  extractContextReferences,
+  getAncestorIds,
+  getValueByPath,
+  isContextRef,
+  resolveConfigReferences,
+  validateWorkflowContextReferences,
+} from './context-reference.js';
 
 export type { WorkflowLifecycleEvent, WorkflowRunMeta };
 
@@ -248,6 +259,26 @@ function toPreviousResults(results: Map<string, ExecutionResult>): Record<string
   return acc;
 }
 
+/**
+ * 仅收录 COMPLETED 且 pluginResult.success 的 data，供 config $ref 解析。
+ * SKIPPED / FAILED / data === undefined 均不写入（用 key 是否存在表达可注入性）。
+ */
+export function toPreviousResultsData(
+  results: Map<string, ExecutionResult>,
+): Record<string, unknown> {
+  const acc: Record<string, unknown> = {};
+  for (const [stepId, r] of results) {
+    if (
+      r.status === StepStatuses.COMPLETED &&
+      r.pluginResult?.success === true &&
+      r.pluginResult.data !== undefined
+    ) {
+      acc[stepId] = r.pluginResult.data;
+    }
+  }
+  return acc;
+}
+
 /** 剥离调用方传入的 runId，避免覆盖内核注入的 workflowRunId */
 function stripCallerRunId(context: Partial<ExecutionContext>): Partial<ExecutionContext> {
   const { runId, ...rest } = context;
@@ -401,6 +432,7 @@ export function createWorkflowExecutor(options: ExecutorOptions = {}) {
     onStepError,
     onWorkflowAbort,
     inFlightTimeoutMs = 30_000,
+    resolvePluginResultSchema,
   } = options;
 
   const executionHistory: Map<string, ExecutionResult[]> = new Map();
@@ -543,8 +575,14 @@ export function createWorkflowExecutor(options: ExecutorOptions = {}) {
           return executionResult;
         }
 
+        const resolvedConfig = resolveConfigReferences(
+          step.config,
+          context.previousResultsData ?? {},
+          step.id,
+        ) as typeof step.config;
+
         const raced = await racePluginWithInFlightAbort(
-          () => pluginExecutor(step.plugin, step.config, pluginContext),
+          () => pluginExecutor(step.plugin, resolvedConfig, pluginContext),
           signal,
           () => handle?.isInFlightAbortActive() ?? false,
           inFlightTimeoutMs,
@@ -738,6 +776,7 @@ export function createWorkflowExecutor(options: ExecutorOptions = {}) {
 
     try {
       const graph = validateDag(workflow.steps);
+      validateWorkflowContextReferences(workflow, { resolvePluginResultSchema });
       const cleanContext = stripCallerRunId(context);
       const runMeta = buildRunMeta(workflow.id, cleanContext);
       handle.setRunMeta(runMeta);
@@ -778,6 +817,7 @@ export function createWorkflowExecutor(options: ExecutorOptions = {}) {
             workflowId: workflow.id,
             stepId: step.id,
             previousResults: toPreviousResults(results),
+            previousResultsData: toPreviousResultsData(results),
           };
 
           const result = await executeStep(

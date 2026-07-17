@@ -130,6 +130,7 @@ export function createEngine(options: EngineOptions = {}) {
     inFlightTimeoutMs: options.inFlightTimeoutMs,
     observer: options.observer,
     pluginExecutor: (name, config, ctx) => plugins.executePlugin(name, config, ctx),
+    resolvePluginResultSchema: (name) => plugins.getPlugin(name)?.resultSchema,
     // 资源钩子：在 step:start 之前挂起等待槽位（可能触发 step:queued）
     onStepStart: async (step, context, meta) => {
       const resourceType = getResourceType(step);

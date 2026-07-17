@@ -15,6 +15,7 @@ export const StepFailureKinds = {
   PLUGIN: 'plugin',
   RESOURCE: 'resource',
   INTERNAL: 'internal',
+  CONFIG_RESOLUTION: 'config_resolution',
 } as const;
 
 export type StepFailureKind = (typeof StepFailureKinds)[keyof typeof StepFailureKinds];

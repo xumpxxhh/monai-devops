@@ -53,7 +53,7 @@ flowchart TB
 | `ExecutionContext`                         | core-engine | 编排器注入的上下文（含 workflow / step / 前序结果等）                    |
 | `WorkflowContextKeys`                      | core-engine | 注入字段名常量，供 `getContext` 读取                                     |
 | `StepStatus` / `StepStatuses`              | core-engine | 步骤状态：`completed` / `skipped` / `failed`                             |
-| `StepFailureKind` / `StepFailureKinds`     | core-engine | 失败分类：`plugin` / `resource` / `internal`                             |
+| `StepFailureKind` / `StepFailureKinds`     | core-engine | 失败分类：`plugin` / `resource` / `internal` / `config_resolution`       |
 | `SkipReason` / `SkipReasons`               | core-engine | 跳过原因（见错误模型）                                                   |
 
 依赖方向：**core-engine → plugin-sdk**。插件实现只需依赖 SDK；若需读取编排字段，使用 `getContext(ctx, WorkflowContextKeys.xxx)`，字段由 executor 在运行时写入。
@@ -66,7 +66,8 @@ flowchart TB
 | ---- | ----------------------------- | ---- |
 | `workflowId` | `workflowId` | 当前工作流 ID |
 | `stepId` | `stepId` | 当前步骤 ID |
-| `previousResults` | `previousResults` | 前序非 FAILED 步骤的 `result` map |
+| `previousResults` | `previousResults` | 前序非 FAILED 步骤的 `result` map（供 `StepCondition` 求值） |
+| `previousResultsData` | `previousResultsData` | 仅 `COMPLETED` 且 `pluginResult.success === true` 的 `data` map，供下游 config `$ref` 解析 |
 | `artifacts` | `artifacts` | 调用方可传入的共享产物 |
 | `priority` | — | run 级调度优先级，步骤 `priority` 可覆盖 |
 | `runId` | `runId` | 单次 run 标识；由 `workflowRunId` 第一参注入，调用方勿通过 context 传入 |
@@ -108,7 +109,7 @@ flowchart TB
 | -------------------- | ----------- | ------------------------------------------------------------------ |
 | `PluginFailureCodes` | plugin-sdk  | `PLUGIN_NOT_FOUND`、`PLUGIN_CONFIG_INVALID`、`PLUGIN_EXECUTION_ERROR`、`PLUGIN_CANCELLED` |
 | `StepStatuses`       | core-engine | `COMPLETED`、`SKIPPED`、`FAILED`                                   |
-| `StepFailureKinds`   | core-engine | `PLUGIN`、`RESOURCE`、`INTERNAL`                                   |
+| `StepFailureKinds`   | core-engine | `PLUGIN`、`RESOURCE`、`INTERNAL`、`CONFIG_RESOLUTION`              |
 | `SkipReasons`        | core-engine | `CONDITION_NOT_MET`、`DEPENDENCY_FAILED`、`WORKFLOW_ABORTED`、`USER_CANCELLED`、`PAUSE_INTERRUPTED` |
 
 **WorkflowValidationError**（启动前抛出）
@@ -116,6 +117,7 @@ flowchart TB
 - 重复的步骤 ID
 - `dependsOn` 引用不存在的步骤
 - 存在循环依赖
+- config 中 `$ref` 非法（步骤不存在、非祖先、来源插件未声明 `resultSchema`）
 
 **ResourceQueueCancelledError**（resource 等待队列内部）
 
@@ -162,7 +164,7 @@ if (step.pluginResult?.code === PluginFailureCodes.PLUGIN_CANCELLED) {
 | -------------- | ------------------------------------------------------------------------------------ |
 | `status`       | `StepStatuses.COMPLETED` \| `SKIPPED` \| `FAILED`                                    |
 | `success`      | 与 status 同步：`status !== StepStatuses.FAILED`                                     |
-| `failureKind`  | 失败时：`StepFailureKinds.PLUGIN` \| `RESOURCE` \| `INTERNAL`                        |
+| `failureKind`  | 失败时：`StepFailureKinds.PLUGIN` \| `RESOURCE` \| `INTERNAL` \| `CONFIG_RESOLUTION` |
 | `skipReason`   | 跳过时：见 `SkipReasons`                                                             |
 | `pluginResult` | 插件返回的原始结果                                                                   |
 | `error`        | 失败时的 Error 对象                                                                  |
@@ -321,7 +323,27 @@ const snap = engine.getRunStatus(workflowRunId);
 | `equals` | 严格相等 `===` |
 | 均未指定 | 值不为 `undefined` / `null` 即通过 |
 
-**previousResults**：仅包含**非 FAILED** 步骤的 `result`；FAILED 步骤不会写入前序结果 map。
+**previousResults**：仅包含**非 FAILED** 步骤的 `result`；FAILED 步骤不会写入前序结果 map。与 `previousResultsData` 职责分离：前者供条件求值，后者专供 config 引用解析。
+
+### 上下文引用（config `$ref`）
+
+下游步骤的 `config` 字段值可以是字面量，也可以整体是一个结构化引用（**不支持**字符串模板/混合插值）：
+
+```ts
+{
+  answer: { $ref: { fromStepId: 'step-a', path: ['answer'] } },
+  firstChoice: { $ref: { fromStepId: 'step-a', path: ['choices', '0', 'content'] } },
+}
+```
+
+| 规则 | 说明 |
+| ---- | ---- |
+| 语法 | `{ $ref: { fromStepId, path: string[] } }`；`path: []` 表示引用整个上游 `data` |
+| 解析时机 | `executeStep` 内、调用 `pluginExecutor` **之前**，用 `previousResultsData` 替换 |
+| 解析失败 | `StepExecutionError(..., CONFIG_RESOLUTION)` → 步骤 `FAILED`（找不到 key/下标才失败；值为 `null` 合法） |
+| 启动前校验 | `validateWorkflowContextReferences`：`fromStepId` 必须存在且为当前步骤祖先；来源插件须声明 `resultSchema` |
+
+相关导出：`isContextRef`、`extractContextReferences`、`resolveConfigReferences`、`validateWorkflowContextReferences`、`getAncestorIds`、`toPreviousResultsData`、`ContextRef`。
 
 ## 可观测性
 
@@ -567,7 +589,7 @@ const result = await runPromise; // result.status === 'cancelled'
 | 模块 | 主要导出 |
 | ---- | -------- |
 | `./engine` | `createEngine`、`EngineOptions` |
-| `./executor` | `createWorkflowExecutor`（`createExecutor`）、`assertValidWorkflowRunId`、`RunHandle`、`RunRegistry`、`WorkflowDefinition`、`ExecutionContext`、`ExecutionResult`、`WorkflowRunResult`、Run 控制类型与 API |
+| `./executor` | `createWorkflowExecutor`（`createExecutor`）、`assertValidWorkflowRunId`、`RunHandle`、`RunRegistry`、`WorkflowDefinition`、`ExecutionContext`、`ExecutionResult`、`WorkflowRunResult`、Run 控制类型与 API；上下文引用：`ContextRef`、`isContextRef`、`extractContextReferences`、`resolveConfigReferences`、`validateWorkflowContextReferences`、`getAncestorIds`、`toPreviousResultsData` |
 | `./scheduler` | `createTaskScheduler`（`createScheduler`）、`Task`、`ScheduleResult` |
 | `./plugin` | `createPluginManager`（`createManager`）、`createContextLogger` |
 | `./resource` | `createResourceManager`、`createResourceWaitQueue`、`Resource`、`ResourceAcquireRequest`、`ResourceAcquireResult` |
