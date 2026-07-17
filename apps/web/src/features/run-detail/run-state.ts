@@ -133,6 +133,7 @@ function eventToLog(event: SerializedWorkflowLifecycleEvent, id: string): LogLin
         kind: 'stream',
         stepId: event.step?.id,
         stepName: event.step?.name,
+        level: event.log?.level,
         stream,
         message: event.log?.message ?? '',
         raw: event,

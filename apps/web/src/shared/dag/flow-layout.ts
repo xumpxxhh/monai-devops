@@ -12,7 +12,7 @@ export type LayoutDirection = 'LR' | 'TB';
 
 /** 节点未渲染时用于估算布局的默认尺寸，实际渲染后会用 node.measured 覆盖 */
 export const LAYOUT_NODE_WIDTH = 160;
-export const LAYOUT_NODE_HEIGHT = 56;
+export const LAYOUT_NODE_HEIGHT = 92;
 
 export const directedEdgeOptions = {
   type: 'smoothstep' as const,

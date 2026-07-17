@@ -1,4 +1,13 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import {
+  forwardRef,
+  memo,
+  useCallback,
+  useEffect,
+  useImperativeHandle,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import {
   ReactFlow,
@@ -17,8 +26,7 @@ import {
   type Edge,
   ConnectionLineType,
   ConnectionMode,
-  type OnNodesChange,
-  type OnEdgesChange,
+  type OnSelectionChangeParams,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import { extractContextReferences, type WorkflowDefinition } from '@monai-devops/core-engine';
@@ -71,7 +79,37 @@ interface StepNodeData {
   [key: string]: unknown;
 }
 
-function StepNode({ data, selected }: NodeProps<Node<StepNodeData>>) {
+interface SelectionSnapshot {
+  id: string;
+  data: StepNodeData;
+}
+
+interface EditorStep {
+  id: string;
+  plugin: string;
+  label: string;
+  dependsOn: string[];
+}
+
+interface TopologySnapshot {
+  nodeCount: number;
+  errors: string[];
+  steps: EditorStep[];
+}
+
+export interface WorkflowFlowHandle {
+  getNodes: () => Node<StepNodeData>[];
+  getEdges: () => Edge[];
+  loadDefinition: (definition: WorkflowDefinition) => void;
+  addStep: (plugin: string) => void;
+  updateNodeData: (
+    nodeId: string,
+    patch: Partial<Pick<StepNodeData, 'label' | 'plugin' | 'config' | 'priority'>>,
+  ) => void;
+  selectNode: (nodeId: string) => void;
+}
+
+const StepNode = memo(function StepNode({ data, selected }: NodeProps<Node<StepNodeData>>) {
   const handleClass = selected
     ? '!w-2 !h-2 !bg-brand !border-2 !border-white'
     : '!w-1.5 !h-1.5 !bg-line !border !border-white';
@@ -99,7 +137,7 @@ function StepNode({ data, selected }: NodeProps<Node<StepNodeData>>) {
       </div>
     </div>
   );
-}
+});
 
 const nodeTypes = { step: StepNode };
 
@@ -193,37 +231,180 @@ function dagStepsFromNodes(nodes: Node<StepNodeData>[], edges: Edge[]) {
   }));
 }
 
-function WorkflowCanvas({
-  nodes,
-  edges,
-  onNodesChange,
-  onEdgesChange,
-  onConnect,
-  onLayout,
-  validationErrors,
-  fitViewToken,
-}: {
-  nodes: Node<StepNodeData>[];
-  edges: Edge[];
-  onNodesChange: OnNodesChange<Node<StepNodeData>>;
-  onEdgesChange: OnEdgesChange<Edge>;
-  onConnect: (connection: Connection) => void;
-  onLayout: (direction: LayoutDirection) => void;
-  validationErrors: string[];
-  /** 每次变化都会触发画布重新居中，用于工作流(重新)加载后自动 fitView */
-  fitViewToken: number;
-}) {
+/**
+ * 拓扑指纹：节点 id / 业务引用 / plugin / label + 边。
+ * 刻意忽略 position / selected / dragging，避免拖动时误触发父级更新。
+ */
+function topologyKey(nodes: Node<StepNodeData>[], edges: Edge[]): string {
+  const nodePart = nodes
+    .map((n) => `${n.id}\0${resolveNodeRef(n)}\0${n.data.plugin}\0${n.data.label}`)
+    .join('\n');
+  const edgePart = edges.map((e) => `${e.source}\0${e.target}`).join('\n');
+  return `${nodePart}|${edgePart}`;
+}
+
+function buildEditorSteps(nodes: Node<StepNodeData>[], edges: Edge[]): EditorStep[] {
+  const nodeById = new Map(nodes.map((n) => [n.id, n]));
+  return nodes.map((node) => ({
+    id: resolveNodeRef(node),
+    plugin: node.data.plugin,
+    label: node.data.label,
+    dependsOn: edges
+      .filter((e) => e.target === node.id)
+      .map((e) => {
+        const source = nodeById.get(e.source);
+        return source ? resolveNodeRef(source) : e.source;
+      }),
+  }));
+}
+
+function selectionSnapshotEqual(a: SelectionSnapshot | null, b: SelectionSnapshot | null): boolean {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  return a.id === b.id && a.data === b.data;
+}
+
+const WorkflowFlow = forwardRef<
+  WorkflowFlowHandle,
+  {
+    configInvalidNodeIds: Set<string>;
+    onSelectionSnapshot: (selection: SelectionSnapshot | null) => void;
+    onTopologyChange: (topology: TopologySnapshot) => void;
+    onNodeDoubleClick: (node: Node<StepNodeData>) => void;
+  }
+>(function WorkflowFlow(
+  { configInvalidNodeIds, onSelectionSnapshot, onTopologyChange, onNodeDoubleClick },
+  ref,
+) {
   const { fitView } = useReactFlow();
+  const [nodes, setNodes, onNodesChange] = useNodesState<Node<StepNodeData>>([]);
+  const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
+  const [validationErrors, setValidationErrors] = useState<string[]>([]);
+  const topologyKeyRef = useRef('');
+
+  const publishTopology = useCallback(
+    (nextNodes: Node<StepNodeData>[], nextEdges: Edge[]) => {
+      const key = topologyKey(nextNodes, nextEdges);
+      if (key === topologyKeyRef.current) return;
+      topologyKeyRef.current = key;
+      const validation = validateDag(dagStepsFromNodes(nextNodes, nextEdges));
+      setValidationErrors(validation.errors);
+      onTopologyChange({
+        nodeCount: nextNodes.length,
+        errors: validation.errors,
+        steps: buildEditorSteps(nextNodes, nextEdges),
+      });
+    },
+    [onTopologyChange],
+  );
+
+  useEffect(() => {
+    publishTopology(nodes, edges);
+  }, [nodes, edges, publishTopology]);
+
+  // 将 configInvalid 写回节点 data；仅在非法 id 集合变化时执行，避免拖动时改写全部节点引用
+  useEffect(() => {
+    setNodes((nds) => {
+      let changed = false;
+      const next = nds.map((n) => {
+        const configInvalid = configInvalidNodeIds.has(n.id);
+        if (n.data.configInvalid === configInvalid) return n;
+        changed = true;
+        return { ...n, data: { ...n.data, configInvalid } };
+      });
+      return changed ? next : nds;
+    });
+  }, [configInvalidNodeIds, setNodes]);
+
+  useImperativeHandle(
+    ref,
+    () => ({
+      getNodes: () => nodes,
+      getEdges: () => edges,
+      loadDefinition: (definition: WorkflowDefinition) => {
+        const flow = definitionToFlow(definition);
+        topologyKeyRef.current = '';
+        setNodes(flow.nodes);
+        setEdges(flow.edges);
+        onSelectionSnapshot(null);
+        requestAnimationFrame(() => fitView({ padding: 0.2, duration: 200 }));
+      },
+      addStep: (plugin: string) => {
+        const clientRef = createClientRef();
+        const count = nodes.length;
+        const newNode: Node<StepNodeData> = {
+          id: clientRef,
+          type: 'step',
+          position: { x: 120 + count * 40, y: 200 },
+          data: {
+            label: `步骤 ${count + 1}`,
+            plugin,
+            clientRef,
+            config: {},
+          },
+        };
+        setNodes((nds) => {
+          const next = [
+            ...nds.map((n) => ({ ...n, selected: false })),
+            { ...newNode, selected: true },
+          ];
+          onSelectionSnapshot({ id: newNode.id, data: newNode.data });
+          return next;
+        });
+      },
+      updateNodeData: (nodeId, patch) => {
+        setNodes((nds) => {
+          const next = nds.map((n) => {
+            if (n.id !== nodeId) return n;
+            const pluginChanged = patch.plugin !== undefined && patch.plugin !== n.data.plugin;
+            const nextData: StepNodeData = {
+              ...n.data,
+              label: patch.label ?? n.data.label,
+              plugin: patch.plugin ?? n.data.plugin,
+              config: pluginChanged ? {} : (patch.config ?? n.data.config),
+              priority: patch.priority !== undefined ? patch.priority : n.data.priority,
+            };
+            return { ...n, data: nextData };
+          });
+          const selected = next.find((n) => n.id === nodeId);
+          if (selected?.selected) {
+            onSelectionSnapshot({ id: selected.id, data: selected.data });
+          }
+          return next;
+        });
+      },
+      selectNode: (nodeId: string) => {
+        setNodes((nds) => {
+          const next = nds.map((n) => ({ ...n, selected: n.id === nodeId }));
+          const selected = next.find((n) => n.id === nodeId) ?? null;
+          onSelectionSnapshot(selected ? { id: selected.id, data: selected.data } : null);
+          return next;
+        });
+      },
+    }),
+    [nodes, edges, fitView, onSelectionSnapshot, setEdges, setNodes],
+  );
+
+  const onConnect = useCallback(
+    (connection: Connection) =>
+      setEdges((eds) => addEdge({ ...connection, ...directedEdgeOptions }, eds)),
+    [setEdges],
+  );
 
   const handleLayout = (direction: LayoutDirection) => {
-    onLayout(direction);
+    const layoutedNodes = getLayoutedNodes(nodes, edges, direction);
+    setNodes(layoutedNodes);
+    setEdges((eds) => assignEdgeHandles(layoutedNodes, eds));
     requestAnimationFrame(() => fitView({ padding: 0.2, duration: 200 }));
   };
 
-  useEffect(() => {
-    if (fitViewToken === 0) return;
-    requestAnimationFrame(() => fitView({ padding: 0.2, duration: 200 }));
-  }, [fitViewToken, fitView]);
+  const handleSelectionChange = useCallback(
+    ({ nodes: selectedNodes }: OnSelectionChangeParams) => {
+      const selected = (selectedNodes[0] as Node<StepNodeData> | undefined) ?? null;
+      onSelectionSnapshot(selected ? { id: selected.id, data: selected.data } : null);
+    },
+    [onSelectionSnapshot],
+  );
 
   return (
     <div className="flex-1 bg-panel relative dag-flow-canvas">
@@ -233,6 +414,8 @@ function WorkflowCanvas({
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
         onConnect={onConnect}
+        onSelectionChange={handleSelectionChange}
+        onNodeDoubleClick={(_event, node) => onNodeDoubleClick(node as Node<StepNodeData>)}
         nodeTypes={nodeTypes}
         connectionMode={ConnectionMode.Loose}
         defaultEdgeOptions={directedEdgeOptions}
@@ -277,12 +460,13 @@ function WorkflowCanvas({
       )}
     </div>
   );
-}
+});
 
 export default function WorkflowEditorPage() {
   const { id } = useParams();
   const navigate = useNavigate();
   const isNew = !id || id === 'new';
+  const flowRef = useRef<WorkflowFlowHandle>(null);
 
   const [workflowId, setWorkflowId] = useState<string | null>(null);
   const [workflowName, setWorkflowName] = useState('');
@@ -299,21 +483,23 @@ export default function WorkflowEditorPage() {
   const [failFast, setFailFast] = useState(true);
   const [maxParallel, setMaxParallel] = useState(1);
 
-  const [nodes, setNodes, onNodesChange] = useNodesState<Node<StepNodeData>>([]);
-  const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
-  const [fitViewToken, setFitViewToken] = useState(0);
+  const [selection, setSelection] = useState<SelectionSnapshot | null>(null);
+  const [topology, setTopology] = useState<TopologySnapshot>({
+    nodeCount: 0,
+    errors: [],
+    steps: [],
+  });
 
-  const syncFlowFromDefinition = useCallback(
-    (definition: WorkflowDefinition) => {
-      const flow = definitionToFlow(definition);
-      setNodes(flow.nodes);
-      setEdges(flow.edges);
-      setWorkflowId(definition.id);
-      setWorkflowName(definition.name);
-      setFitViewToken((t) => t + 1);
-    },
-    [setNodes, setEdges],
-  );
+  const handleSelectionSnapshot = useCallback((next: SelectionSnapshot | null) => {
+    setSelection((prev) => (selectionSnapshotEqual(prev, next) ? prev : next));
+  }, []);
+
+  const syncFlowFromDefinition = useCallback((definition: WorkflowDefinition) => {
+    flowRef.current?.loadDefinition(definition);
+    setWorkflowId(definition.id);
+    setWorkflowName(definition.name);
+    setSelection(null);
+  }, []);
 
   useEffect(() => {
     void Promise.allSettled([
@@ -359,69 +545,12 @@ export default function WorkflowEditorPage() {
     }
   }, [id, isNew, syncFlowFromDefinition]);
 
-  const onConnect = useCallback(
-    (connection: Connection) =>
-      setEdges((eds) => addEdge({ ...connection, ...directedEdgeOptions }, eds)),
-    [setEdges],
-  );
-
-  const handleLayout = useCallback(
-    (direction: LayoutDirection) => {
-      const layoutedNodes = getLayoutedNodes(nodes, edges, direction);
-      setNodes(layoutedNodes);
-      setEdges((eds) => assignEdgeHandles(layoutedNodes, eds));
-    },
-    [nodes, edges, setNodes, setEdges],
-  );
-
-  const dagValidation = useMemo(() => validateDag(dagStepsFromNodes(nodes, edges)), [nodes, edges]);
-  const validationErrors = dagValidation.errors;
-
-  // 将 configInvalid 直接写回节点状态，而不是在每次渲染时派生一份新的节点数组。
-  // 拖拽节点时 nodes 引用会随位置高频变化，若在此处用 map 重新生成所有节点的 data 对象，
-  // 会导致 React Flow 认为「所有」节点都变了（丢失未拖拽节点的引用稳定性），
-  // 从而在每一次 mousemove 都重新渲染全部节点，造成明显卡顿。
-  useEffect(() => {
-    setNodes((nds) => {
-      let changed = false;
-      const next = nds.map((n) => {
-        const configInvalid = configInvalidNodeIds.has(n.id);
-        if (n.data.configInvalid === configInvalid) return n;
-        changed = true;
-        return { ...n, data: { ...n.data, configInvalid } };
-      });
-      return changed ? next : nds;
-    });
-  }, [configInvalidNodeIds, setNodes]);
-
-  const selectedNode = useMemo(() => nodes.find((n) => n.selected) ?? null, [nodes]);
-  const selectedStepId = selectedNode?.data.stepId;
-
-  const editorSteps = useMemo(
-    () =>
-      nodes.map((node) => {
-        const nodeById = new Map(nodes.map((n) => [n.id, n]));
-        return {
-          id: resolveNodeRef(node),
-          plugin: node.data.plugin,
-          label: node.data.label,
-          dependsOn: edges
-            .filter((e) => e.target === node.id)
-            .map((e) => {
-              const source = nodeById.get(e.source);
-              return source ? resolveNodeRef(source) : e.source;
-            }),
-        };
-      }),
-    [nodes, edges],
-  );
-
   const selectedReferenceSources = useMemo((): ConfigReferenceSource[] => {
-    if (!selectedNode) return [];
-    const currentId = resolveNodeRef(selectedNode);
-    const ancestors = getAncestorIds(currentId, editorSteps);
+    if (!selection) return [];
+    const currentId = selection.data.stepId ?? selection.data.clientRef ?? selection.id;
+    const ancestors = getAncestorIds(currentId, topology.steps);
     const sources: ConfigReferenceSource[] = [];
-    for (const step of editorSteps) {
+    for (const step of topology.steps) {
       if (!ancestors.has(step.id)) continue;
       const resultSchema = resultSchemaMap.get(step.plugin);
       if (!resultSchema) continue;
@@ -433,59 +562,28 @@ export default function WorkflowEditorPage() {
       });
     }
     return sources;
-  }, [selectedNode, editorSteps, resultSchemaMap]);
-
-  const addStep = (plugin: string) => {
-    const clientRef = createClientRef();
-    const newNode: Node<StepNodeData> = {
-      id: clientRef,
-      type: 'step',
-      position: { x: 120 + nodes.length * 40, y: 200 },
-      data: {
-        label: `步骤 ${nodes.length + 1}`,
-        plugin,
-        clientRef,
-        config: {},
-      },
-    };
-    setNodes((nds) => [
-      ...nds.map((n) => ({ ...n, selected: false })),
-      { ...newNode, selected: true },
-    ]);
-  };
+  }, [selection, topology.steps, resultSchemaMap]);
 
   const updateSelected = (
     patch: Partial<Pick<StepNodeData, 'label' | 'plugin' | 'config' | 'priority'>>,
   ) => {
-    if (!selectedNode) return;
+    if (!selection) return;
 
-    const pluginChanged = patch.plugin !== undefined && patch.plugin !== selectedNode.data.plugin;
+    const pluginChanged = patch.plugin !== undefined && patch.plugin !== selection.data.plugin;
     const configChanged = patch.config !== undefined;
     if (pluginChanged || configChanged) {
       setConfigInvalidNodeIds(new Set());
     }
 
-    setNodes((nds) =>
-      nds.map((n) => {
-        if (n.id !== selectedNode.id) return n;
-
-        const nextPlugin = patch.plugin ?? n.data.plugin;
-
-        return {
-          ...n,
-          data: {
-            ...n.data,
-            label: patch.label ?? n.data.label,
-            plugin: nextPlugin,
-            config: pluginChanged ? {} : (patch.config ?? n.data.config),
-            priority: patch.priority,
-          },
-        };
-      }),
-    );
+    flowRef.current?.updateNodeData(selection.id, {
+      ...patch,
+      ...(pluginChanged ? { config: {} } : {}),
+    });
   };
 
   const buildCurrentDraft = () => {
+    const nodes = flowRef.current?.getNodes() ?? [];
+    const edges = flowRef.current?.getEdges() ?? [];
     const draft = buildDraft(nodes, edges, workflowName, workflowId);
     if (!schemaMap) return draft;
 
@@ -502,13 +600,13 @@ export default function WorkflowEditorPage() {
   };
 
   const isWorkflowNameValid = !validateWorkflowName(workflowName);
+  const dagValid = topology.errors.length === 0;
+  const validationErrors = topology.errors;
 
-  const selectNodeById = useCallback(
-    (nodeId: string) => {
-      setNodes((nds) => nds.map((n) => ({ ...n, selected: n.id === nodeId })));
-    },
-    [setNodes],
-  );
+  const handleNodeDoubleClick = useCallback((node: Node<StepNodeData>) => {
+    flowRef.current?.selectNode(node.id);
+    setConfigModalOpen(true);
+  }, []);
 
   const assertWorkflowReady = useCallback((): boolean => {
     const nameError = validateWorkflowName(workflowName);
@@ -519,6 +617,7 @@ export default function WorkflowEditorPage() {
     }
     setWorkflowNameError('');
 
+    const nodes = flowRef.current?.getNodes() ?? [];
     if (nodes.length === 0) {
       toast.warning('请至少添加一个步骤');
       return false;
@@ -529,8 +628,8 @@ export default function WorkflowEditorPage() {
       return false;
     }
 
-    if (!dagValidation.valid) {
-      toast.warning(dagValidation.errors[0] ?? '工作流结构不合法');
+    if (topology.errors.length > 0) {
+      toast.warning(topology.errors[0] ?? '工作流结构不合法');
       return false;
     }
 
@@ -541,23 +640,23 @@ export default function WorkflowEditorPage() {
       toast.error(configErrors[0] ?? '步骤配置不完整');
       const firstIssue = configValidation.issues[0];
       if (firstIssue) {
-        selectNodeById(firstIssue.nodeId);
+        flowRef.current?.selectNode(firstIssue.nodeId);
       }
       return false;
     }
 
-    for (const step of editorSteps) {
+    for (const step of topology.steps) {
       const refs = extractContextReferences(
         nodes.find((n) => resolveNodeRef(n) === step.id)?.data.config ?? {},
       );
       if (refs.length === 0) continue;
-      const ancestors = getAncestorIds(step.id, editorSteps);
+      const ancestors = getAncestorIds(step.id, topology.steps);
       for (const ref of refs) {
         if (!ancestors.has(ref.$ref.fromStepId)) {
           toast.error(`步骤「${step.label}」引用了非祖先步骤 ${ref.$ref.fromStepId}`);
           return false;
         }
-        const source = editorSteps.find((s) => s.id === ref.$ref.fromStepId);
+        const source = topology.steps.find((s) => s.id === ref.$ref.fromStepId);
         if (!source || !resultSchemaMap.get(source.plugin)) {
           toast.error(
             `步骤「${step.label}」引用的上游「${ref.$ref.fromStepId}」未声明 resultSchema`,
@@ -569,7 +668,7 @@ export default function WorkflowEditorPage() {
 
     setConfigInvalidNodeIds(new Set());
     return true;
-  }, [workflowName, nodes, schemaMap, dagValidation, selectNodeById, editorSteps, resultSchemaMap]);
+  }, [workflowName, schemaMap, topology.errors, topology.steps, resultSchemaMap]);
 
   const handleSave = async () => {
     if (!assertWorkflowReady()) return;
@@ -618,7 +717,7 @@ export default function WorkflowEditorPage() {
       <button
         type="button"
         onClick={handleSave}
-        disabled={saving || !dagValidation.valid || nodes.length === 0 || !isWorkflowNameValid}
+        disabled={saving || !dagValid || topology.nodeCount === 0 || !isWorkflowNameValid}
         title={validationErrors.join('; ') || undefined}
         className="inline-flex items-center gap-2 h-9 px-4 rounded-ctrl border border-line text-sm hover:bg-raised disabled:opacity-50"
       >
@@ -628,7 +727,7 @@ export default function WorkflowEditorPage() {
       <button
         type="button"
         onClick={handleRun}
-        disabled={!dagValidation.valid || running || nodes.length === 0 || !isWorkflowNameValid}
+        disabled={!dagValid || running || topology.nodeCount === 0 || !isWorkflowNameValid}
         title={validationErrors.join('; ') || undefined}
         className="inline-flex items-center gap-2 h-9 px-4 rounded-ctrl bg-brand text-white text-sm font-medium hover:bg-brand-hover disabled:opacity-50"
       >
@@ -637,6 +736,8 @@ export default function WorkflowEditorPage() {
       </button>
     </>
   );
+
+  const selectedStepId = selection?.data.stepId;
 
   return (
     <FullscreenLayout
@@ -653,7 +754,7 @@ export default function WorkflowEditorPage() {
               <button
                 key={p.name}
                 type="button"
-                onClick={() => addStep(p.name)}
+                onClick={() => flowRef.current?.addStep(p.name)}
                 className="w-full text-left px-3 py-2 rounded-ctrl text-sm hover:bg-raised border border-transparent hover:border-line"
               >
                 <div className="font-medium">{p.name}</div>
@@ -664,15 +765,12 @@ export default function WorkflowEditorPage() {
         </aside>
 
         <ReactFlowProvider>
-          <WorkflowCanvas
-            nodes={nodes}
-            edges={edges}
-            onNodesChange={onNodesChange}
-            onEdgesChange={onEdgesChange}
-            onConnect={onConnect}
-            onLayout={handleLayout}
-            validationErrors={validationErrors}
-            fitViewToken={fitViewToken}
+          <WorkflowFlow
+            ref={flowRef}
+            configInvalidNodeIds={configInvalidNodeIds}
+            onSelectionSnapshot={handleSelectionSnapshot}
+            onTopologyChange={setTopology}
+            onNodeDoubleClick={handleNodeDoubleClick}
           />
         </ReactFlowProvider>
 
@@ -725,7 +823,7 @@ export default function WorkflowEditorPage() {
             </label>
           </div>
 
-          {selectedNode ? (
+          {selection ? (
             <>
               <h3 className="text-xs font-medium text-faint uppercase tracking-wider mb-3 mt-6">
                 步骤属性
@@ -742,14 +840,14 @@ export default function WorkflowEditorPage() {
               <Field label="名称" htmlFor="step-name">
                 <Input
                   id="step-name"
-                  value={selectedNode.data.label}
+                  value={selection.data.label}
                   onChange={(e) => updateSelected({ label: e.target.value })}
                 />
               </Field>
               <Field label="插件" htmlFor="step-plugin">
                 <Select
                   id="step-plugin"
-                  value={selectedNode.data.plugin}
+                  value={selection.data.plugin}
                   onValueChange={(plugin) => updateSelected({ plugin })}
                   options={plugins.map((p) => ({ value: p.name, label: p.name }))}
                 />
@@ -764,20 +862,20 @@ export default function WorkflowEditorPage() {
                   编辑配置
                 </button>
                 <p className="mt-2 text-xs text-faint font-mono truncate">
-                  {JSON.stringify(selectedNode.data.config ?? {})}
+                  {JSON.stringify(selection.data.config ?? {})}
                 </p>
               </Field>
               <PluginConfigFormModal
                 open={configModalOpen}
                 onOpenChange={setConfigModalOpen}
-                pluginName={selectedNode.data.plugin}
-                value={(selectedNode.data.config ?? {}) as Record<string, unknown>}
+                pluginName={selection.data.plugin}
+                value={(selection.data.config ?? {}) as Record<string, unknown>}
                 onConfirm={(config) => updateSelected({ config })}
                 referenceSources={selectedReferenceSources}
               />
             </>
           ) : (
-            <p className="text-sm text-faint mt-6">点击画布中的节点编辑属性</p>
+            <p className="text-sm text-faint mt-6">点击画布中的节点编辑属性，双击打开配置</p>
           )}
         </aside>
       </div>

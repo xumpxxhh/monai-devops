@@ -2,7 +2,14 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { toast } from 'sonner';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { faCopy, faBan, faPause, faPlay } from '@fortawesome/free-solid-svg-icons';
+import {
+  faCopy,
+  faBan,
+  faPause,
+  faPlay,
+  faGripLines,
+  faGripLinesVertical,
+} from '@fortawesome/free-solid-svg-icons';
 import {
   ReactFlow,
   useNodesState,
@@ -40,8 +47,38 @@ import {
 } from './run-state';
 
 type LogFilter = 'all' | 'logs' | 'errors';
+type LayoutMode = 'vertical' | 'horizontal';
+
+const LAYOUT_MODE_STORAGE_KEY = 'run-detail-layout-mode';
+
+function readLayoutMode(): LayoutMode {
+  try {
+    const stored = localStorage.getItem(LAYOUT_MODE_STORAGE_KEY);
+    if (stored === 'vertical' || stored === 'horizontal') return stored;
+  } catch {
+    // ignore
+  }
+  return 'vertical';
+}
+
+/** 对齐 plugin-sdk PluginLogLevel：debug | info | warn | error */
+function logLevelTextClass(level?: string, stream?: 'stdout' | 'stderr'): string {
+  switch (level) {
+    case 'debug':
+      return 'text-faint';
+    case 'warn':
+      return 'text-warning';
+    case 'error':
+      return 'text-failed';
+    case 'info':
+      return 'text-ink';
+    default:
+      return stream === 'stderr' ? 'text-failed' : 'text-ink';
+  }
+}
 
 const ACTIVE_RUN_STATUSES = new Set<RunStatus>(['queued', 'running', 'paused', 'pausing']);
+const TERMINAL_RUN_STATUSES = new Set<RunStatus>(['finished', 'failed', 'cancelled', 'rejected']);
 const CANCELLABLE_STATUSES = new Set<RunStatus>(['queued', 'running', 'paused', 'pausing']);
 const PAUSABLE_STATUSES = new Set<RunStatus>(['running', 'pausing']);
 const RESUMABLE_STATUSES = new Set<RunStatus>(['paused', 'pausing']);
@@ -69,7 +106,9 @@ function RunDagCanvas({
 
   useEffect(() => {
     if (!fitViewKey) return;
-    requestAnimationFrame(() => fitView({ padding: 0.2, duration: 200 }));
+    requestAnimationFrame(() =>
+      fitView({ padding: 0.06, maxZoom: 1, minZoom: 0.75, duration: 200 }),
+    );
   }, [fitViewKey, fitView]);
 
   return (
@@ -96,9 +135,11 @@ function RunDagCanvas({
 
 function RunDagPanel({
   runState,
+  layoutMode,
   onNodeClick,
 }: {
   runState: RunState | null;
+  layoutMode: LayoutMode;
   onNodeClick: (step: StepView) => void;
 }) {
   const [nodes, setNodes] = useNodesState<Node<DagStepNodeData>>([]);
@@ -185,9 +226,14 @@ function RunDagPanel({
     });
   }, [runState, setNodes, setEdges]);
 
+  const panelClass =
+    layoutMode === 'vertical'
+      ? 'shrink-0 h-[min(42vh,280px)] min-h-[180px] border-b border-line'
+      : 'flex-1 min-h-0 min-w-0 border-r border-line';
+
   return (
-    <div className="flex-1 flex flex-col min-h-0 bg-panel border-r border-line">
-      <h2 className="shrink-0 text-xs font-medium text-faint uppercase tracking-wider px-6 pt-6 pb-4">
+    <div className={`flex flex-col bg-panel ${panelClass}`}>
+      <h2 className="shrink-0 text-xs font-medium text-faint uppercase tracking-wider px-4 py-2">
         DAG 状态
       </h2>
       <ReactFlowProvider>
@@ -198,7 +244,7 @@ function RunDagPanel({
             const step = runState?.steps[nodeId];
             if (step) onNodeClick(step);
           }}
-          fitViewKey={structureKey}
+          fitViewKey={structureKey ? `${structureKey}|${layoutMode}` : ''}
         />
       </ReactFlowProvider>
     </div>
@@ -216,19 +262,37 @@ export default function RunDetailPage() {
   const [drawerStep, setDrawerStep] = useState<StepView | null>(null);
   const [wsBanner, setWsBanner] = useState('');
   const [subscribeKey, setSubscribeKey] = useState<string | null>(null);
+  const [layoutMode, setLayoutMode] = useState<LayoutMode>(readLayoutMode);
   const logEndRef = useRef<HTMLDivElement>(null);
+
+  const handleLayoutModeChange = useCallback((mode: LayoutMode) => {
+    setLayoutMode(mode);
+    try {
+      localStorage.setItem(LAYOUT_MODE_STORAGE_KEY, mode);
+    } catch {
+      // ignore
+    }
+  }, []);
 
   const handleEvent = useCallback((event: Parameters<typeof applyRunEvent>[1]) => {
     setRunState((prev) => {
       if (!prev) return prev;
       const next = applyRunEvent(prev, event);
-      setRecordStatus(next.status);
+      if (next.status !== prev.status) {
+        setRecordStatus((current) =>
+          TERMINAL_RUN_STATUSES.has(current) && ACTIVE_RUN_STATUSES.has(next.status)
+            ? current
+            : next.status,
+        );
+      }
       return next;
     });
   }, []);
 
   const handleDone = useCallback((result: WorkflowRunResultSerialized) => {
-    setRecordStatus(terminalStatusFromResult(result));
+    const terminalStatus = terminalStatusFromResult(result);
+    setRecordStatus(terminalStatus);
+    setRunState((prev) => (prev ? { ...prev, status: terminalStatus, finalResult: result } : prev));
     setSubscribeKey(null);
   }, []);
 
@@ -356,12 +420,80 @@ export default function RunDetailPage() {
   const canCancel = CANCELLABLE_STATUSES.has(recordStatus);
   const canPause = PAUSABLE_STATUSES.has(recordStatus);
   const canResume = RESUMABLE_STATUSES.has(recordStatus);
-  const isActiveRun = ACTIVE_RUN_STATUSES.has(recordStatus);
+  const isWaitingForEvents = subscribeKey === runId;
+
+  const logPanelClass =
+    layoutMode === 'vertical'
+      ? 'flex-1 min-h-0 w-full flex flex-col bg-surface'
+      : 'w-[min(560px,38vw)] shrink-0 flex flex-col bg-surface';
+
+  const logPanel = (
+    <div className={logPanelClass}>
+      <div className="flex items-center justify-between px-4 py-3 border-b border-line">
+        <TabsBar
+          items={[
+            { value: 'all', label: '全部' },
+            { value: 'logs', label: '仅日志' },
+            { value: 'errors', label: '仅错误' },
+          ]}
+          value={logFilter}
+          onValueChange={(v) => setLogFilter(v as LogFilter)}
+        />
+        <div className="flex items-center gap-2 text-xs">
+          <Checkbox
+            id="auto-scroll"
+            checked={autoScroll}
+            onCheckedChange={setAutoScroll}
+            label="自动滚动"
+            className="text-xs"
+          />
+          <button
+            type="button"
+            onClick={() => setLogScrollPaused((p) => !p)}
+            className="px-2 py-1 rounded-ctrl hover:bg-raised text-muted"
+            title="暂停/继续日志自动滚动"
+          >
+            {logScrollPaused ? '恢复滚动' : '暂停滚动'}
+          </button>
+        </div>
+      </div>
+      <div className="flex-1 overflow-auto p-4 font-mono text-xs bg-panel min-h-0">
+        {filteredLogs.map((log) => {
+          const messageClass =
+            log.kind === 'error' ? 'text-failed' : logLevelTextClass(log.level, log.stream);
+
+          return log.kind === 'stream' ? (
+            <pre key={log.id} className={`whitespace-pre-wrap break-words ${messageClass}`}>
+              {log.message}
+            </pre>
+          ) : (
+            <div key={log.id} className="log-line">
+              <span className="text-faint">{log.ts}</span>{' '}
+              <span className={log.kind === 'log' ? 'text-running' : 'text-muted'}>
+                [{log.level ?? log.eventType ?? log.kind}]
+              </span>{' '}
+              {log.stepId && (
+                <span className="text-brand">
+                  {log.stepName ?? runState?.steps[log.stepId]?.name ?? log.stepId}
+                </span>
+              )}{' '}
+              <span className={messageClass}>{log.message}</span>
+            </div>
+          );
+        })}
+        {isWaitingForEvents && (
+          <div ref={logEndRef} className="cursor-blink text-faint">
+            等待事件…
+          </div>
+        )}
+      </div>
+    </div>
+  );
 
   return (
     <div className="flex flex-col h-screen bg-canvas">
-      <header className="shrink-0 bg-surface border-b border-line px-6 py-4">
-        <div className="flex items-center justify-between mb-3">
+      <header className="shrink-0 bg-surface border-b border-line px-6 py-3">
+        <div className="flex items-center justify-between mb-2">
           <div className="flex items-center gap-3">
             <Link to="/runs" className="text-sm text-muted hover:text-ink">
               ← 运行列表
@@ -375,6 +507,28 @@ export default function RunDetailPage() {
             </span>
           </div>
           <div className="flex items-center gap-2">
+            <div className="flex items-center rounded-ctrl border border-line overflow-hidden">
+              <button
+                type="button"
+                onClick={() => handleLayoutModeChange('vertical')}
+                title="上下布局"
+                className={`inline-flex items-center justify-center h-8 w-8 text-sm hover:bg-raised ${
+                  layoutMode === 'vertical' ? 'bg-raised text-brand' : 'text-muted'
+                }`}
+              >
+                <FontAwesomeIcon icon={faGripLines} />
+              </button>
+              <button
+                type="button"
+                onClick={() => handleLayoutModeChange('horizontal')}
+                title="左右布局"
+                className={`inline-flex items-center justify-center h-8 w-8 text-sm border-l border-line hover:bg-raised ${
+                  layoutMode === 'horizontal' ? 'bg-raised text-brand' : 'text-muted'
+                }`}
+              >
+                <FontAwesomeIcon icon={faGripLinesVertical} />
+              </button>
+            </div>
             <WsPill status={wsStatus} />
             {canResume && (
               <button
@@ -423,7 +577,7 @@ export default function RunDetailPage() {
         </div>
 
         {runState && (
-          <div className="flex items-center gap-6 text-sm">
+          <div className="flex items-center gap-4 text-sm">
             <span className="font-mono text-muted flex items-center gap-1">
               {runState.runId.slice(0, 8)}…
               <button
@@ -449,71 +603,11 @@ export default function RunDetailPage() {
         </div>
       )}
 
-      <div className="flex-1 flex min-h-0">
-        <RunDagPanel runState={runState} onNodeClick={setDrawerStep} />
-
-        <div className="w-[560px] shrink-0 flex flex-col bg-surface">
-          <div className="flex items-center justify-between px-4 py-3 border-b border-line">
-            <TabsBar
-              items={[
-                { value: 'all', label: '全部' },
-                { value: 'logs', label: '仅日志' },
-                { value: 'errors', label: '仅错误' },
-              ]}
-              value={logFilter}
-              onValueChange={(v) => setLogFilter(v as LogFilter)}
-            />
-            <div className="flex items-center gap-2 text-xs">
-              <Checkbox
-                id="auto-scroll"
-                checked={autoScroll}
-                onCheckedChange={setAutoScroll}
-                label="自动滚动"
-                className="text-xs"
-              />
-              <button
-                type="button"
-                onClick={() => setLogScrollPaused((p) => !p)}
-                className="px-2 py-1 rounded-ctrl hover:bg-raised text-muted"
-                title="暂停/继续日志自动滚动"
-              >
-                {logScrollPaused ? '恢复滚动' : '暂停滚动'}
-              </button>
-            </div>
-          </div>
-          <div className="flex-1 overflow-auto p-4 font-mono text-xs bg-panel">
-            {filteredLogs.map((log) =>
-              log.kind === 'stream' ? (
-                <pre
-                  key={log.id}
-                  className={`whitespace-pre-wrap break-words ${
-                    log.stream === 'stderr' ? 'text-failed' : 'text-ink'
-                  }`}
-                >
-                  {log.message}
-                </pre>
-              ) : (
-                <div key={log.id} className="log-line">
-                  <span className="text-faint">{log.ts}</span>{' '}
-                  <span className={log.kind === 'log' ? 'text-running' : 'text-muted'}>
-                    [{log.eventType ?? log.kind}]
-                  </span>{' '}
-                  {log.stepId && (
-                    <span className="text-brand">
-                      {log.stepName ?? runState?.steps[log.stepId]?.name ?? log.stepId}
-                    </span>
-                  )}{' '}
-                  <span className="text-ink">{log.message}</span>
-                </div>
-              ),
-            )}
-            {isActiveRun && (
-              <div ref={logEndRef} className="cursor-blink text-faint">
-                等待事件…
-              </div>
-            )}
-          </div>
-        </div>
+      <div
+        className={`flex-1 min-h-0 ${layoutMode === 'vertical' ? 'flex flex-col' : 'flex flex-row'}`}
+      >
+        <RunDagPanel runState={runState} layoutMode={layoutMode} onNodeClick={setDrawerStep} />
+        {logPanel}
       </div>
 
       <Drawer
