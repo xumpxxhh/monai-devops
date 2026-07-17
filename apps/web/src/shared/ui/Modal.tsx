@@ -1,6 +1,7 @@
 import * as Dialog from '@radix-ui/react-dialog';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faXmark } from '@fortawesome/free-solid-svg-icons';
+import { useDialogOutsideGuard } from './useDialogOutsideGuard';
 
 interface ModalProps {
   open: boolean;
@@ -19,12 +20,23 @@ export function Modal({
   footer,
   contentClassName,
 }: ModalProps) {
+  const { shouldPreventDismiss } = useDialogOutsideGuard(open);
+
   return (
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
       <Dialog.Portal>
         <Dialog.Overlay className="fixed inset-0 bg-ink/30 backdrop-blur-sm z-50" />
         <Dialog.Content
           className={`fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-50 w-full bg-surface rounded-card shadow-pop border border-line p-6 ${contentClassName ?? 'max-w-md'}`}
+          onPointerDownOutside={(e) => {
+            if (shouldPreventDismiss(e.target)) e.preventDefault();
+          }}
+          onInteractOutside={(e) => {
+            if (shouldPreventDismiss(e.target)) e.preventDefault();
+          }}
+          onFocusOutside={(e) => {
+            if (shouldPreventDismiss(e.target)) e.preventDefault();
+          }}
         >
           <div className="flex items-center justify-between mb-4">
             <Dialog.Title className="text-lg font-semibold">{title}</Dialog.Title>

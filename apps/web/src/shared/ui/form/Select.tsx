@@ -47,7 +47,9 @@ export function Select({
 
       <SelectPrimitive.Portal>
         <SelectPrimitive.Content
-          className="z-50 overflow-hidden rounded-ctrl border border-line bg-surface shadow-pop"
+          // 高于 Dialog(z-50)；供 Dialog 外部点击守卫识别，避免误关弹窗
+          data-select-panel
+          className="pointer-events-auto z-[200] overflow-hidden rounded-ctrl border border-line bg-surface shadow-pop"
           position="popper"
           sideOffset={4}
         >
