@@ -1,6 +1,6 @@
 import { Global, Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import type { PluginConfig } from '@monai-devops/plugin-sdk';
+import type { PluginConfig, ZodType } from '@monai-devops/plugin-sdk';
 import {
   createEngine,
   type ExecutionContext,
@@ -12,6 +12,7 @@ import {
 } from '@monai-devops/core-engine';
 import { registeredPlugins } from '../plugins/plugin-registry.js';
 import { toPluginConfigJsonSchema } from '../plugins/plugin-config-schema.js';
+import { toPluginResultJsonSchema } from '../plugins/plugin-result-schema.js';
 import { validateWorkflowDefinition } from '../common/validation/validate-workflow.js';
 
 type EngineInstance = ReturnType<typeof createEngine>;
@@ -69,7 +70,9 @@ export class EngineService implements OnModuleInit, OnModuleDestroy {
   }
 
   validateWorkflow(workflow: WorkflowDefinition): void {
-    validateWorkflowDefinition(workflow);
+    validateWorkflowDefinition(workflow, {
+      resolvePluginResultSchema: (name) => this.resolvePluginResultSchema(name),
+    });
   }
 
   runWorkflow(
@@ -118,6 +121,7 @@ export class EngineService implements OnModuleInit, OnModuleDestroy {
       version: plugin.version,
       description: plugin.description,
       hasConfigSchema: Boolean(plugin.configSchema),
+      hasResultSchema: Boolean(plugin.resultSchema),
     }));
   }
 
@@ -129,7 +133,12 @@ export class EngineService implements OnModuleInit, OnModuleDestroy {
       version: plugin.version,
       description: plugin.description,
       hasConfigSchema: Boolean(plugin.configSchema),
+      hasResultSchema: Boolean(plugin.resultSchema),
     };
+  }
+
+  resolvePluginResultSchema(name: string): ZodType | undefined {
+    return this.engine.getPlugin(name)?.resultSchema;
   }
 
   getPluginConfigJsonSchema(name: string): Record<string, unknown> | undefined {
@@ -142,6 +151,19 @@ export class EngineService implements OnModuleInit, OnModuleDestroy {
     return this.engine.getPlugins().map((plugin) => ({
       name: plugin.name,
       configJsonSchema: plugin.configSchema ? toPluginConfigJsonSchema(plugin.configSchema) : null,
+    }));
+  }
+
+  getPluginResultJsonSchema(name: string): Record<string, unknown> | undefined {
+    const plugin = this.engine.getPlugin(name);
+    if (!plugin?.resultSchema) return undefined;
+    return toPluginResultJsonSchema(plugin.resultSchema);
+  }
+
+  getAllPluginResultJsonSchemas() {
+    return this.engine.getPlugins().map((plugin) => ({
+      name: plugin.name,
+      resultJsonSchema: plugin.resultSchema ? toPluginResultJsonSchema(plugin.resultSchema) : null,
     }));
   }
 

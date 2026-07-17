@@ -1,3 +1,4 @@
+import { jest } from '@jest/globals';
 import { Test, TestingModule } from '@nestjs/testing';
 import { EngineService } from '../engine/engine.service.js';
 import { TestDevopsService } from './test-devops.service.js';

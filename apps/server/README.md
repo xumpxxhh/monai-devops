@@ -209,8 +209,14 @@ curl -X POST "http://localhost:3000/api/runs" \
 - `GET /api/plugins`
 - `GET /api/plugins/config-schemas`
 - `GET /api/plugins/:name/config-schema`
+- `GET /api/plugins/result-schemas`
+- `GET /api/plugins/:name/result-schema`
 - `GET /api/plugins/:name`
 - `POST /api/plugins/:name/dry-run`（SSE）
+
+`GET /api/plugins` / `GET /api/plugins/:name` 响应含 `hasResultSchema`（是否声明了 `resultSchema`）。
+
+`GET /api/plugins/:name/result-schema`：无插件或未声明 `resultSchema` 时返回 404（文案：`插件不存在或未声明 resultSchema`）。
 
 插件 dry-run（SSE）示例：
 
@@ -225,6 +231,8 @@ SSE 事件数据类型：
 - `log`：插件日志事件
 - `done`：执行完成结果
 - `error`：执行失败信息
+
+> dry-run **不支持** config 中的上游步骤引用（`$ref`）；含引用时同步返回 400。完整工作流运行会由 core-engine 解析引用。
 
 ### 7.5 Resources / Stats / Test-DevOps
 

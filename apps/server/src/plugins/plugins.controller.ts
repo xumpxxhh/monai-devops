@@ -17,9 +17,19 @@ export class PluginsController {
     return this.pluginsService.listConfigSchemas();
   }
 
+  @Get('result-schemas')
+  listResultSchemas() {
+    return this.pluginsService.listResultSchemas();
+  }
+
   @Get(':name/config-schema')
   getConfigSchema(@Param('name') name: string) {
     return this.pluginsService.getConfigSchema(name);
+  }
+
+  @Get(':name/result-schema')
+  getResultSchema(@Param('name') name: string) {
+    return this.pluginsService.getResultSchema(name);
   }
 
   @Get(':name')

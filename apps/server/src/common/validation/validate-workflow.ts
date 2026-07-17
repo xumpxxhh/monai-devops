@@ -1,5 +1,9 @@
 import type { WorkflowDefinition, WorkflowStep } from '@monai-devops/core-engine';
-import { WorkflowValidationError } from '@monai-devops/core-engine';
+import {
+  validateWorkflowContextReferences,
+  WorkflowValidationError,
+  type ValidateWorkflowContextReferencesOptions,
+} from '@monai-devops/core-engine';
 
 function buildDag(steps: WorkflowStep[]) {
   const stepById = new Map<string, WorkflowStep>();
@@ -28,7 +32,12 @@ function buildDag(steps: WorkflowStep[]) {
   return { stepIds: new Set(stepById.keys()), inDegree, dependents };
 }
 
-export function validateWorkflowDefinition(workflow: WorkflowDefinition): void {
+export type ValidateWorkflowDefinitionOptions = ValidateWorkflowContextReferencesOptions;
+
+export function validateWorkflowDefinition(
+  workflow: WorkflowDefinition,
+  options: ValidateWorkflowDefinitionOptions = {},
+): void {
   if (!workflow.id?.trim()) {
     throw new WorkflowValidationError('workflow.id 必须是非空字符串');
   }
@@ -72,4 +81,6 @@ export function validateWorkflowDefinition(workflow: WorkflowDefinition): void {
   if (visited !== graph.stepIds.size) {
     throw new WorkflowValidationError('工作流存在循环依赖');
   }
+
+  validateWorkflowContextReferences(workflow, options);
 }

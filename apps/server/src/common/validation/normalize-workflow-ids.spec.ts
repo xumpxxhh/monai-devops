@@ -102,4 +102,66 @@ describe('normalizeWorkflowIds', () => {
     expect(stepA.id).not.toBe('copy-0');
     expect(stepB.dependsOn).toEqual([stepA.id]);
   });
+
+  it('remaps ContextRef.fromStepId via clientRef together with dependsOn', () => {
+    const result = normalizeWorkflowIds({
+      name: 'Inject',
+      steps: [
+        {
+          clientRef: 'up',
+          name: 'Up',
+          plugin: 'test-plugin',
+          config: { type: 'unit' },
+        },
+        {
+          clientRef: 'down',
+          name: 'Down',
+          plugin: 'test-plugin',
+          config: {
+            type: { $ref: { fromStepId: 'up', path: ['type'] } },
+          },
+          dependsOn: ['up'],
+        },
+      ],
+    });
+
+    const stepUp = result.steps.find((s) => s.name === 'Up')!;
+    const stepDown = result.steps.find((s) => s.name === 'Down')!;
+    expect(stepDown.dependsOn).toEqual([stepUp.id]);
+    expect(stepDown.config).toEqual({
+      type: { $ref: { fromStepId: stepUp.id, path: ['type'] } },
+    });
+  });
+
+  it('remaps ContextRef.fromStepId when step ids are regenerated', () => {
+    const result = normalizeWorkflowIds({
+      name: 'Regen',
+      steps: [
+        {
+          id: 'old-a',
+          clientRef: 'old-a',
+          name: 'A',
+          plugin: 'test-plugin',
+          config: {},
+        },
+        {
+          id: 'old-b',
+          clientRef: 'old-b',
+          name: 'B',
+          plugin: 'test-plugin',
+          config: {
+            type: { $ref: { fromStepId: 'old-a', path: ['type'] } },
+          },
+          dependsOn: ['old-a'],
+        },
+      ],
+    });
+
+    const stepA = result.steps.find((s) => s.name === 'A')!;
+    const stepB = result.steps.find((s) => s.name === 'B')!;
+    expect(stepA.id).not.toBe('old-a');
+    expect(stepB.config).toEqual({
+      type: { $ref: { fromStepId: stepA.id, path: ['type'] } },
+    });
+  });
 });

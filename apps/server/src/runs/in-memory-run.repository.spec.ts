@@ -1,3 +1,4 @@
+import { jest } from '@jest/globals';
 import type { ConfigService } from '@nestjs/config';
 import type { RunRecord } from './runs.repository.js';
 import { InMemoryRunRepository } from './in-memory-run.repository.js';

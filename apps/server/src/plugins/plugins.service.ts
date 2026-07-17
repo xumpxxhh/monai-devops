@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { HttpException, HttpStatus, Injectable, type MessageEvent } from '@nestjs/common';
+import { extractContextReferences } from '@monai-devops/core-engine';
 import type { PluginConfig } from '@monai-devops/plugin-sdk';
 import { Observable } from 'rxjs';
 import { EngineService } from '../engine/engine.service.js';
@@ -43,9 +44,28 @@ export class PluginsService {
     return { name, configJsonSchema: schema };
   }
 
+  listResultSchemas() {
+    return this.engineService.getAllPluginResultJsonSchemas();
+  }
+
+  getResultSchema(name: string) {
+    const schema = this.engineService.getPluginResultJsonSchema(name);
+    if (!schema) {
+      throw new HttpException('插件不存在或未声明 resultSchema', HttpStatus.NOT_FOUND);
+    }
+    return { name, resultJsonSchema: schema };
+  }
+
   dryRun(name: string, config: PluginConfig): Observable<MessageEvent> {
     if (!this.engineService.getPlugin(name)) {
       throw new HttpException('插件不存在', HttpStatus.NOT_FOUND);
+    }
+
+    if (extractContextReferences(config).length > 0) {
+      throw new HttpException(
+        '试运行不支持配置中的上游步骤引用（$ref）；请先去掉引用或使用完整工作流运行',
+        HttpStatus.BAD_REQUEST,
+      );
     }
 
     const runId = `dry-run-${randomUUID()}`;

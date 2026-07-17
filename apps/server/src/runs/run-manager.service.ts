@@ -25,7 +25,6 @@ import {
   normalizeWorkflowIds,
   type WorkflowDraft,
 } from '../common/validation/normalize-workflow-ids.js';
-import { validateWorkflowDefinition } from '../common/validation/validate-workflow.js';
 import { EngineService } from '../engine/engine.service.js';
 import { RunStreamService } from './run-stream.service.js';
 import {
@@ -139,10 +138,16 @@ export class RunManagerService implements OnModuleInit {
       );
     }
 
-    const normalized = normalizeWorkflowIds(workflow);
+    const knownStepIds = new Set(
+      workflow.steps.map((step) => step.id?.trim()).filter((id): id is string => Boolean(id)),
+    );
+    const normalized = normalizeWorkflowIds(workflow, {
+      ...(workflow.id?.trim() ? { workflowId: workflow.id.trim() } : {}),
+      ...(knownStepIds.size > 0 ? { knownStepIds } : {}),
+    });
 
     try {
-      validateWorkflowDefinition(normalized);
+      this.engineService.validateWorkflow(normalized);
     } catch (error) {
       if (error instanceof WorkflowValidationError) {
         throw error;
