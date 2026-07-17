@@ -1,7 +1,14 @@
-import { Field, Input, Select, Checkbox } from '../form';
+import { Field, Input, Select, Cascader, Checkbox } from '../form';
 import type { ConfigReferenceSource, JsonObjectSchema } from './types';
 import { humanizeFieldLabel, isSensitiveField } from './schema-utils';
-import { buildResultFieldOptions, formatContextRefLabel, isContextRef } from './context-ref';
+import {
+  RESULT_ROOT_VALUE,
+  buildResultFieldTree,
+  cascaderValueToPath,
+  formatContextRefLabel,
+  isContextRef,
+  pathToCascaderValue,
+} from './context-ref';
 
 interface JsonSchemaFormProps {
   schema: JsonObjectSchema;
@@ -142,10 +149,9 @@ function ReferenceFieldEditor({
   const ref = isContextRef(fieldValue) ? fieldValue : null;
   const selectedSource =
     sources.find((s) => s.stepId === ref?.$ref.fromStepId) ?? sources[0] ?? null;
-  const pathOptions = selectedSource
-    ? buildResultFieldOptions(selectedSource.resultSchema)
-    : [{ path: [] as string[], label: '整个结果' }];
-  const pathKey = JSON.stringify(ref?.$ref.path ?? []);
+  const pathTree = selectedSource
+    ? buildResultFieldTree(selectedSource.resultSchema)
+    : [{ value: RESULT_ROOT_VALUE, label: '整个结果' }];
 
   return (
     <div className="space-y-2">
@@ -166,11 +172,11 @@ function ReferenceFieldEditor({
         }))}
         disabled={disabled || sources.length === 0}
       />
-      <Select
+      <Cascader
         id={`ref-path-${fieldKey}`}
-        value={pathKey}
+        value={pathToCascaderValue(ref?.$ref.path ?? [])}
         onValueChange={(next) => {
-          const path = JSON.parse(next) as string[];
+          const path = cascaderValueToPath(next);
           const stepId = selectedSource?.stepId;
           if (!stepId) return;
           onChange({
@@ -178,10 +184,7 @@ function ReferenceFieldEditor({
             [fieldKey]: { $ref: { fromStepId: stepId, path } },
           });
         }}
-        options={pathOptions.map((opt) => ({
-          value: JSON.stringify(opt.path),
-          label: opt.label,
-        }))}
+        options={pathTree}
         disabled={disabled || !selectedSource}
       />
       {ref && (
@@ -209,14 +212,15 @@ function renderField(
   const label = humanizeFieldLabel(key, prop.description);
   const error = errors[key];
   const fieldValue = value[key];
-  const canReference = referenceSources !== undefined;
+  const sources = referenceSources ?? [];
+  const canReference = sources.length > 0;
   const isRef = isContextRef(fieldValue);
 
   const body = isRef ? (
     <ReferenceFieldEditor
       fieldKey={key}
       value={value}
-      sources={referenceSources ?? []}
+      sources={sources}
       error={error}
       onChange={onChange}
       disabled={disabled}
@@ -240,12 +244,10 @@ function renderField(
           disabled={disabled}
           onToggle={(mode) => {
             if (mode === 'ref') {
-              const first = referenceSources?.[0];
+              const first = sources[0];
               onChange({
                 ...value,
-                [key]: first
-                  ? { $ref: { fromStepId: first.stepId, path: [] } }
-                  : { $ref: { fromStepId: '', path: [] } },
+                [key]: { $ref: { fromStepId: first.stepId, path: [] } },
               });
               return;
             }
