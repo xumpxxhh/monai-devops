@@ -54,7 +54,7 @@ async function executeModelCallPlugin(
       data: fullResponse,
     };
   } catch (error) {
-    log.error('插件执行失败', { error });
+    log.error(`插件执行失败: ${(error as Error).message}`);
     if (error instanceof PluginCancelledError) {
       throw error;
     }
