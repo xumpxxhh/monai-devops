@@ -115,6 +115,7 @@ async function ${executeFnName}(
     return {
       success: true,
       message: \`插件执行成功: \${message}\`,
+      data: { message },
     };
   } catch (error) {
     return {
@@ -131,6 +132,9 @@ export const ${exportName} = createPlugin({
   name: '${pluginName}',
   version: '1.0.0',
   configSchema,
+  resultSchema: z.object({
+    message: z.string(),
+  }),
   execute: ${executeFnName},
   hooks: {
     beforeExecute: async () => {},

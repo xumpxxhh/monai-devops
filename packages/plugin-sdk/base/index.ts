@@ -26,6 +26,8 @@ export interface PluginDefinition extends PluginManifest {
   hooks?: PluginHooks;
   /** 插件 config schema；有则 createPlugin 在 execute 前校验 */
   configSchema?: z.ZodType;
+  /** 描述 PluginResult.data 的结构（供前端选字段 / 工作流引用校验）；不做运行时校验 */
+  resultSchema?: z.ZodType;
 }
 
 /**
@@ -35,6 +37,7 @@ export interface CreatePluginOptionsWithSchema<T extends z.ZodType> extends Plug
   configSchema: T;
   execute: (config: z.infer<T>, context: PluginContext) => Promise<PluginResult>;
   hooks?: PluginHooks<z.infer<T>>;
+  resultSchema?: z.ZodType;
 }
 
 /**
@@ -43,6 +46,7 @@ export interface CreatePluginOptionsWithSchema<T extends z.ZodType> extends Plug
 export interface CreatePluginOptionsWithoutSchema extends PluginManifest {
   execute: PluginExecuteFn;
   hooks?: PluginHooks;
+  resultSchema?: z.ZodType;
 }
 
 export type CreatePluginOptions<T extends z.ZodType = z.ZodType> =
@@ -106,7 +110,7 @@ export function createPlugin(options: CreatePluginOptionsWithoutSchema): PluginD
 export function createPlugin<T extends z.ZodType>(
   options: CreatePluginOptionsWithSchema<T> | CreatePluginOptionsWithoutSchema,
 ): PluginDefinition {
-  const { name, version, description, execute, hooks } = options;
+  const { name, version, description, execute, hooks, resultSchema } = options;
 
   if ('configSchema' in options && options.configSchema) {
     const { configSchema } = options;
@@ -125,6 +129,7 @@ export function createPlugin<T extends z.ZodType>(
       description,
       hooks,
       configSchema,
+      resultSchema,
       execute: async (rawConfig, context) => {
         const parsed = configSchema.safeParse(rawConfig);
         if (!parsed.success) {
@@ -146,6 +151,7 @@ export function createPlugin<T extends z.ZodType>(
     version,
     description,
     hooks,
+    resultSchema,
     execute: wrapWithHooks(legacyExecute, hooks),
   };
 }

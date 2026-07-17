@@ -36,6 +36,15 @@
 
 若插件业务逻辑需要读取 `resourceType`，在 schema 中显式声明 `resourceType: z.string().optional()` 即可（默认 `z.object()` 会 strip 未知字段）。
 
+### resultSchema
+
+可选 Zod schema，**只描述** `PluginResult.data` 的结构（不是整个 `PluginResult`）。用途：
+
+- 前端编排时选择「引用上游」字段树
+- 工作流启动/保存前校验：未声明 `resultSchema` 的插件**不能**被其他步骤的 `$ref` 引用
+
+`createPlugin` **原样透传** `resultSchema`，**不参与** `execute` 类型推断，也**不做**运行时校验（声明与实际返回 `data` 是否一致由插件作者保证）。
+
 ### InferPluginConfig
 
 工具类型，从 Zod schema 推断插件 config 类型：`InferPluginConfig<typeof configSchema>`。
@@ -106,6 +115,9 @@ export const myPlugin = createPlugin({
   version: '1.0.0',
   description: '示例插件',
   configSchema,
+  resultSchema: z.object({
+    message: z.string(),
+  }),
   execute,
 });
 ```
@@ -234,9 +246,10 @@ await fetch(url, { signal });
 
 1. **业务失败用 Result，不用 throw** — 便于 executor 统一归类为插件失败
 2. **用 `configSchema` 声明 config 结构** — 编译期类型安全 + 运行时统一校验
-3. **日志用 `getLogger`** — 不要 `console.log`，以便调用层聚合与展示
-4. **插件包只 production 依赖 SDK** — 不依赖 core-engine，保持可独立发布与测试
-5. **`name` 与工作流 `step.plugin` 一致** — 注册名即调用名
+3. **需要被下游引用时声明 `resultSchema`** — 只描述 `data`；未声明则不能作为 `$ref` 来源
+4. **日志用 `getLogger`** — 不要 `console.log`，以便调用层聚合与展示
+5. **插件包只 production 依赖 SDK** — 不依赖 core-engine，保持可独立发布与测试
+6. **`name` 与工作流 `step.plugin` 一致** — 注册名即调用名
 
 ## 在 monorepo 中新建插件
 

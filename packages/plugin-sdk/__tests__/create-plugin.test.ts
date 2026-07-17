@@ -54,6 +54,31 @@ describe('createPlugin with configSchema', () => {
     assert.equal(plugin.configSchema, configSchema);
   });
 
+  it('exposes resultSchema on PluginDefinition', () => {
+    const resultSchema = z.object({ answer: z.string() });
+    const plugin = createPlugin({
+      name: 'typed-plugin',
+      version: '1.0.0',
+      configSchema,
+      resultSchema,
+      execute: async () => ({ success: true, data: { answer: 'ok' } }),
+    });
+
+    assert.equal(plugin.resultSchema, resultSchema);
+  });
+
+  it('passes resultSchema without configSchema', () => {
+    const resultSchema = z.string();
+    const plugin = createPlugin({
+      name: 'legacy-plugin',
+      version: '1.0.0',
+      resultSchema,
+      execute: async () => ({ success: true, data: 'ok' }),
+    });
+
+    assert.equal(plugin.resultSchema, resultSchema);
+  });
+
   it('passes parsed config to hooks', async () => {
     let hookConfig: { type: string; label: string } | undefined;
 
