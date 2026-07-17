@@ -54,6 +54,7 @@ async function executeModelCallPlugin(
       data: fullResponse,
     };
   } catch (error) {
+    log.error('插件执行失败', { error });
     if (error instanceof PluginCancelledError) {
       throw error;
     }
@@ -72,6 +73,7 @@ export const modelCallPlugin = createPlugin({
   version: '1.0.0',
   description: '这是一个调用模型插件',
   configSchema,
+  resultSchema: z.string(),
   execute: executeModelCallPlugin,
   hooks: {
     beforeExecute: async () => {},

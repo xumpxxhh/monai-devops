@@ -31,16 +31,19 @@ async function executeTestPlugin(
       return {
         success: true,
         message: '单元测试执行成功',
+        data: { type, message: '单元测试执行成功' },
       };
     case 'integration':
       return {
         success: true,
         message: '集成测试执行成功',
+        data: { type, message: '集成测试执行成功' },
       };
     case 'e2e':
       return {
         success: true,
         message: 'E2E测试执行成功',
+        data: { type, message: 'E2E测试执行成功' },
       };
   }
 }
@@ -53,6 +56,10 @@ export const testPlugin = createPlugin({
   version: '1.0.0',
   description: '这是一个测试插件',
   configSchema,
+  resultSchema: z.object({
+    type: z.enum(['unit', 'integration', 'e2e']),
+    message: z.string(),
+  }),
   execute: executeTestPlugin,
   hooks: {
     beforeExecute: async () => {},
