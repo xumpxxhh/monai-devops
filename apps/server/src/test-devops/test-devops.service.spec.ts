@@ -13,11 +13,11 @@ describe('TestDevopsService', () => {
         {
           provide: EngineService,
           useValue: {
-            runWorkflow: jest.fn().mockResolvedValue({
+            runWorkflow: jest.fn(async () => ({
               success: true,
               workflowId: 'integration-closed-loop',
               results: [{ pluginResult: { message: '集成测试执行成功' } }],
-            }),
+            })),
           },
         },
       ],

@@ -1,3 +1,8 @@
 {
-  "plugins": ["test-plugin", "model-call-plugin"]
+  "plugins": [
+    "test-plugin",
+    "model-call-plugin",
+    "muti-result-plugin",
+    "print-plugin"
+  ]
 }

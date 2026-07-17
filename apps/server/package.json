@@ -24,7 +24,9 @@
   },
   "dependencies": {
     "@monai-devops/core-engine": "workspace:*",
+    "@monai-devops/model-call-plugin": "workspace:*",
     "@monai-devops/plugin-sdk": "workspace:*",
+    "@monai-devops/test-plugin": "workspace:*",
     "@nestjs/common": "^11.0.1",
     "@nestjs/config": "^4.0.4",
     "@nestjs/core": "^11.0.1",
@@ -33,12 +35,13 @@
     "@nestjs/websockets": "^11.1.24",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.1",
-    "zod-to-json-schema": "^3.24.0",
-    "@monai-devops/test-plugin": "workspace:*",
     "ws": "^8.21.0",
-    "@monai-devops/model-call-plugin": "workspace:*"
+    "zod-to-json-schema": "^3.24.0",
+    "@monai-devops/muti-result-plugin": "workspace:*",
+    "@monai-devops/print-plugin": "workspace:*"
   },
   "devDependencies": {
+    "@jest/globals": "30.4.1",
     "@nestjs/cli": "^11.0.0",
     "@nestjs/schematics": "^11.0.0",
     "@nestjs/testing": "^11.0.1",
