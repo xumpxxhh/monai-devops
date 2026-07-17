@@ -13,6 +13,7 @@ export interface JsonSchemaProperty {
 
 export interface JsonObjectSchema {
   type?: string;
+  enum?: Array<string | number | boolean>;
   properties?: Record<string, JsonSchemaProperty>;
   required?: string[];
   additionalProperties?: boolean;
