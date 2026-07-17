@@ -23,7 +23,7 @@ export interface ExecutionResultSerialized {
     code?: string;
   };
   error?: SerializedError;
-  failureKind?: 'plugin' | 'resource' | 'internal';
+  failureKind?: 'plugin' | 'resource' | 'internal' | 'config_resolution';
   skipReason?:
     | 'condition_not_met'
     | 'dependency_failed'
@@ -117,6 +117,7 @@ export interface PluginInfo {
   version: string;
   description?: string;
   hasConfigSchema?: boolean;
+  hasResultSchema?: boolean;
 }
 
 export interface PluginConfigSchemaResponse {
@@ -131,11 +132,18 @@ export interface PluginConfigSchemaResponse {
         default?: unknown;
         minLength?: number;
         description?: string;
+        properties?: Record<string, unknown>;
+        items?: unknown;
       }
     >;
     required?: string[];
     additionalProperties?: boolean;
   } | null;
+}
+
+export interface PluginResultSchemaResponse {
+  name: string;
+  resultJsonSchema: PluginConfigSchemaResponse['configJsonSchema'];
 }
 
 export interface ResourceSlot {

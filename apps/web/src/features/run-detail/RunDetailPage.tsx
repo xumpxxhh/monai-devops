@@ -535,7 +535,16 @@ export default function RunDetailPage() {
               <>
                 {drawerStep.failureKind && (
                   <div>
-                    <span className="text-muted">失败类型:</span> {drawerStep.failureKind}
+                    <span className="text-muted">失败类型:</span>{' '}
+                    {drawerStep.failureKind === 'config_resolution'
+                      ? '配置引用解析失败'
+                      : drawerStep.failureKind === 'plugin'
+                        ? '插件失败'
+                        : drawerStep.failureKind === 'resource'
+                          ? '资源失败'
+                          : drawerStep.failureKind === 'internal'
+                            ? '内部错误'
+                            : drawerStep.failureKind}
                   </div>
                 )}
                 {drawerStep.error && (

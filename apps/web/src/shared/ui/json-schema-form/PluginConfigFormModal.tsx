@@ -1,6 +1,7 @@
 import { Modal } from '../Modal';
 import { JsonSchemaForm } from './JsonSchemaForm';
 import { usePluginConfigSchema } from './usePluginConfigSchema';
+import type { ConfigReferenceSource } from './types';
 
 interface PluginConfigFormModalProps {
   open: boolean;
@@ -8,6 +9,7 @@ interface PluginConfigFormModalProps {
   pluginName: string;
   value: Record<string, unknown>;
   onConfirm: (config: Record<string, unknown>) => void;
+  referenceSources?: ConfigReferenceSource[];
 }
 
 export function PluginConfigFormModal({
@@ -16,6 +18,7 @@ export function PluginConfigFormModal({
   pluginName,
   value,
   onConfirm,
+  referenceSources,
 }: PluginConfigFormModalProps) {
   const { schema, loading, loadError, formValue, setFormValue, fieldErrors, validate, ready } =
     usePluginConfigSchema(pluginName, { enabled: open, initialValue: value });
@@ -61,6 +64,7 @@ export function PluginConfigFormModal({
           value={formValue}
           errors={fieldErrors}
           onChange={setFormValue}
+          referenceSources={referenceSources}
         />
       )}
     </Modal>

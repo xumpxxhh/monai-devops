@@ -82,6 +82,23 @@ describe('validateStepConfig', () => {
     const result = validateStepConfig('no-schema-plugin', {}, createSchemaMap());
     expect(result).toEqual({ ok: true, config: {} });
   });
+
+  it('passes when required field is a ContextRef', () => {
+    const result = validateStepConfig(
+      'model-call-plugin',
+      {
+        apiKey: { $ref: { fromStepId: 'upstream', path: ['secret'] } },
+      },
+      createSchemaMap(),
+    );
+    expect(result).toEqual({
+      ok: true,
+      config: {
+        apiKey: { $ref: { fromStepId: 'upstream', path: ['secret'] } },
+        message: 'Hello from model-call-plugin',
+      },
+    });
+  });
 });
 
 describe('validateAllStepConfigs', () => {

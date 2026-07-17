@@ -198,9 +198,10 @@ export default function Test() {
   const wsRef = useRef<WebSocket | null>(null);
 
   useEffect(() => {
+    const wsRefCurrent = wsRef;
     return () => {
-      const socket = wsRef.current;
-      socket?.close();
+      // Need the socket active at unmount time (set later by runTest), not the mount-time value.
+      wsRefCurrent.current?.close();
     };
   }, []);
 

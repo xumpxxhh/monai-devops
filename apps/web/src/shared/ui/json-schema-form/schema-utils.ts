@@ -1,4 +1,5 @@
 import type { JsonObjectSchema } from './types';
+import { isContextRef } from './context-ref';
 
 export function humanizeFieldLabel(key: string, description?: string): string {
   if (description?.trim()) return description.trim();
@@ -52,6 +53,7 @@ export function mergeSchemaDeclaredDefaults(
   const properties = schema.properties ?? {};
 
   for (const [key, prop] of Object.entries(properties)) {
+    if (isContextRef(merged[key])) continue;
     if (prop.default !== undefined && (merged[key] === undefined || merged[key] === null)) {
       merged[key] = prop.default;
     }
@@ -70,6 +72,7 @@ export function validateAgainstSchema(
 
   for (const key of required) {
     const fieldValue = value[key];
+    if (isContextRef(fieldValue)) continue;
     if (fieldValue === undefined || fieldValue === null || fieldValue === '') {
       errors[key] = '必填项';
     }
@@ -77,6 +80,7 @@ export function validateAgainstSchema(
 
   for (const [key, prop] of Object.entries(properties)) {
     const fieldValue = value[key];
+    if (isContextRef(fieldValue)) continue;
     if (fieldValue === undefined || fieldValue === null || fieldValue === '') {
       continue;
     }
@@ -110,6 +114,11 @@ export function coerceValidatedValues(
   for (const [key, prop] of Object.entries(properties)) {
     const fieldValue = value[key];
     if (fieldValue === undefined || fieldValue === null || fieldValue === '') {
+      continue;
+    }
+
+    if (isContextRef(fieldValue)) {
+      result[key] = fieldValue;
       continue;
     }
 

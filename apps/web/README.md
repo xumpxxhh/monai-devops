@@ -215,7 +215,7 @@ pnpm preview    # 预览生产构建
 
 | 模块 | 主要接口 |
 | --- | --- |
-| `pluginsApi` | `GET /plugins`、`GET /plugins/config-schemas`、`POST /plugins/:name/dry-run`（SSE） |
+| `pluginsApi` | `GET /plugins`、`GET /plugins/config-schemas`、`GET /plugins/result-schemas`、`POST /plugins/:name/dry-run`（SSE） |
 | `resourcesApi` | `GET /resources`、`GET /resources/queue` |
 | `statsApi` | `GET /stats/overview` |
 | `healthApi` | `GET /healthz` |
@@ -307,6 +307,12 @@ Token 定义于 `tailwind.config.js`，主要语义色：
 - 可调用后端 `POST /workflows/validate` 做服务端校验
 
 插件配置通过 `PluginConfigFormModal` 打开，基于 `GET /plugins/config-schemas` 预加载 JSON Schema。
+
+每个配置字段支持 **手填 / 引用上游** 二态切换：
+
+- 可引用上游 = 当前步骤的祖先步骤 ∩ 插件声明了 `resultSchema` 的步骤（`listResultSchemas` / `resultSchemaMap`）
+- 引用模式将字段值整体设为 `{ $ref: { fromStepId, path } }`（不支持字符串内混合插值）
+- 设计时校验对 `ContextRef` 跳过类型检查，仍计为已填；权威校验在保存时由服务端 `validateWorkflowContextReferences` 兜底
 
 > 节点坐标**未持久化**到 workflow 定义；刷新后由 dagre 重新排布。
 

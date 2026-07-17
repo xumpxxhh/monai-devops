@@ -21,7 +21,7 @@ import {
   type OnEdgesChange,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
-import type { WorkflowDefinition } from '@monai-devops/core-engine';
+import { extractContextReferences, type WorkflowDefinition } from '@monai-devops/core-engine';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import {
   faCog,
@@ -35,7 +35,7 @@ import { runsApi } from '../../shared/api/runs';
 import { ApiError } from '../../shared/api/http';
 import { pluginsApi } from '../../shared/api/misc';
 import type { PluginInfo } from '../../shared/types';
-import { validateDag } from './dag-utils';
+import { getAncestorIds, validateDag } from './dag-utils';
 import {
   formatStepConfigIssues,
   validateAllStepConfigs,
@@ -47,7 +47,10 @@ import {
   PluginConfigFormModal,
   preloadPluginConfigSchemas,
 } from '../../shared/ui/json-schema-form';
-import type { JsonObjectSchema } from '../../shared/ui/json-schema-form/types';
+import type {
+  ConfigReferenceSource,
+  JsonObjectSchema,
+} from '../../shared/ui/json-schema-form/types';
 import { toast } from 'sonner';
 import {
   assignEdgeHandles,
@@ -286,6 +289,9 @@ export default function WorkflowEditorPage() {
   const [workflowNameError, setWorkflowNameError] = useState('');
   const [plugins, setPlugins] = useState<PluginInfo[]>([]);
   const [schemaMap, setSchemaMap] = useState<Map<string, JsonObjectSchema | null> | null>(null);
+  const [resultSchemaMap, setResultSchemaMap] = useState<Map<string, JsonObjectSchema | null>>(
+    () => new Map(),
+  );
   const [configModalOpen, setConfigModalOpen] = useState(false);
   const [configInvalidNodeIds, setConfigInvalidNodeIds] = useState<Set<string>>(() => new Set());
   const [saving, setSaving] = useState(false);
@@ -310,22 +316,34 @@ export default function WorkflowEditorPage() {
   );
 
   useEffect(() => {
-    void Promise.allSettled([pluginsApi.list(), preloadPluginConfigSchemas()]).then(
-      ([listResult, schemaResult]) => {
-        if (listResult.status === 'fulfilled') {
-          setPlugins(listResult.value);
-        } else {
-          toast.warning('加载插件列表失败，使用本地兜底数据');
-          setPlugins([{ name: 'test-plugin', version: '1.0.0' }]);
-        }
+    void Promise.allSettled([
+      pluginsApi.list(),
+      preloadPluginConfigSchemas(),
+      pluginsApi.listResultSchemas(),
+    ]).then(([listResult, schemaResult, resultSchemaResult]) => {
+      if (listResult.status === 'fulfilled') {
+        setPlugins(listResult.value);
+      } else {
+        toast.warning('加载插件列表失败，使用本地兜底数据');
+        setPlugins([{ name: 'test-plugin', version: '1.0.0' }]);
+      }
+      if (resultSchemaResult.status === 'fulfilled') {
+        setResultSchemaMap(
+          new Map(
+            resultSchemaResult.value.map((item) => [
+              item.name,
+              item.resultJsonSchema as JsonObjectSchema | null,
+            ]),
+          ),
+        );
+      }
 
-        if (schemaResult.status === 'fulfilled') {
-          setSchemaMap(schemaResult.value);
-        } else {
-          toast.warning('加载插件配置规则失败');
-        }
-      },
-    );
+      if (schemaResult.status === 'fulfilled') {
+        setSchemaMap(schemaResult.value);
+      } else {
+        toast.warning('加载插件配置规则失败');
+      }
+    });
   }, []);
 
   useEffect(() => {
@@ -378,6 +396,44 @@ export default function WorkflowEditorPage() {
 
   const selectedNode = useMemo(() => nodes.find((n) => n.selected) ?? null, [nodes]);
   const selectedStepId = selectedNode?.data.stepId;
+
+  const editorSteps = useMemo(
+    () =>
+      nodes.map((node) => {
+        const nodeById = new Map(nodes.map((n) => [n.id, n]));
+        return {
+          id: resolveNodeRef(node),
+          plugin: node.data.plugin,
+          label: node.data.label,
+          dependsOn: edges
+            .filter((e) => e.target === node.id)
+            .map((e) => {
+              const source = nodeById.get(e.source);
+              return source ? resolveNodeRef(source) : e.source;
+            }),
+        };
+      }),
+    [nodes, edges],
+  );
+
+  const selectedReferenceSources = useMemo((): ConfigReferenceSource[] => {
+    if (!selectedNode) return [];
+    const currentId = resolveNodeRef(selectedNode);
+    const ancestors = getAncestorIds(currentId, editorSteps);
+    const sources: ConfigReferenceSource[] = [];
+    for (const step of editorSteps) {
+      if (!ancestors.has(step.id)) continue;
+      const resultSchema = resultSchemaMap.get(step.plugin);
+      if (!resultSchema) continue;
+      sources.push({
+        stepId: step.id,
+        label: step.label,
+        plugin: step.plugin,
+        resultSchema,
+      });
+    }
+    return sources;
+  }, [selectedNode, editorSteps, resultSchemaMap]);
 
   const addStep = (plugin: string) => {
     const clientRef = createClientRef();
@@ -490,9 +546,30 @@ export default function WorkflowEditorPage() {
       return false;
     }
 
+    for (const step of editorSteps) {
+      const refs = extractContextReferences(
+        nodes.find((n) => resolveNodeRef(n) === step.id)?.data.config ?? {},
+      );
+      if (refs.length === 0) continue;
+      const ancestors = getAncestorIds(step.id, editorSteps);
+      for (const ref of refs) {
+        if (!ancestors.has(ref.$ref.fromStepId)) {
+          toast.error(`步骤「${step.label}」引用了非祖先步骤 ${ref.$ref.fromStepId}`);
+          return false;
+        }
+        const source = editorSteps.find((s) => s.id === ref.$ref.fromStepId);
+        if (!source || !resultSchemaMap.get(source.plugin)) {
+          toast.error(
+            `步骤「${step.label}」引用的上游「${ref.$ref.fromStepId}」未声明 resultSchema`,
+          );
+          return false;
+        }
+      }
+    }
+
     setConfigInvalidNodeIds(new Set());
     return true;
-  }, [workflowName, nodes, schemaMap, dagValidation, selectNodeById]);
+  }, [workflowName, nodes, schemaMap, dagValidation, selectNodeById, editorSteps, resultSchemaMap]);
 
   const handleSave = async () => {
     if (!assertWorkflowReady()) return;
@@ -696,6 +773,7 @@ export default function WorkflowEditorPage() {
                 pluginName={selectedNode.data.plugin}
                 value={(selectedNode.data.config ?? {}) as Record<string, unknown>}
                 onConfirm={(config) => updateSelected({ config })}
+                referenceSources={selectedReferenceSources}
               />
             </>
           ) : (

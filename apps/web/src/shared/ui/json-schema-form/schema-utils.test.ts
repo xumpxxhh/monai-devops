@@ -51,4 +51,17 @@ describe('schema-utils', () => {
     };
     expect(coerceValidatedValues(schema, { count: '3' })).toEqual({ count: 3 });
   });
+
+  it('skips type checks for ContextRef fields and treats them as filled', () => {
+    expect(
+      validateAgainstSchema(modelCallSchema, {
+        apiKey: { $ref: { fromStepId: 'a', path: [] } },
+      }),
+    ).toEqual({});
+  });
+
+  it('preserves ContextRef in coerceValidatedValues', () => {
+    const ref = { $ref: { fromStepId: 'a', path: ['x'] } };
+    expect(coerceValidatedValues(modelCallSchema, { apiKey: ref })).toEqual({ apiKey: ref });
+  });
 });

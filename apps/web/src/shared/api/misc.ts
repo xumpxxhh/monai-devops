@@ -4,6 +4,7 @@ import type {
   PluginConfigSchemaResponse,
   PluginDryRunSseMessage,
   PluginInfo,
+  PluginResultSchemaResponse,
   QueueStatus,
   ResourceSlot,
   SerializedWorkflowLifecycleEvent,
@@ -23,6 +24,9 @@ export const pluginsApi = {
   },
   listConfigSchemas() {
     return apiGet<PluginConfigSchemaResponse[]>('/plugins/config-schemas');
+  },
+  listResultSchemas() {
+    return apiGet<PluginResultSchemaResponse[]>('/plugins/result-schemas');
   },
   dryRun(name: string, config: Record<string, unknown>, options: DryRunOptions = {}) {
     return new Promise<ExecutionResultSerialized>((resolve, reject) => {
