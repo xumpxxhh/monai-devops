@@ -8,10 +8,11 @@ import {
 } from '@monai-devops/plugin-sdk';
 import type { PluginContext, PluginResult } from '@monai-devops/plugin-sdk';
 import { ChatOpenAI } from '@langchain/openai';
+import { env } from 'node:process';
 
 const configSchema = z.object({
   message: z.string().default('Hello from model-call-plugin'),
-  apiKey: z.string().min(1, 'apiKey is required'),
+  apiKey: z.string().min(1).optional(),
 });
 
 /**
@@ -23,7 +24,15 @@ async function executeModelCallPlugin(
 ): Promise<PluginResult> {
   const log = getLogger(context);
   const signal = getAbortSignal(context);
-  const { message, apiKey } = config;
+  const { message } = config;
+  const apiKey = config.apiKey ?? env.OPENAI_API_KEY;
+
+  if (!apiKey) {
+    return {
+      success: false,
+      message: '缺少 apiKey：请在插件配置中传入，或设置环境变量 OPENAI_API_KEY',
+    };
+  }
 
   const openAIModel = new ChatOpenAI({
     configuration: {
@@ -54,7 +63,7 @@ async function executeModelCallPlugin(
       data: fullResponse,
     };
   } catch (error) {
-    log.error(`插件执行失败: ${(error as Error).message}`);
+    log.append(`插件执行失败: ${(error as Error).message}`, 'stderr');
     if (error instanceof PluginCancelledError) {
       throw error;
     }

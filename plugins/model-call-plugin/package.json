@@ -33,6 +33,7 @@
     "node": ">=20"
   },
   "devDependencies": {
+    "@types/node": "^24.0.0",
     "typescript": "catalog:"
   },
   "packageManager": "pnpm@10.18.2"
