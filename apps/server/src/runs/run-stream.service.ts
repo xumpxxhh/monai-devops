@@ -20,7 +20,12 @@ export class RunStreamService {
   private readonly subscribers = new Map<string, Set<WebSocket>>();
   private readonly clientRuns = new Map<WebSocket, Set<string>>();
 
-  subscribe(runId: string, client: WebSocket, replay: SerializedWorkflowLifecycleEvent[]): void {
+  subscribe(
+    runId: string,
+    client: WebSocket,
+    replay: SerializedWorkflowLifecycleEvent[],
+    fromEventIndex = 0,
+  ): void {
     if (!this.subscribers.has(runId)) {
       this.subscribers.set(runId, new Set());
     }
@@ -31,7 +36,8 @@ export class RunStreamService {
     }
     this.clientRuns.get(client)!.add(runId);
 
-    for (const event of replay) {
+    const startIndex = Math.max(0, Math.min(fromEventIndex, replay.length));
+    for (const event of replay.slice(startIndex)) {
       this.send(client, { type: 'event', runId, event });
     }
   }

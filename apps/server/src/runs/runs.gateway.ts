@@ -6,7 +6,7 @@ import { RunManagerService } from './run-manager.service.js';
 import { RunStreamService } from './run-stream.service.js';
 
 type WsInboundMessage =
-  | { type: 'subscribe'; runId: string }
+  | { type: 'subscribe'; runId: string; fromEventIndex?: number }
   | { type: 'unsubscribe'; runId: string }
   | { type: 'run'; workflow: WorkflowDefinition };
 
@@ -55,7 +55,15 @@ export class RunsGateway implements OnGatewayConnection, OnGatewayDisconnect {
         this.runStream.send(client, { type: 'error', message: 'subscribe 需要 runId' });
         return;
       }
-      const result = await this.runManager.subscribeClientAsync(message.runId, client);
+      const fromEventIndex =
+        typeof message.fromEventIndex === 'number' && Number.isFinite(message.fromEventIndex)
+          ? Math.max(0, Math.floor(message.fromEventIndex))
+          : 0;
+      const result = await this.runManager.subscribeClientAsync(
+        message.runId,
+        client,
+        fromEventIndex,
+      );
       if (!result.ok) {
         this.runStream.send(client, { type: 'error', message: result.message });
       }

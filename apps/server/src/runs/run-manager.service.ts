@@ -299,13 +299,14 @@ export class RunManagerService implements OnModuleInit {
   async subscribeClientAsync(
     runId: string,
     client: import('ws').WebSocket,
+    fromEventIndex = 0,
   ): Promise<{ ok: true } | { ok: false; message: string }> {
     const record = await this.runRepository.findById(runId);
     if (!record) {
       return { ok: false, message: `Run ${runId} 不存在` };
     }
 
-    this.runStream.subscribe(runId, client, record.events);
+    this.runStream.subscribe(runId, client, record.events, fromEventIndex);
 
     if (
       record.result &&
