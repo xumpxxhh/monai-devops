@@ -20,13 +20,13 @@ describe('run-state reducer', () => {
 
     state = applyRunEvent(state, {
       type: 'workflow:start',
-      meta: { runId: 'run-1', workflowId: 'wf-1' },
+      meta: { workflowId: 'wf-1' },
       workflow,
     });
 
     state = applyRunEvent(state, {
       type: 'step:start',
-      meta: { runId: 'run-1', workflowId: 'wf-1' },
+      meta: { workflowId: 'wf-1' },
       step: { id: 'step-1', name: 'Step 1', plugin: 'test-plugin' },
     });
     expect(state.steps['step-1'].status).toBe('running');
@@ -34,7 +34,7 @@ describe('run-state reducer', () => {
 
     state = applyRunEvent(state, {
       type: 'plugin:log',
-      meta: { runId: 'run-1', workflowId: 'wf-1' },
+      meta: { workflowId: 'wf-1' },
       step: { id: 'step-1', name: 'Step 1', plugin: 'test-plugin' },
       log: { message: 'hello', level: 'info' },
     });
@@ -42,13 +42,13 @@ describe('run-state reducer', () => {
 
     state = applyRunEvent(state, {
       type: 'plugin:log',
-      meta: { runId: 'run-1', workflowId: 'wf-1' },
+      meta: { workflowId: 'wf-1' },
       step: { id: 'step-1', name: 'Step 1', plugin: 'test-plugin' },
       log: { message: 'line1\n', level: 'info', stream: 'stdout' },
     });
     state = applyRunEvent(state, {
       type: 'plugin:log',
-      meta: { runId: 'run-1', workflowId: 'wf-1' },
+      meta: { workflowId: 'wf-1' },
       step: { id: 'step-1', name: 'Step 1', plugin: 'test-plugin' },
       log: { message: 'line2\n', level: 'info', stream: 'stdout' },
     });
@@ -59,7 +59,7 @@ describe('run-state reducer', () => {
 
     state = applyRunEvent(state, {
       type: 'step:finished',
-      meta: { runId: 'run-1', workflowId: 'wf-1' },
+      meta: { workflowId: 'wf-1' },
       step: { id: 'step-1', name: 'Step 1', plugin: 'test-plugin' },
       result: { status: 'completed', success: true, stepId: 'step-1' },
     });
@@ -68,7 +68,7 @@ describe('run-state reducer', () => {
 
     state = applyRunEvent(state, {
       type: 'workflow:finished',
-      meta: { runId: 'run-1', workflowId: 'wf-1' },
+      meta: { workflowId: 'wf-1' },
       result: { success: true, workflowId: 'wf-1', results: [] },
     });
     expect(state.status).toBe('finished');

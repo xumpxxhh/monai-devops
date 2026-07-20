@@ -72,7 +72,7 @@ function createPackageJson(pluginName) {
       node: '>=20',
     },
     devDependencies: {
-      typescript: '^5.7.3',
+      typescript: 'catalog:',
     },
     packageManager: 'pnpm@10.18.2',
   };
