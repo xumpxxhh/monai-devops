@@ -11,13 +11,15 @@ export interface UseWorkflowRunOptions {
   runId?: string;
   /** 为 false 时不自动订阅 runId（默认 true，需同时提供 runId） */
   autoSubscribe?: boolean;
+  /** REST 已加载的事件数，WS subscribe 时跳过 replay */
+  fromEventIndex?: number;
   onEvent?: (event: SerializedWorkflowLifecycleEvent) => void;
   onDone?: (result: WorkflowRunResultSerialized) => void;
   onError?: (message: string) => void;
 }
 
 export function useWorkflowRun(options: UseWorkflowRunOptions = {}) {
-  const { runId, autoSubscribe = true } = options;
+  const { runId, autoSubscribe = true, fromEventIndex } = options;
   const client = getSharedWorkflowRunClient();
   const [status, setStatus] = useState<WsConnectionStatus>(client.getStatus());
   const optionsRef = useRef(options);
@@ -41,7 +43,7 @@ export function useWorkflowRun(options: UseWorkflowRunOptions = {}) {
     };
     listenerRef.current = listener;
 
-    client.subscribe(runId, listener).catch((e) => {
+    client.subscribe(runId, listener, { fromEventIndex }).catch((e) => {
       optionsRef.current.onError?.(e instanceof Error ? e.message : 'WebSocket 订阅失败');
     });
 
@@ -49,7 +51,7 @@ export function useWorkflowRun(options: UseWorkflowRunOptions = {}) {
       client.unsubscribe(runId, listener);
       listenerRef.current = null;
     };
-  }, [client, runId, autoSubscribe]);
+  }, [client, runId, autoSubscribe, fromEventIndex]);
 
   const runWorkflow = useCallback(
     async (workflow: WorkflowDefinition) => {

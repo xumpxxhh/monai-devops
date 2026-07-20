@@ -62,7 +62,7 @@ export type WsOutboundMessage =
   | { type: 'error'; runId?: string; message: string };
 
 export type WsInboundMessage =
-  | { type: 'subscribe'; runId: string }
+  | { type: 'subscribe'; runId: string; fromEventIndex?: number }
   | { type: 'unsubscribe'; runId: string }
   | { type: 'run'; workflow: import('@monai-devops/core-engine').WorkflowDefinition };
 

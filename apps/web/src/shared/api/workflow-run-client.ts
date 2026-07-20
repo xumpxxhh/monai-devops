@@ -153,9 +153,13 @@ export class WorkflowRunClient {
     ws.send(JSON.stringify(message));
   }
 
-  private sendSubscribe(runId: string): void {
+  private sendSubscribe(runId: string, fromEventIndex?: number): void {
     if (this.subscribedRunIds.has(runId)) return;
-    this.send({ type: 'subscribe', runId });
+    const message: WsInboundMessage = { type: 'subscribe', runId };
+    if (fromEventIndex != null && fromEventIndex > 0) {
+      message.fromEventIndex = fromEventIndex;
+    }
+    this.send(message);
     this.subscribedRunIds.add(runId);
   }
 
@@ -169,10 +173,14 @@ export class WorkflowRunClient {
     this.subscribedRunIds.delete(runId);
   }
 
-  async subscribe(runId: string, listener: RunListener): Promise<void> {
+  async subscribe(
+    runId: string,
+    listener: RunListener,
+    options?: { fromEventIndex?: number },
+  ): Promise<void> {
     this.ensureListenerSet(runId).add(listener);
     await this.connect();
-    this.sendSubscribe(runId);
+    this.sendSubscribe(runId, options?.fromEventIndex);
   }
 
   unsubscribe(runId: string, listener: RunListener): void {

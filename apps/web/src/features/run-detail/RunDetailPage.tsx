@@ -261,7 +261,10 @@ export default function RunDetailPage() {
   const [controlLoading, setControlLoading] = useState(false);
   const [drawerStep, setDrawerStep] = useState<StepView | null>(null);
   const [wsBanner, setWsBanner] = useState('');
-  const [subscribeKey, setSubscribeKey] = useState<string | null>(null);
+  const [wsSubscribe, setWsSubscribe] = useState<{
+    runId: string;
+    fromEventIndex: number;
+  } | null>(null);
   const [layoutMode, setLayoutMode] = useState<LayoutMode>(readLayoutMode);
   const logEndRef = useRef<HTMLDivElement>(null);
 
@@ -293,12 +296,13 @@ export default function RunDetailPage() {
     const terminalStatus = terminalStatusFromResult(result);
     setRecordStatus(terminalStatus);
     setRunState((prev) => (prev ? { ...prev, status: terminalStatus, finalResult: result } : prev));
-    setSubscribeKey(null);
+    setWsSubscribe(null);
   }, []);
 
   const { status: wsStatus } = useWorkflowRun({
     runId,
-    autoSubscribe: subscribeKey === runId,
+    autoSubscribe: wsSubscribe?.runId === runId,
+    fromEventIndex: wsSubscribe?.fromEventIndex ?? 0,
     onEvent: handleEvent,
     onDone: handleDone,
     onError: (msg) => setWsBanner(msg),
@@ -323,15 +327,15 @@ export default function RunDetailPage() {
       setRunState({ ...hydrated, status: record.status });
 
       if (ACTIVE_RUN_STATUSES.has(record.status)) {
-        setSubscribeKey(runId!);
+        setWsSubscribe({ runId: runId!, fromEventIndex: record.events.length });
       } else {
-        setSubscribeKey(null);
+        setWsSubscribe(null);
       }
     }
 
     load().catch((e) => {
       setRunState(createInitialRunState(runId!, undefined));
-      setSubscribeKey(null);
+      setWsSubscribe(null);
       setWsBanner('无法加载运行详情');
       toast.error(e instanceof Error ? e.message : '无法加载运行详情');
     });
@@ -357,7 +361,7 @@ export default function RunDetailPage() {
         toast.success(mode === 'hard' ? '已请求强制取消' : '已请求取消(至当前步骤完成)');
       }
       if (result.status === 'cancelled') {
-        setSubscribeKey(null);
+        setWsSubscribe(null);
       }
     } catch (e) {
       toast.error(e instanceof Error ? e.message : '取消失败');
@@ -386,7 +390,7 @@ export default function RunDetailPage() {
     try {
       const result = await runsApi.resume(runId);
       setRecordStatus(result.status as RunStatus);
-      setSubscribeKey(runId);
+      setWsSubscribe((prev) => (prev?.runId === runId ? prev : { runId, fromEventIndex: 0 }));
       toast.success('运行已继续');
     } catch (e) {
       toast.error(e instanceof Error ? e.message : '继续失败');
@@ -420,7 +424,7 @@ export default function RunDetailPage() {
   const canCancel = CANCELLABLE_STATUSES.has(recordStatus);
   const canPause = PAUSABLE_STATUSES.has(recordStatus);
   const canResume = RESUMABLE_STATUSES.has(recordStatus);
-  const isWaitingForEvents = subscribeKey === runId;
+  const isWaitingForEvents = wsSubscribe?.runId === runId;
 
   const logPanelClass =
     layoutMode === 'vertical'
