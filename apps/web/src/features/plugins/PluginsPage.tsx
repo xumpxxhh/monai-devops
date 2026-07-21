@@ -2,13 +2,13 @@ import { useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { pluginsApi } from '../../shared/api/misc';
 import type { ExecutionResultSerialized, PluginInfo } from '../../shared/types';
-import { StatusBadge } from '../../shared/ui/StatusBadge';
+import { StatusBadge } from '../../shared/status/StatusBadge';
 import { EmptyState } from '../../shared/ui/EmptyState';
 import {
   PluginConfigForm,
   type PluginConfigFormHandle,
   preloadPluginConfigSchemas,
-} from '../../shared/ui/json-schema-form';
+} from '../../shared/plugins';
 import { appendPluginLogEvent, type LogLine } from '../run-detail/run-state';
 
 export default function PluginsPage() {

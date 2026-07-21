@@ -7,8 +7,8 @@ import {
   faPuzzlePiece,
   faServer,
 } from '@fortawesome/free-solid-svg-icons';
-import type { RunRecord } from '../types';
-import { RUN_STATUS_META } from '../types/status';
+import type { RunRecord } from '../shared/types';
+import { RUN_STATUS_META } from '../shared/types/status';
 
 const NAV = [
   { to: '/', label: '概览', icon: faGaugeHigh, end: true },

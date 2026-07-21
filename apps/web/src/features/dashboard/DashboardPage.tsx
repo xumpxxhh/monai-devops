@@ -5,7 +5,7 @@ import { statsApi } from '../../shared/api/misc';
 import { runsApi } from '../../shared/api/runs';
 import type { RunRecord, StatsOverview } from '../../shared/types';
 import { RUN_STATUS_META } from '../../shared/types/status';
-import { ProgressBar } from '../../shared/ui/ProgressBar';
+import { ProgressBar } from '../../shared/status/ProgressBar';
 
 function KpiCard({
   label,

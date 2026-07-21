@@ -1,6 +1,6 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef } from 'react';
-import { JsonSchemaForm } from './JsonSchemaForm';
-import { mergeWithDefaults } from './schema-utils';
+import { JsonSchemaForm } from '../ui/json-schema-form/JsonSchemaForm';
+import { mergeWithDefaults } from '../ui/json-schema-form/schema-utils';
 import { usePluginConfigSchema, type ValidateResult } from './usePluginConfigSchema';
 
 export interface PluginConfigFormHandle {

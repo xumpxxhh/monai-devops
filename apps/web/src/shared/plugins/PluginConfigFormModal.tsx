@@ -1,7 +1,7 @@
-import { Modal } from '../Modal';
-import { JsonSchemaForm } from './JsonSchemaForm';
+import { Modal } from '../ui/Modal';
+import { JsonSchemaForm } from '../ui/json-schema-form/JsonSchemaForm';
+import type { ConfigReferenceSource } from '../ui/json-schema-form/types';
 import { usePluginConfigSchema } from './usePluginConfigSchema';
-import type { ConfigReferenceSource } from './types';
 
 interface PluginConfigFormModalProps {
   open: boolean;

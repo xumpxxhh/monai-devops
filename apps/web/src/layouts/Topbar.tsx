@@ -2,9 +2,9 @@ import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faCube, faPlus } from '@fortawesome/free-solid-svg-icons';
-import { systemApi } from '../api/misc';
-import { WsPill } from './WsPill';
-import type { WsConnectionStatus } from '../api/workflow-run-client';
+import { systemApi } from '../shared/api/misc';
+import { WsPill } from '../shared/ws/WsPill';
+import type { WsConnectionStatus } from '../shared/api/workflow-run-client';
 
 interface TopbarProps {
   breadcrumb?: React.ReactNode;

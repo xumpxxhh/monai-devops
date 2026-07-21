@@ -51,10 +51,7 @@ import {
 } from './step-config-validation';
 import { FullscreenLayout } from '../../layouts/FullscreenLayout';
 import { Field, Input, Select, Checkbox } from '../../shared/ui/form';
-import {
-  PluginConfigFormModal,
-  preloadPluginConfigSchemas,
-} from '../../shared/ui/json-schema-form';
+import { PluginConfigFormModal, preloadPluginConfigSchemas } from '../../shared/plugins';
 import type {
   ConfigReferenceSource,
   JsonObjectSchema,

@@ -1,7 +1,11 @@
 import { useCallback, useEffect, useState } from 'react';
-import { pluginsApi } from '../../api/misc';
-import type { JsonObjectSchema } from './types';
-import { coerceValidatedValues, mergeWithDefaults, validateAgainstSchema } from './schema-utils';
+import { pluginsApi } from '../api/misc';
+import type { JsonObjectSchema } from '../ui/json-schema-form/types';
+import {
+  coerceValidatedValues,
+  mergeWithDefaults,
+  validateAgainstSchema,
+} from '../ui/json-schema-form/schema-utils';
 
 const EMPTY_INITIAL: Record<string, unknown> = {};
 

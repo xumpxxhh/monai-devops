@@ -1,8 +1,9 @@
 import { Outlet } from 'react-router-dom';
-import { useEffect, useState } from 'react';
-import { Sidebar } from '../shared/ui/Sidebar';
-import { Topbar } from '../shared/ui/Topbar';
+import { useCallback, useEffect, useState } from 'react';
+import { Sidebar } from './Sidebar';
+import { Topbar } from './Topbar';
 import { runsApi } from '../shared/api/runs';
+import { subscribeRunsChanged } from '../shared/api/runs-events';
 import type { RunRecord } from '../shared/types';
 import type { WsConnectionStatus } from '../shared/api/workflow-run-client';
 
@@ -10,12 +11,17 @@ export function AppShell() {
   const [recentRuns, setRecentRuns] = useState<RunRecord[]>([]);
   const [wsStatus] = useState<WsConnectionStatus>('disconnected');
 
-  useEffect(() => {
+  const loadRecentRuns = useCallback(() => {
     runsApi
       .list({ pageSize: 5 })
       .then((res) => setRecentRuns(res.items))
       .catch(() => {});
   }, []);
+
+  useEffect(() => {
+    loadRecentRuns();
+    return subscribeRunsChanged(loadRecentRuns);
+  }, [loadRecentRuns]);
 
   return (
     <div className="flex h-screen overflow-hidden">

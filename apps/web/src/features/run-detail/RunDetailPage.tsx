@@ -27,12 +27,12 @@ import {
   directedEdgeOptions,
   getLayoutedNodes,
 } from '../../shared/dag/flow-layout';
-import { StatusBadge } from '../../shared/ui/StatusBadge';
-import { ProgressBar } from '../../shared/ui/ProgressBar';
+import { StatusBadge } from '../../shared/status/StatusBadge';
+import { ProgressBar } from '../../shared/status/ProgressBar';
 import { TabsBar } from '../../shared/ui/Tabs';
 import { Drawer } from '../../shared/ui/Drawer';
 import { Checkbox } from '../../shared/ui/form';
-import { WsPill } from '../../shared/ui/WsPill';
+import { WsPill } from '../../shared/ws/WsPill';
 import { RUN_STATUS_META } from '../../shared/types/status';
 import type { RunStatus, WorkflowRunResultSerialized } from '../../shared/types';
 import { DagStepNode } from './DagStepNode';

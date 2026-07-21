@@ -1,6 +1,6 @@
 import { type Node, type NodeProps } from '@xyflow/react';
 import { FlowNodeHandles } from '../../shared/dag/FlowNodeHandles';
-import { StatusBadge } from '../../shared/ui/StatusBadge';
+import { StatusBadge } from '../../shared/status/StatusBadge';
 import type { DagStepNodeData } from './run-state';
 
 export function DagStepNode({ data }: NodeProps<Node<DagStepNodeData>>) {
