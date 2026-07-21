@@ -68,21 +68,23 @@ monai-devops/
 pnpm install
 ```
 
+安装后会通过 `prepare` 自动启用 Git `pre-commit` hook：提交前对暂存文件跑 ESLint 与 Prettier 检查（不自动修复）。检查失败时请先本地修好再提交，可用 `pnpm lint:fix` / `pnpm format`。
+
 ### 2. 配置环境变量
 
 **服务端**（在 `apps/server/` 下创建 `.env` 或 `.env.local`）：
 
-| 变量 | 必填 | 说明 | 示例 |
-|------|------|------|------|
-| `GLOBAL_API_PREFIX` | 是 | 全局 API 前缀 | `api/v1/devops` |
-| `PORT` | 否 | 监听端口，默认 `3000` | `3000` |
+| 变量                | 必填 | 说明                  | 示例            |
+| ------------------- | ---- | --------------------- | --------------- |
+| `GLOBAL_API_PREFIX` | 是   | 全局 API 前缀         | `api/v1/devops` |
+| `PORT`              | 否   | 监听端口，默认 `3000` | `3000`          |
 
 **前端**（在 `apps/web/` 下创建 `.env` 或 `.env.local`，变量前缀为 `DEVOPS_`）：
 
-| 变量 | 必填 | 说明 | 示例 |
-|------|------|------|------|
-| `DEVOPS_API_BASE_URL` | WebSocket 测试必填 | 后端 API 基地址（含前缀） | `http://localhost:3000/api/v1/devops` |
-| `DEVOPS_BASE_PATH` | 否 | React Router basename，默认 `/` | `/` |
+| 变量                  | 必填               | 说明                            | 示例                                  |
+| --------------------- | ------------------ | ------------------------------- | ------------------------------------- |
+| `DEVOPS_API_BASE_URL` | WebSocket 测试必填 | 后端 API 基地址（含前缀）       | `http://localhost:3000/api/v1/devops` |
+| `DEVOPS_BASE_PATH`    | 否                 | React Router basename，默认 `/` | `/`                                   |
 
 ### 3. 启动开发环境
 
@@ -140,13 +142,13 @@ engine.destroy();
 
 插件开发者只需依赖此包：
 
-| 导出 | 用途 |
-|------|------|
-| `createPlugin` | 创建插件定义，通过 `configSchema`（Zod）声明 config 结构，可选编排生命周期钩子 |
-| `z` / `formatZodError` | Zod 与校验错误格式化（从 SDK re-export） |
-| `getConfig` / `getContext` | 读取步骤配置与运行时上下文（无 schema 时的向后兼容） |
-| `getLogger` | 获取步骤级日志器（经 observer 发出 `plugin:log` 事件） |
-| `PluginFailureCodes` | 插件失败错误码常量（含 `PLUGIN_CONFIG_INVALID`） |
+| 导出                       | 用途                                                                           |
+| -------------------------- | ------------------------------------------------------------------------------ |
+| `createPlugin`             | 创建插件定义，通过 `configSchema`（Zod）声明 config 结构，可选编排生命周期钩子 |
+| `z` / `formatZodError`     | Zod 与校验错误格式化（从 SDK re-export）                                       |
+| `getConfig` / `getContext` | 读取步骤配置与运行时上下文（无 schema 时的向后兼容）                           |
+| `getLogger`                | 获取步骤级日志器（经 observer 发出 `plugin:log` 事件）                         |
+| `PluginFailureCodes`       | 插件失败错误码常量（含 `PLUGIN_CONFIG_INVALID`）                               |
 
 插件层约定：**业务失败返回 `{ success: false }`，不 throw**。
 
@@ -179,9 +181,9 @@ export const myPlugin = createPlugin({
 
 当前 `apps/server` 提供用于验证 core-engine 闭环的测试模块：
 
-| 方式 | 路径 | 说明 |
-|------|------|------|
-| HTTP GET | `/{GLOBAL_API_PREFIX}/test-devops` | 运行内置集成工作流，一次性返回结果 |
+| 方式      | 路径                                  | 说明                                                                         |
+| --------- | ------------------------------------- | ---------------------------------------------------------------------------- |
+| HTTP GET  | `/{GLOBAL_API_PREFIX}/test-devops`    | 运行内置集成工作流，一次性返回结果                                           |
 | WebSocket | `/{GLOBAL_API_PREFIX}/test-devops/ws` | 接收 `{ type: "run", workflow: WorkflowDefinition }`，实时推送事件与最终结果 |
 
 WebSocket 出站消息类型：
@@ -194,16 +196,16 @@ WebSocket 出站消息类型：
 
 在仓库根目录执行：
 
-| 命令 | 说明 |
-|------|------|
-| `pnpm build` | 构建全部包与应用 |
-| `pnpm dev` | 开发模式（server + web） |
-| `pnpm dev:server` | 仅启动 NestJS |
-| `pnpm dev:web` | 仅启动 Vite |
-| `pnpm test` | 运行各包测试（turbo 编排） |
-| `pnpm check-types` | 全仓库 TypeScript 类型检查 |
-| `pnpm lint` / `pnpm lint:fix` | ESLint |
-| `pnpm format` / `pnpm format:check` | Prettier |
+| 命令                                | 说明                       |
+| ----------------------------------- | -------------------------- |
+| `pnpm build`                        | 构建全部包与应用           |
+| `pnpm dev`                          | 开发模式（server + web）   |
+| `pnpm dev:server`                   | 仅启动 NestJS              |
+| `pnpm dev:web`                      | 仅启动 Vite                |
+| `pnpm test`                         | 运行各包测试（turbo 编排） |
+| `pnpm check-types`                  | 全仓库 TypeScript 类型检查 |
+| `pnpm lint` / `pnpm lint:fix`       | ESLint                     |
+| `pnpm format` / `pnpm format:check` | Prettier                   |
 
 单包示例：
 
@@ -214,13 +216,13 @@ pnpm --filter server test:e2e
 
 ## 技术栈
 
-| 层级 | 技术 |
-|------|------|
-| 包管理 / 构建 | pnpm workspace、Turborepo |
-| 内核 | TypeScript（ESM）、自研 DAG 执行器 |
-| 后端 | NestJS 11、WebSocket（ws） |
-| 前端 | React 19、Vite 8、React Router 7 |
-| 质量 | ESLint 9、Prettier、Jest / Node test runner |
+| 层级          | 技术                                        |
+| ------------- | ------------------------------------------- |
+| 包管理 / 构建 | pnpm workspace、Turborepo                   |
+| 内核          | TypeScript（ESM）、自研 DAG 执行器          |
+| 后端          | NestJS 11、WebSocket（ws）                  |
+| 前端          | React 19、Vite 8、React Router 7            |
+| 质量          | ESLint 9、Prettier、Jest / Node test runner |
 
 ## 后续规划
 
