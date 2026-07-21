@@ -1,6 +1,6 @@
 import { Body, Controller, Get, Param, Post, Sse, type MessageEvent } from '@nestjs/common';
-import type { PluginConfig } from '@monai-devops/plugin-sdk';
 import type { Observable } from 'rxjs';
+import { PluginDryRunDto } from './dto/plugin-dry-run.dto.js';
 import { PluginsService } from './plugins.service.js';
 
 @Controller('plugins')
@@ -41,8 +41,8 @@ export class PluginsController {
   @Sse()
   dryRun(
     @Param('name') name: string,
-    @Body() body: { config: PluginConfig },
+    @Body() body: PluginDryRunDto = {},
   ): Observable<MessageEvent> {
-    return this.pluginsService.dryRun(name, body?.config ?? {});
+    return this.pluginsService.dryRun(name, body.config ?? {});
   }
 }

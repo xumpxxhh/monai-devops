@@ -1,7 +1,8 @@
 import { Body, Controller, Delete, Get, Param, Post, Put, Query } from '@nestjs/common';
-import { parsePagination } from '../common/dto/pagination.dto.js';
-import type { WorkflowDraft } from '../common/validation/normalize-workflow-ids.js';
-import type { SubmitRunOptions } from '../runs/run-manager.service.js';
+import { resolvePagination } from '../common/dto/pagination.dto.js';
+import { ListWorkflowsQueryDto } from './dto/list-workflows.query.dto.js';
+import { TriggerRunDto } from './dto/trigger-run.dto.js';
+import { WorkflowDraftDto } from './dto/workflow-draft.dto.js';
 import { WorkflowsService } from './workflows.service.js';
 
 @Controller('workflows')
@@ -9,22 +10,18 @@ export class WorkflowsController {
   constructor(private readonly workflowsService: WorkflowsService) {}
 
   @Get()
-  list(
-    @Query('search') search?: string,
-    @Query('page') page?: string,
-    @Query('pageSize') pageSize?: string,
-  ) {
-    const pagination = parsePagination({ page: Number(page), pageSize: Number(pageSize) });
-    return this.workflowsService.list({ search, ...pagination });
+  list(@Query() query: ListWorkflowsQueryDto) {
+    const pagination = resolvePagination(query);
+    return this.workflowsService.list({ search: query.search, ...pagination });
   }
 
   @Post()
-  create(@Body() draft: WorkflowDraft) {
+  create(@Body() draft: WorkflowDraftDto) {
     return this.workflowsService.create(draft);
   }
 
   @Post('validate')
-  validate(@Body() draft: WorkflowDraft) {
+  validate(@Body() draft: WorkflowDraftDto) {
     return this.workflowsService.validate(draft);
   }
 
@@ -34,7 +31,7 @@ export class WorkflowsController {
   }
 
   @Put(':id')
-  update(@Param('id') id: string, @Body() draft: WorkflowDraft) {
+  update(@Param('id') id: string, @Body() draft: WorkflowDraftDto) {
     return this.workflowsService.update(id, draft);
   }
 
@@ -44,7 +41,7 @@ export class WorkflowsController {
   }
 
   @Post(':id/run')
-  run(@Param('id') id: string, @Body() options: SubmitRunOptions = {}) {
+  run(@Param('id') id: string, @Body() options: TriggerRunDto = {}) {
     return this.workflowsService.triggerRun(id, options);
   }
 }

@@ -9,47 +9,31 @@ import {
   Post,
   Query,
 } from '@nestjs/common';
-import type { WorkflowDraft } from '../common/validation/normalize-workflow-ids.js';
-import { parsePagination } from '../common/dto/pagination.dto.js';
-import {
-  RunManagerService,
-  type SubmitRunOptions,
-  type CancelRunOptions,
-  type PauseRunOptions,
-} from './run-manager.service.js';
-import type { RunStatus } from './runs.repository.js';
-
-interface InlineRunBody extends SubmitRunOptions {
-  workflow: WorkflowDraft;
-}
+import { resolvePagination } from '../common/dto/pagination.dto.js';
+import { CancelRunDto } from './dto/cancel-run.dto.js';
+import { ListRunsQueryDto } from './dto/list-runs.query.dto.js';
+import { PauseRunDto } from './dto/pause-run.dto.js';
+import { SubmitRunDto } from './dto/submit-run.dto.js';
+import { RunManagerService } from './run-manager.service.js';
 
 @Controller('runs')
 export class RunsController {
   constructor(private readonly runManager: RunManagerService) {}
 
   @Get()
-  async list(
-    @Query('status') status?: RunStatus,
-    @Query('workflowId') workflowId?: string,
-    @Query('search') search?: string,
-    @Query('page') page?: string,
-    @Query('pageSize') pageSize?: string,
-  ) {
-    const pagination = parsePagination({ page: Number(page), pageSize: Number(pageSize) });
+  async list(@Query() query: ListRunsQueryDto) {
+    const pagination = resolvePagination(query);
     const result = await this.runManager.listRuns({
-      status,
-      workflowId,
-      search,
+      status: query.status,
+      workflowId: query.workflowId,
+      search: query.search,
       ...pagination,
     });
     return { ...result, ...pagination };
   }
 
   @Post()
-  submit(@Body() body: InlineRunBody) {
-    if (!body?.workflow) {
-      throw new HttpException('workflow 是必填字段', HttpStatus.BAD_REQUEST);
-    }
+  submit(@Body() body: SubmitRunDto) {
     const { workflow, ...options } = body;
     return this.runManager.submitRun(workflow, options);
   }
@@ -73,12 +57,12 @@ export class RunsController {
   }
 
   @Post(':runId/cancel')
-  cancel(@Param('runId') runId: string, @Body() body: CancelRunOptions = {}) {
+  cancel(@Param('runId') runId: string, @Body() body: CancelRunDto = {}) {
     return this.runManager.cancelRun(runId, body);
   }
 
   @Post(':runId/pause')
-  pause(@Param('runId') runId: string, @Body() body: PauseRunOptions = {}) {
+  pause(@Param('runId') runId: string, @Body() body: PauseRunDto = {}) {
     return this.runManager.pauseRun(runId, body);
   }
 
