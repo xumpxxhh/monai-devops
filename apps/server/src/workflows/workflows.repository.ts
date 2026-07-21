@@ -6,6 +6,7 @@ export interface WorkflowRecord {
   definition: WorkflowDefinition;
   createdAt: Date;
   updatedAt: Date;
+  createdBy?: bigint;
 }
 
 export interface WorkflowListFilter {

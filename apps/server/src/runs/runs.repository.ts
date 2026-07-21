@@ -34,12 +34,15 @@ export interface RunRecord {
   result?: SerializedWorkflowRunResult;
   events: SerializedWorkflowLifecycleEvent[];
   cancelled?: 'best-effort' | 'hard';
+  createdBy?: bigint;
 }
 
 export interface RunListFilter {
   status?: RunStatus;
   workflowId?: string;
   search?: string;
+  /** 对应 runs.metadata jsonb；后续可扩展筛选维度 */
+  metadata?: Record<string, unknown>;
   page: number;
   pageSize: number;
 }
