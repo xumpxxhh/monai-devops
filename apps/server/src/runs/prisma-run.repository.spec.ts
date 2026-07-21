@@ -1,5 +1,6 @@
 import { jest } from '@jest/globals';
 import type { ConfigService } from '@nestjs/config';
+import { assertTestDatabaseUrl } from '../common/storage/assert-test-database-url.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import type { RunRecord } from './runs.repository.js';
 import { PrismaRunRepository } from './prisma-run.repository.js';
@@ -46,6 +47,7 @@ describeIfDb('PrismaRunRepository integration', () => {
   const repository = new PrismaRunRepository(prisma, config);
 
   beforeAll(async () => {
+    assertTestDatabaseUrl();
     await prisma.$connect();
   });
 
@@ -54,6 +56,7 @@ describeIfDb('PrismaRunRepository integration', () => {
   });
 
   beforeEach(async () => {
+    assertTestDatabaseUrl();
     await prisma.runEvent.deleteMany();
     await prisma.run.deleteMany();
   });

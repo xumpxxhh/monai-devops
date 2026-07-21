@@ -5,6 +5,8 @@ import request from 'supertest';
 import { App } from 'supertest/types';
 import WebSocket from 'ws';
 import { AppModule } from '../src/app.module.js';
+import { PrismaService } from '../src/prisma/prisma.service.js';
+import { assertTestDatabaseUrl } from '../src/common/storage/assert-test-database-url.js';
 
 const GLOBAL_API_PREFIX = 'api/v1/devops';
 
@@ -12,6 +14,7 @@ describe('AppController (e2e)', () => {
   let app: INestApplication<App>;
 
   beforeAll(async () => {
+    assertTestDatabaseUrl();
     const moduleFixture: TestingModule = await Test.createTestingModule({
       imports: [AppModule],
     }).compile();
@@ -23,6 +26,10 @@ describe('AppController (e2e)', () => {
   }, 30_000);
 
   afterAll(async () => {
+    const prisma = app.get(PrismaService);
+    await prisma.runEvent.deleteMany();
+    await prisma.run.deleteMany();
+    await prisma.workflow.deleteMany();
     await app.close();
   });
 

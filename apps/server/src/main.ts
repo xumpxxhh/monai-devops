@@ -6,6 +6,7 @@ import { ConfigService } from '@nestjs/config';
 import { WsAdapter } from '@nestjs/platform-ws';
 import { AppModule } from './app.module.js';
 import { AllExceptionsFilter } from './common/filters/all-exceptions.filter.js';
+import { parseDatabaseName } from './common/storage/assert-test-database-url.js';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
@@ -18,6 +19,11 @@ async function bootstrap() {
       'GLOBAL_API_PREFIX is required. Set it in .env or the environment before starting the server.',
     );
     process.exit(1);
+  }
+
+  const databaseName = parseDatabaseName(process.env.DATABASE_URL ?? '');
+  if (databaseName) {
+    console.log(`Using database: ${databaseName}`);
   }
 
   app.setGlobalPrefix(globalApiPrefix);

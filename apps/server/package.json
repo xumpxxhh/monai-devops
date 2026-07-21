@@ -11,6 +11,7 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "dev": "nest start --watch",
+    "dev:test": "node ./scripts/dev-with-test-env.mjs start --watch",
     "start": "nest start",
     "start:prod": "node dist/src/main",
     "lint": "eslint .",
@@ -22,6 +23,7 @@
     "test:e2e": "node --experimental-vm-modules node_modules/jest/bin/jest.js --config ./test/jest-e2e.json",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
+    "db:migrate:test": "node ./scripts/migrate-test-db.mjs",
     "db:studio": "prisma studio"
   },
   "dependencies": {
@@ -81,6 +83,9 @@
       "ts"
     ],
     "rootDir": "src",
+    "setupFiles": [
+      "<rootDir>/../test/jest-unit-setup.ts"
+    ],
     "testRegex": ".*\\.spec\\.ts$",
     "transform": {
       "^.+\\.tsx?$": [

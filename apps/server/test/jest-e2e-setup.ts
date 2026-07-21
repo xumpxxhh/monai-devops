@@ -1,35 +1,12 @@
-import { existsSync, readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { loadEnvTest } from './load-env-test.js';
+import { assertTestDatabaseUrl } from '../src/common/storage/assert-test-database-url.js';
 
-function loadEnvFile(fileName: string): void {
-  const filePath = resolve(process.cwd(), fileName);
-  if (!existsSync(filePath)) return;
+loadEnvTest();
+process.env.NODE_ENV = 'test';
+process.env.GLOBAL_API_PREFIX ??= 'api/v1/devops';
 
-  for (const rawLine of readFileSync(filePath, 'utf8').split(/\r?\n/)) {
-    const line = rawLine.trim();
-    if (!line || line.startsWith('#')) continue;
-
-    const separatorIndex = line.indexOf('=');
-    if (separatorIndex <= 0) continue;
-
-    const key = line.slice(0, separatorIndex).trim();
-    let value = line.slice(separatorIndex + 1).trim();
-
-    if (
-      (value.startsWith('"') && value.endsWith('"')) ||
-      (value.startsWith("'") && value.endsWith("'"))
-    ) {
-      value = value.slice(1, -1);
-    }
-
-    if (!(key in process.env)) {
-      process.env[key] = value;
-    }
-  }
+if (!process.env.DATABASE_URL?.trim()) {
+  throw new Error('e2e requires DATABASE_URL from .env.test (postgresql://.../monai_devops_test).');
 }
 
-loadEnvFile('.env.local');
-loadEnvFile('.env');
-
-process.env.GLOBAL_API_PREFIX ??= 'api/v1/devops';
-process.env.NODE_ENV ??= 'test';
+assertTestDatabaseUrl();
