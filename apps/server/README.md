@@ -77,20 +77,21 @@ Jest（unit / e2e）只使用 `.env.test`，且**强制**库名以 `_test` 结�
 
 > `GLOBAL_API_PREFIX`、`DATABASE_URL` 均为**必填项**，未配置会在启动时直接退出。
 
-| 变量名 | 是否必填 | 默认值 | 说明 |
-| --- | --- | --- | --- |
-| `GLOBAL_API_PREFIX` | 是 | 无 | 全局 API 前缀，例如 `api`。影响 HTTP、WS 路径。 |
-| `DATABASE_URL` | 是 | 无 | PostgreSQL 连接串。开发库示例见下；测试库见 `.env.test`。 |
-| `PORT` | 否 | `3000` | HTTP 服务端口。 |
-| `MAX_PARALLEL_STEPS` | 否 | `2` | 引擎内单个 workflow 的默认并行步数上限。 |
-| `RESOURCE_POOL_SIZE` | 否 | `5` | 引擎默认资源池容量。 |
-| `MAX_ACTIVE_RUNS` | 否 | `50` | 活跃 run 上限（超过返回 429）。 |
-| `RUN_HISTORY_LIMIT` | 否 | `500` | 单个 run 事件条数上限（超限时优先裁剪日志类事件）。 |
+| 变量名               | 是否必填 | 默认值 | 说明                                                      |
+| -------------------- | -------- | ------ | --------------------------------------------------------- |
+| `GLOBAL_API_PREFIX`  | 是       | 无     | 全局 API 前缀，例如 `api`。影响 HTTP、WS 路径。           |
+| `DATABASE_URL`       | 是       | 无     | PostgreSQL 连接串。开发库示例见下；测试库见 `.env.test`。 |
+| `PORT`               | 否       | `3000` | HTTP 服务端口。                                           |
+| `MAX_PARALLEL_STEPS` | 否       | `2`    | 引擎内单个 workflow 的默认并行步数上限。                  |
+| `RESOURCE_POOL_SIZE` | 否       | `5`    | 引擎默认资源池容量。                                      |
+| `MAX_ACTIVE_RUNS`    | 否       | `50`   | 活跃 run 上限（超过返回 429）。                           |
+| `RUN_HISTORY_LIMIT`  | 否       | `500`  | 单个 run 事件条数上限（超限时优先裁剪日志类事件）。       |
 
 示例（`apps/server/.env` 或 `.env.local`，日常开发库）：
 
 ```env
 GLOBAL_API_PREFIX=api
+APP_ENV=local-dev
 PORT=3000
 MAX_PARALLEL_STEPS=2
 RESOURCE_POOL_SIZE=5
@@ -207,6 +208,7 @@ HTTP 入参由全局 `ValidationPipe` + 各模块 `dto/` 校验。
 ### 8.1 健康与基础
 
 - `GET /api/healthz`：健康检查（包含 `engineReady`）
+- `GET /api/system/info`：系统信息（含部署环境 `appEnv` / `appEnvLabel`）
 - `GET /api/`：基础探活（返回 `Hello World!`）
 
 ### 8.2 Workflows

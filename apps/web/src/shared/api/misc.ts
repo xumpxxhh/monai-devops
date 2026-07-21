@@ -77,3 +77,9 @@ export const healthApi = {
     return apiGet<{ status: string; engineReady: boolean }>('/healthz');
   },
 };
+
+export const systemApi = {
+  info() {
+    return apiGet<{ appEnv: string; appEnvLabel: string }>('/system/info');
+  },
+};

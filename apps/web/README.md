@@ -10,16 +10,16 @@
 
 ### 核心能力
 
-| 视图 | 路由 | 说明 |
-| --- | --- | --- |
-| **概览 Dashboard** | `/` | 平台健康度快照：进行中运行数、成功率、排队步骤、插件数；10s 自动刷新 |
-| **工作流列表** | `/workflows` | 搜索、创建、复制、删除、一键运行 |
-| **工作流编排器** | `/workflows/new` · `/workflows/:id/edit` | 三栏可视化 DAG 编辑（React Flow + dagre 自动布局）、环检测、插件配置表单、保存与触发运行 |
-| **运行列表** | `/runs` | 按状态 / 关键词筛选，进行中置顶，5s 轮询 |
-| **运行详情** ★ | `/runs/:runId` | 实时 DAG 状态视图 + 事件/日志流 + 单步下钻；支持暂停 / 继续 / 取消 |
-| **插件管理** | `/plugins` | 已注册插件列表 + JSON Schema 配置表单 + 单步试运行（SSE 流式日志） |
-| **资源与调度** | `/resources` | 资源池占用 + 按类型调度队列，解释「为什么排队」 |
-| **集成测试（遗留）** | `/test` | 旧版 `test-devops` HTTP / WebSocket 冒烟页，保留用于联调 |
+| 视图                 | 路由                                     | 说明                                                                                     |
+| -------------------- | ---------------------------------------- | ---------------------------------------------------------------------------------------- |
+| **概览 Dashboard**   | `/`                                      | 平台健康度快照：进行中运行数、成功率、排队步骤、插件数；10s 自动刷新                     |
+| **工作流列表**       | `/workflows`                             | 搜索、创建、复制、删除、一键运行                                                         |
+| **工作流编排器**     | `/workflows/new` · `/workflows/:id/edit` | 三栏可视化 DAG 编辑（React Flow + dagre 自动布局）、环检测、插件配置表单、保存与触发运行 |
+| **运行列表**         | `/runs`                                  | 按状态 / 关键词筛选，进行中置顶，5s 轮询                                                 |
+| **运行详情** ★       | `/runs/:runId`                           | 实时 DAG 状态视图 + 事件/日志流 + 单步下钻；支持暂停 / 继续 / 取消                       |
+| **插件管理**         | `/plugins`                               | 已注册插件列表 + JSON Schema 配置表单 + 单步试运行（SSE 流式日志）                       |
+| **资源与调度**       | `/resources`                             | 资源池占用 + 按类型调度队列，解释「为什么排队」                                          |
+| **集成测试（遗留）** | `/test`                                  | 旧版 `test-devops` HTTP / WebSocket 冒烟页，保留用于联调                                 |
 
 ### 当前实现特性（重要）
 
@@ -92,10 +92,10 @@ pnpm install
 
 Vite 仅加载 **`apps/web/` 目录下** 的环境文件（`envPrefix: DEVOPS_`）。推荐创建 `apps/web/.env.local`：
 
-| 变量名 | 是否必填 | 默认值 | 说明 |
-| --- | --- | --- | --- |
-| `DEVOPS_API_BASE_URL` | 是 | 无 | 后端 API 基址，**须包含** `GLOBAL_API_PREFIX`。示例见下 |
-| `DEVOPS_BASE_PATH` | 否 | `/` | React Router `basename`；部署在子路径时需设置，如 `/devops` |
+| 变量名                | 是否必填 | 默认值 | 说明                                                        |
+| --------------------- | -------- | ------ | ----------------------------------------------------------- |
+| `DEVOPS_API_BASE_URL` | 是       | 无     | 后端 API 基址，**须包含** `GLOBAL_API_PREFIX`。示例见下     |
+| `DEVOPS_BASE_PATH`    | 否       | `/`    | React Router `basename`；部署在子路径时需设置，如 `/devops` |
 
 示例（`apps/web/.env.local`）：
 
@@ -108,9 +108,9 @@ DEVOPS_BASE_PATH=/
 
 WebSocket 地址由 `DEVOPS_API_BASE_URL` 自动推导（`http` → `ws`，`https` → `wss`）：
 
-| 用途 | 推导路径 |
-| --- | --- |
-| 运行订阅（主通道） | `…/runs/ws` |
+| 用途                      | 推导路径           |
+| ------------------------- | ------------------ |
+| 运行订阅（主通道）        | `…/runs/ws`        |
 | 集成测试（仅 `/test` 页） | `…/test-devops/ws` |
 
 ---
@@ -144,17 +144,17 @@ pnpm preview    # 预览生产构建
 
 ## 6. 路由与布局
 
-| 路由 | 页面组件 | 布局 | 主要数据源 |
-| --- | --- | --- | --- |
-| `/` | `DashboardPage` | AppShell | `GET /stats/overview`、`GET /runs` |
-| `/workflows` | `WorkflowsListPage` | AppShell | `GET/POST/PUT/DELETE /workflows` |
-| `/workflows/new` | `WorkflowEditorPage` | 全屏 | React Flow + `POST /workflows` |
-| `/workflows/:id/edit` | `WorkflowEditorPage` | 全屏 | `GET/PUT /workflows/:id` |
-| `/runs` | `RunsListPage` | AppShell | `GET /runs`（5s 轮询） |
-| `/runs/:runId` | `RunDetailPage` | 全屏 | `GET /runs/:id` + `WS /runs/ws` |
-| `/plugins` | `PluginsPage` | AppShell | `GET /plugins`、`POST /plugins/:name/dry-run` |
-| `/resources` | `ResourcesPage` | AppShell | `GET /resources`、`GET /resources/queue` |
-| `/test` | `Test` | 独立 | `GET /test-devops`、`WS /test-devops/ws` |
+| 路由                  | 页面组件             | 布局     | 主要数据源                                    |
+| --------------------- | -------------------- | -------- | --------------------------------------------- |
+| `/`                   | `DashboardPage`      | AppShell | `GET /stats/overview`、`GET /runs`            |
+| `/workflows`          | `WorkflowsListPage`  | AppShell | `GET/POST/PUT/DELETE /workflows`              |
+| `/workflows/new`      | `WorkflowEditorPage` | 全屏     | React Flow + `POST /workflows`                |
+| `/workflows/:id/edit` | `WorkflowEditorPage` | 全屏     | `GET/PUT /workflows/:id`                      |
+| `/runs`               | `RunsListPage`       | AppShell | `GET /runs`（5s 轮询）                        |
+| `/runs/:runId`        | `RunDetailPage`      | 全屏     | `GET /runs/:id` + `WS /runs/ws`               |
+| `/plugins`            | `PluginsPage`        | AppShell | `GET /plugins`、`POST /plugins/:name/dry-run` |
+| `/resources`          | `ResourcesPage`      | AppShell | `GET /resources`、`GET /resources/queue`      |
+| `/test`               | `Test`               | 独立     | `GET /test-devops`、`WS /test-devops/ws`      |
 
 侧栏导航（`Sidebar`）：概览 → 工作流 → 运行 → 插件 → 资源与调度；底部展示最近 5 条运行快捷入口。
 
@@ -188,37 +188,38 @@ pnpm preview    # 预览生产构建
 
 ### 工作流（`workflows.ts`）
 
-| 方法 | 后端路径 | 用途 |
-| --- | --- | --- |
-| `list` | `GET /workflows` | 分页列表 + 搜索 |
-| `get` | `GET /workflows/:id` | 详情 |
-| `create` | `POST /workflows` | 创建 |
-| `update` | `PUT /workflows/:id` | 更新 |
-| `remove` | `DELETE /workflows/:id` | 删除 |
-| `validate` | `POST /workflows/validate` | DAG 校验 |
-| `run` | `POST /workflows/:id/run` | 触发运行 |
+| 方法       | 后端路径                   | 用途            |
+| ---------- | -------------------------- | --------------- |
+| `list`     | `GET /workflows`           | 分页列表 + 搜索 |
+| `get`      | `GET /workflows/:id`       | 详情            |
+| `create`   | `POST /workflows`          | 创建            |
+| `update`   | `PUT /workflows/:id`       | 更新            |
+| `remove`   | `DELETE /workflows/:id`    | 删除            |
+| `validate` | `POST /workflows/validate` | DAG 校验        |
+| `run`      | `POST /workflows/:id/run`  | 触发运行        |
 
 ### 运行（`runs.ts`）
 
-| 方法 | 后端路径 | 用途 |
-| --- | --- | --- |
-| `list` | `GET /runs` | 分页列表 + 状态 / 搜索筛选 |
-| `get` | `GET /runs/:runId` | 详情（含 `events[]` 快照） |
-| `submit` | `POST /runs` | 直接提交 workflow 定义运行 |
-| `getEvents` | `GET /runs/:runId/events` | 事件列表 |
-| `cancel` | `POST /runs/:runId/cancel` | 取消运行 |
-| `pause` | `POST /runs/:runId/pause` | 暂停 |
-| `resume` | `POST /runs/:runId/resume` | 继续 |
-| `remove` | `DELETE /runs/:runId` | 删除历史 |
+| 方法        | 后端路径                   | 用途                       |
+| ----------- | -------------------------- | -------------------------- |
+| `list`      | `GET /runs`                | 分页列表 + 状态 / 搜索筛选 |
+| `get`       | `GET /runs/:runId`         | 详情（含 `events[]` 快照） |
+| `submit`    | `POST /runs`               | 直接提交 workflow 定义运行 |
+| `getEvents` | `GET /runs/:runId/events`  | 事件列表                   |
+| `cancel`    | `POST /runs/:runId/cancel` | 取消运行                   |
+| `pause`     | `POST /runs/:runId/pause`  | 暂停                       |
+| `resume`    | `POST /runs/:runId/resume` | 继续                       |
+| `remove`    | `DELETE /runs/:runId`      | 删除历史                   |
 
 ### 插件 / 资源 / 统计（`misc.ts`）
 
-| 模块 | 主要接口 |
-| --- | --- |
-| `pluginsApi` | `GET /plugins`、`GET /plugins/config-schemas`、`GET /plugins/result-schemas`、`POST /plugins/:name/dry-run`（SSE） |
-| `resourcesApi` | `GET /resources`、`GET /resources/queue` |
-| `statsApi` | `GET /stats/overview` |
-| `healthApi` | `GET /healthz` |
+| 模块           | 主要接口                                                                                                           |
+| -------------- | ------------------------------------------------------------------------------------------------------------------ |
+| `pluginsApi`   | `GET /plugins`、`GET /plugins/config-schemas`、`GET /plugins/result-schemas`、`POST /plugins/:name/dry-run`（SSE） |
+| `resourcesApi` | `GET /resources`、`GET /resources/queue`                                                                           |
+| `statsApi`     | `GET /stats/overview`                                                                                              |
+| `healthApi`    | `GET /healthz`                                                                                                     |
+| `systemApi`    | `GET /system/info`                                                                                                 |
 
 完整接口契约见 [`docs/dev-logs/api-list.md`](../../docs/dev-logs/api-list.md)。
 
@@ -260,16 +261,16 @@ pnpm preview    # 预览生产构建
 
 ## 10. 技术选型
 
-| 关注点 | 选型 |
-| --- | --- |
-| 框架 | Vite 8 + React 19 + react-router-dom 7 + TypeScript |
-| 样式 | Tailwind CSS v3，设计 token 定义于 `tailwind.config.js` |
-| 图标 | FontAwesome 7（`@fortawesome/react-fontawesome`） |
+| 关注点   | 选型                                                            |
+| -------- | --------------------------------------------------------------- |
+| 框架     | Vite 8 + React 19 + react-router-dom 7 + TypeScript             |
+| 样式     | Tailwind CSS v3，设计 token 定义于 `tailwind.config.js`         |
+| 图标     | FontAwesome 7（`@fortawesome/react-fontawesome`）               |
 | 无头交互 | Radix UI（Dialog、Tabs、Select、Checkbox、DropdownMenu、Toast） |
-| 通知 | sonner（`shared/ui/Toast.tsx` 封装） |
-| DAG 画布 | `@xyflow/react` + `@dagrejs/dagre` 自动布局 |
-| 类型 | `@monai-devops/core-engine` workspace 依赖 + 前端序列化镜像类型 |
-| 测试 | Vitest + jsdom |
+| 通知     | sonner（`shared/ui/Toast.tsx` 封装）                            |
+| DAG 画布 | `@xyflow/react` + `@dagrejs/dagre` 自动布局                     |
+| 类型     | `@monai-devops/core-engine` workspace 依赖 + 前端序列化镜像类型 |
+| 测试     | Vitest + jsdom                                                  |
 
 **未引入**：Ant Design / MUI、TanStack Query、Zustand。
 
@@ -279,11 +280,11 @@ pnpm preview    # 预览生产构建
 
 Token 定义于 `tailwind.config.js`，主要语义色：
 
-| Token | 用途 |
-| --- | --- |
-| `brand` | 品牌紫 `#6D5EF6` |
-| `canvas` / `surface` / `panel` | 背景层级 |
-| `ink` / `muted` / `faint` | 文字层级 |
+| Token                                                     | 用途             |
+| --------------------------------------------------------- | ---------------- |
+| `brand`                                                   | 品牌紫 `#6D5EF6` |
+| `canvas` / `surface` / `panel`                            | 背景层级         |
+| `ink` / `muted` / `faint`                                 | 文字层级         |
 | `completed` / `running` / `queued` / `failed` / `skipped` | 步骤与运行状态色 |
 
 步骤 UI 状态映射见 `src/shared/types/status.ts`（`STATUS_META`、`RUN_STATUS_META`）。
@@ -335,11 +336,11 @@ pnpm format:check # Prettier 检查
 
 当前测试覆盖：
 
-| 文件 | 覆盖内容 |
-| --- | --- |
-| `run-state.test.ts` | 事件聚合 reducer（`applyRunEvent`、`hydrateRunState`） |
-| `step-config-validation.test.ts` | 步骤配置校验 |
-| `schema-utils.test.ts` | JSON Schema 表单工具函数 |
+| 文件                             | 覆盖内容                                               |
+| -------------------------------- | ------------------------------------------------------ |
+| `run-state.test.ts`              | 事件聚合 reducer（`applyRunEvent`、`hydrateRunState`） |
+| `step-config-validation.test.ts` | 步骤配置校验                                           |
+| `schema-utils.test.ts`           | JSON Schema 表单工具函数                               |
 
 ---
 
@@ -354,34 +355,34 @@ pnpm format:check # Prettier 检查
 
 ### HTTP 与 WebSocket 分工
 
-| 场景 | 通道 |
-| --- | --- |
-| 列表、CRUD、统计、资源查询 | REST |
-| 运行详情实时事件、编排器内联 WS 运行 | WebSocket `/runs/ws` |
-| 插件 dry-run 流式日志 | REST SSE `POST /plugins/:name/dry-run` |
-| 遗留集成测试 | `GET /test-devops` + `WS /test-devops/ws`（仅 `/test` 页） |
+| 场景                                 | 通道                                                       |
+| ------------------------------------ | ---------------------------------------------------------- |
+| 列表、CRUD、统计、资源查询           | REST                                                       |
+| 运行详情实时事件、编排器内联 WS 运行 | WebSocket `/runs/ws`                                       |
+| 插件 dry-run 流式日志                | REST SSE `POST /plugins/:name/dry-run`                     |
+| 遗留集成测试                         | `GET /test-devops` + `WS /test-devops/ws`（仅 `/test` 页） |
 
 ### 常见问题
 
-| 现象 | 排查 |
-| --- | --- |
-| 所有 API 请求失败 | 检查 `DEVOPS_API_BASE_URL` 是否与 server 的 `GLOBAL_API_PREFIX` 一致 |
-| WebSocket 无法连接 | 确认 `DEVOPS_API_BASE_URL` 已配置；检查 server 是否监听对应端口 |
+| 现象               | 排查                                                                             |
+| ------------------ | -------------------------------------------------------------------------------- |
+| 所有 API 请求失败  | 检查 `DEVOPS_API_BASE_URL` 是否与 server 的 `GLOBAL_API_PREFIX` 一致             |
+| WebSocket 无法连接 | 确认 `DEVOPS_API_BASE_URL` 已配置；检查 server 是否监听对应端口                  |
 | 运行详情无实时更新 | 查看 `WsPill` 状态；进行中 Run 应自动 subscribe；刷新后会从 `GET /runs/:id` 回放 |
-| 插件配置表单为空 | 确认插件已注册（`pnpm sync:plugins`）且后端 `GET /plugins/config-schemas` 有数据 |
+| 插件配置表单为空   | 确认插件已注册（`pnpm sync:plugins`）且后端 `GET /plugins/config-schemas` 有数据 |
 
 ---
 
 ## 15. 已知限制与后续迭代
 
-| 项 | 说明 |
-| --- | --- |
-| 打包体积 | React Flow + Radix 导致主 chunk 较大，可做路由级 code split |
-| 编排器布局 | 节点位置未持久化，刷新后 dagre 重新排布 |
-| 全局 WS 状态 | AppShell 顶栏 `WsPill` 暂未接入全局连接状态（运行详情页独立订阅） |
-| 认证 | 无登录 / 鉴权，不适合直接暴露公网 |
-| 数据持久化 | 依赖 server 内存存储，服务重启后工作流与运行历史丢失 |
-| `pages/Home.tsx` | 未挂路由，可后续清理 |
+| 项               | 说明                                                              |
+| ---------------- | ----------------------------------------------------------------- |
+| 打包体积         | React Flow + Radix 导致主 chunk 较大，可做路由级 code split       |
+| 编排器布局       | 节点位置未持久化，刷新后 dagre 重新排布                           |
+| 全局 WS 状态     | AppShell 顶栏 `WsPill` 暂未接入全局连接状态（运行详情页独立订阅） |
+| 认证             | 无登录 / 鉴权，不适合直接暴露公网                                 |
+| 数据持久化       | 依赖 server 内存存储，服务重启后工作流与运行历史丢失              |
+| `pages/Home.tsx` | 未挂路由，可后续清理                                              |
 
 建议下一步：
 

@@ -9,6 +9,7 @@ import { PluginsModule } from './plugins/plugins.module.js';
 import { PrismaModule } from './prisma/prisma.module.js';
 import { ResourcesModule } from './resources/resources.module.js';
 import { StatsModule } from './stats/stats.module.js';
+import { SystemModule } from './system/system.module.js';
 import { TestDevopsModule } from './test-devops/test-devops.module.js';
 import { WorkflowsModule } from './workflows/workflows.module.js';
 
@@ -27,6 +28,7 @@ assertDatabaseUrl();
     ResourcesModule,
     StatsModule,
     HealthModule,
+    SystemModule,
     TestDevopsModule,
   ],
   controllers: [AppController],
