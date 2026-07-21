@@ -71,21 +71,23 @@ pnpm install
 
 ## 4. 环境变量
 
-服务会按顺序加载 `.env.local`、`.env`（若环境变量已存在则不覆盖）。
+日常开发加载 `.env.local`、`.env`（若环境变量已存在则不覆盖）。  
+`pnpm dev:test` 通过 `MONAI_ENV_FILE=.env.test` 强制加载 `.env.test`（覆盖 `DATABASE_URL`）。  
+Jest（unit / e2e）只使用 `.env.test`，且**强制**库名以 `_test` 结尾。
 
 > `GLOBAL_API_PREFIX`、`DATABASE_URL` 均为**必填项**，未配置会在启动时直接退出。
 
 | 变量名 | 是否必填 | 默认值 | 说明 |
 | --- | --- | --- | --- |
 | `GLOBAL_API_PREFIX` | 是 | 无 | 全局 API 前缀，例如 `api`。影响 HTTP、WS 路径。 |
-| `DATABASE_URL` | 是 | 无 | PostgreSQL 连接串，例如 `postgresql://monai:monai@localhost:5432/monai_devops`。 |
+| `DATABASE_URL` | 是 | 无 | PostgreSQL 连接串。开发库示例见下；测试库见 `.env.test`。 |
 | `PORT` | 否 | `3000` | HTTP 服务端口。 |
 | `MAX_PARALLEL_STEPS` | 否 | `2` | 引擎内单个 workflow 的默认并行步数上限。 |
 | `RESOURCE_POOL_SIZE` | 否 | `5` | 引擎默认资源池容量。 |
 | `MAX_ACTIVE_RUNS` | 否 | `50` | 活跃 run 上限（超过返回 429）。 |
 | `RUN_HISTORY_LIMIT` | 否 | `500` | 单个 run 事件条数上限（超限时优先裁剪日志类事件）。 |
 
-示例（`apps/server/.env` 或 `.env.local`）：
+示例（`apps/server/.env` 或 `.env.local`，日常开发库）：
 
 ```env
 GLOBAL_API_PREFIX=api
@@ -97,7 +99,9 @@ RUN_HISTORY_LIMIT=500
 DATABASE_URL=postgresql://monai:monai@localhost:5432/monai_devops
 ```
 
-也可直接复制：
+测试 / `dev:test` 使用已提交的 `.env.test`（指向 `monai_devops_test`）。**不要**靠手改 `.env` 在开发库与测试库之间切换。
+
+也可直接复制开发模板：
 
 ```bash
 cp apps/server/.env.example apps/server/.env
@@ -107,54 +111,72 @@ cp apps/server/.env.example apps/server/.env
 
 ## 5. 数据库（PostgreSQL）
 
-本地推荐用仓库根目录的 Compose：
+本地推荐用仓库根目录的 Compose（会创建开发库，并在**首次**初始化 volume 时建测试库）：
 
 ```bash
 # 在仓库根目录
 docker compose up -d
 ```
 
-默认账号/库：
+默认账号 / 库：
 
 - user / password：`monai` / `monai`
-- database：`monai_devops`
+- 开发库：`monai_devops`
+- 测试库：`monai_devops_test`
 - port：`5432`
 
-在 `apps/server` 生成客户端并执行迁移：
+若本地 volume 是旧的、只有开发库，需一次性手动建测试库：
+
+```bash
+docker compose exec postgres psql -U monai -c "CREATE DATABASE monai_devops_test;"
+```
+
+在 `apps/server` 生成客户端并对两个库同步 schema：
 
 ```bash
 cd apps/server
 pnpm db:generate
-pnpm db:migrate
-# 可选：打开 Prisma Studio
+pnpm db:migrate          # 开发库 monai_devops（prisma migrate）
+pnpm db:migrate:test     # 测试库 monai_devops_test（db push + GIN 索引）
+# 可选：打开 Prisma Studio（默认连当前 .env 的库）
 pnpm db:studio
 ```
+
+> `db:migrate:test` 使用 `prisma db push`（而非 `migrate deploy`），因为现有 migration 目录中 `schema_sync` 时间戳早于 `init`，在空库上 `migrate deploy` 会失败。测试库只需与当前 schema 一致即可。
+
+**规则**：Jest 只能连 `*_test` 库；开发进程可用 `pnpm dev`（开发库）或 `pnpm dev:test`（测试库）。集成测会清空测试库表，勿把需长期保留的数据放进测试库。
 
 ---
 
 ## 6. 启动与构建
 
-建议在仓库根目录执行（Turbo 会按 workspace 过滤）：
+建议在**仓库根目录**执行（与 `pnpm dev` 对称）：
 
 ```bash
-# 仅启动 server（开发模式）
-pnpm dev:server
-```
-
-也可在 `apps/server` 目录直接执行：
-
-```bash
-# 开发热更新
+# 全栈：server（开发库）+ web
 pnpm dev
 
-# 生产编译
-pnpm build
+# 全栈：server（测试库 monai_devops_test）+ web
+pnpm dev:test
 
-# 生产启动
+# 仅 server（开发库 / 测试库）
+pnpm dev:server
+pnpm dev:server:test
+
+# 仅 web
+pnpm dev:web
+```
+
+也可在 `apps/server` 目录只起后端：
+
+```bash
+pnpm dev        # → monai_devops
+pnpm dev:test   # → monai_devops_test
+pnpm build
 pnpm start:prod
 ```
 
-启动前请确认：PostgreSQL 已就绪、`DATABASE_URL` 已配置、迁移已执行。
+启动前请确认：PostgreSQL 已就绪、对应库的 schema 已同步。server 启动日志会打印 `Using database: <name>`。
 
 ---
 
@@ -341,20 +363,20 @@ SSE 事件数据类型：
 
 ## 11. 测试命令
 
-在 `apps/server` 目录：
+在 `apps/server` 目录（需已执行 `pnpm db:migrate:test`）：
 
 ```bash
-# 单测（src 旁 co-located *.spec.ts）
+# 单测（src 旁 co-located *.spec.ts；自动加载 .env.test）
 pnpm test
 
-# e2e（仅 test/；需可用的 DATABASE_URL）
+# e2e（仅 test/；强制 monai_devops_test）
 pnpm test:e2e
 
 # 覆盖率
 pnpm test:cov
 ```
 
-Prisma 集成测试（`prisma-run.repository.spec.ts`）在设置了 `DATABASE_URL` 且库表已迁移时才会执行；否则会 skip。
+Prisma 集成测试（`prisma-run.repository.spec.ts`）在设置了指向 `*_test` 库的 `DATABASE_URL` 且库表已迁移时才会执行；否则会 skip 或因护栏失败。Jest 误连开发库会直接抛错，不会执行 `deleteMany`。
 
 ---
 
