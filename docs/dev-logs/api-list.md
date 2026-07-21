@@ -1,18 +1,21 @@
 # apps/server 接口清单
 
 > 基于当前代码实现整理。所有 HTTP 路径均带全局前缀 `/{GLOBAL_API_PREFIX}`。  
-> 当前默认配置（`.env`）：`GLOBAL_API_PREFIX=api/v1/devops`，`PORT=3000`。
+> 下文路径与 Base URL 以当前本地 `.env` 为准：`GLOBAL_API_PREFIX=api/v1/devops`，`PORT=3000`。  
+> 日常模板 `.env.example` 使用 `api`；`.env.test` / `pnpm dev:test` / Jest 亦为 `api/v1/devops`。
 
-**最近更新**：2026-07-06
+**最近更新**：2026-07-21
 
 **Base URL**：`http://localhost:3000/api/v1/devops`
 
-**已注册插件**（`plugin-registry.ts`，运行 `pnpm sync:plugins` 同步）：
+**已注册插件**（`apps/server/plugins.config.json` → `plugin-registry.ts`，运行 `pnpm sync:plugins` 同步）：
 
-| 插件名 | 版本 | 说明 | configSchema |
-| --- | --- | --- | --- |
-| `test-plugin` | 1.0.0 | 测试插件（unit / integration / e2e） | 有 |
-| `model-call-plugin` | 1.0.0 | 调用 DeepSeek 模型 | 有 |
+| 插件名               | 版本  | 说明                                 | configSchema | resultSchema |
+| -------------------- | ----- | ------------------------------------ | ------------ | ------------ |
+| `test-plugin`        | 1.0.0 | 测试插件（unit / integration / e2e） | 有           | 有           |
+| `model-call-plugin`  | 1.0.0 | 调用 DeepSeek 模型                   | 有           | 有           |
+| `muti-result-plugin` | 1.0.0 | 生成多层嵌套结果                     | 有           | 有           |
+| `print-plugin`       | 1.0.0 | 向日志打印信息                       | 有           | 有           |
 
 ---
 
@@ -32,24 +35,28 @@ HTTP 异常统一由 `AllExceptionsFilter` 返回：
 }
 ```
 
-| 场景 | HTTP | error / code |
-| --- | --- | --- |
-| DAG 校验失败 | `400` | `error: "WorkflowValidationError"`，`code: "WORKFLOW_VALIDATION_ERROR"` |
-| 活跃 Run 超限 | `429` | `code: "MAX_ACTIVE_RUNS_EXCEEDED"` |
-| 资源不存在 | `404` | — |
-| 工作流名称或 ID 冲突 | `409` | 如「工作流名称「xxx」已存在」 |
-| 删除进行中的 Run | `409` | 「无法删除进行中的 Run」 |
-| 路径 id 与 body.id 不一致 | `400` | — |
+| 场景                       | HTTP  | error / code                                                            |
+| -------------------------- | ----- | ----------------------------------------------------------------------- |
+| DAG 校验失败               | `400` | `error: "WorkflowValidationError"`，`code: "WORKFLOW_VALIDATION_ERROR"` |
+| 请求体 / 查询参数不合规    | `400` | ValidationPipe                                                          |
+| dry-run 含上游 `$ref`      | `400` | 文案说明不支持引用                                                      |
+| 活跃 Run 超限              | `429` | `code: "MAX_ACTIVE_RUNS_EXCEEDED"`                                      |
+| 资源不存在                 | `404` | —                                                                       |
+| 工作流名称或 ID 冲突       | `409` | 如「工作流名称「xxx」已存在」                                           |
+| 删除进行中的 Run           | `409` | 「无法删除进行中的 Run」                                                |
+| 状态冲突（如非运行态暂停） | `409` | —                                                                       |
+| 路径 id 与 body.id 不一致  | `400` | —                                                                       |
+| `APP_ENV` 非法             | `500` | 首次读取 `GET /system/info` 时抛错                                      |
 
 ### 分页参数与响应
 
 列表类接口通用 Query：
 
-| 参数 | 类型 | 默认 | 说明 |
-| --- | --- | --- | --- |
-| `page` | number | `1` | 页码（从 1 开始） |
+| 参数       | 类型   | 默认 | 说明                 |
+| ---------- | ------ | ---- | -------------------- |
+| `page`     | number | `1`  | 页码（从 1 开始）    |
 | `pageSize` | number | `20` | 每页条数（最大 100） |
-| `search` | string | — | 关键词搜索 |
+| `search`   | string | —    | 关键词搜索           |
 
 分页响应统一结构：
 
@@ -67,30 +74,47 @@ HTTP 异常统一由 `AllExceptionsFilter` 返回：
 Run 的 `events[]` 与 WS 回放共享同一缓冲逻辑：
 
 - 同一步骤、同一 `stream`（`stdout` / `stderr`）的连续 `plugin:log` 会**合并**为单条（message 拼接）
-- 缓冲超限时**优先裁剪** `plugin:log`，尽量保留 `workflow:*` / `step:*` 生命周期事件
+- 缓冲超限时**优先裁剪** `plugin:log`，尽量保留 `workflow:*` / `step:*` 生命周期事件（上限由 `RUN_HISTORY_LIMIT` 控制，默认 500）
 - 内核事件按 `runId` **串行**写入缓冲后再扇出，避免并发乱序
 
 ---
 
 ## HTTP 接口
 
-### 根路径 / 健康检查
+### 根路径 / 健康检查 / 系统信息
 
-| 方法 | 路径 | 说明 | 响应示例 |
-| --- | --- | --- | --- |
-| GET | `/` | 存活探测（Hello World） | `"Hello World!"` |
-| GET | `/healthz` | 服务与 Engine 就绪状态 | `{ "status": "ok", "engineReady": true }` |
+| 方法 | 路径           | 说明                    | 响应示例                                  |
+| ---- | -------------- | ----------------------- | ----------------------------------------- |
+| GET  | `/`            | 存活探测（Hello World） | `"Hello World!"`                          |
+| GET  | `/healthz`     | 服务与 Engine 就绪状态  | `{ "status": "ok", "engineReady": true }` |
+| GET  | `/system/info` | 系统信息（部署环境）    | 见下                                      |
+
+**GET /system/info** 响应：
+
+```json
+{ "appEnv": "local-dev", "appEnvLabel": "本地开发" }
+```
+
+| 字段          | 说明                                                       |
+| ------------- | ---------------------------------------------------------- |
+| `appEnv`      | 部署环境码，来自环境变量 `APP_ENV`（未设默认 `local-dev`） |
+| `appEnvLabel` | 对应中文标签                                               |
+
+`APP_ENV` 合法值：`local-dev` / `online-dev` / `local-test` / `online-test` / `production`（标签分别为：本地开发 / 线上开发 / 本地测试 / 线上测试 / 生产）。
 
 ---
 
 ### Plugins · 插件
 
-| 方法 | 路径 | 说明 |
-| --- | --- | --- |
-| GET | `/plugins` | 插件注册表列表 |
-| GET | `/plugins/:name` | 单个插件详情 |
-| GET | `/plugins/:name/config-schema` | 插件 config 的 JSON Schema（Zod → JSON Schema，供前端表单渲染） |
-| POST | `/plugins/:name/dry-run` | 单步试运行（**SSE 流式**） |
+| 方法 | 路径                           | 说明                                                                |
+| ---- | ------------------------------ | ------------------------------------------------------------------- |
+| GET  | `/plugins`                     | 插件注册表列表                                                      |
+| GET  | `/plugins/config-schemas`      | 全部插件 config JSON Schema                                         |
+| GET  | `/plugins/result-schemas`      | 全部插件 result JSON Schema                                         |
+| GET  | `/plugins/:name`               | 单个插件详情                                                        |
+| GET  | `/plugins/:name/config-schema` | 单个插件 config 的 JSON Schema（Zod → JSON Schema，供前端表单渲染） |
+| GET  | `/plugins/:name/result-schema` | 单个插件 result 的 JSON Schema                                      |
+| POST | `/plugins/:name/dry-run`       | 单步试运行（**SSE 流式**）                                          |
 
 **GET /plugins** 响应示例：
 
@@ -100,18 +124,38 @@ Run 的 `events[]` 与 WS 回放共享同一缓冲逻辑：
     "name": "test-plugin",
     "version": "1.0.0",
     "description": "这是一个测试插件",
-    "hasConfigSchema": true
+    "hasConfigSchema": true,
+    "hasResultSchema": true
   },
   {
     "name": "model-call-plugin",
     "version": "1.0.0",
     "description": "这是一个调用模型插件",
-    "hasConfigSchema": true
+    "hasConfigSchema": true,
+    "hasResultSchema": true
+  },
+  {
+    "name": "muti-result-plugin",
+    "version": "1.0.0",
+    "description": "生成多层嵌套的结果插件",
+    "hasConfigSchema": true,
+    "hasResultSchema": true
+  },
+  {
+    "name": "print-plugin",
+    "version": "1.0.0",
+    "description": "向日志打印信息插件",
+    "hasConfigSchema": true,
+    "hasResultSchema": true
   }
 ]
 ```
 
 **GET /plugins/:name** 响应字段与列表项相同；插件不存在时返回 `404`。
+
+**GET /plugins/config-schemas** 响应：`[{ "name": "...", "configJsonSchema": { ... } | null }, ...]`
+
+**GET /plugins/result-schemas** 响应：`[{ "name": "...", "resultJsonSchema": { ... } | null }, ...]`
 
 **GET /plugins/:name/config-schema** 响应示例（`test-plugin`）：
 
@@ -132,46 +176,33 @@ Run 的 `events[]` 与 WS 回放共享同一缓冲逻辑：
 }
 ```
 
-`model-call-plugin` 示例：
+插件不存在或未声明 `configSchema` 时返回 `404`（文案：`插件不存在或未声明 configSchema`）。
 
-```json
-{
-  "name": "model-call-plugin",
-  "configJsonSchema": {
-    "type": "object",
-    "properties": {
-      "message": { "type": "string", "default": "Hello from model-call-plugin" },
-      "apiKey": { "type": "string", "minLength": 1 }
-    },
-    "required": ["apiKey"],
-    "additionalProperties": false
-  }
-}
-```
-
-插件不存在或未声明 `configSchema` 时返回 `404`。
+**GET /plugins/:name/result-schema** 响应：`{ "name": "...", "resultJsonSchema": { ... } }`  
+插件不存在或未声明 `resultSchema` 时返回 `404`（文案：`插件不存在或未声明 resultSchema`）。
 
 **POST /plugins/:name/dry-run** — SSE 流式响应
 
 - Content-Type：`text/event-stream`
 - 请求体：`{ "config": { ... } }`
+- **不支持** config 中的上游步骤引用（`$ref`）；含引用时同步返回 `400`（非 SSE）
 - 每条 SSE `data` 为 JSON，共三种消息类型：
 
-| type | 格式 | 说明 |
-| --- | --- | --- |
-| `log` | `{ "type": "log", "event": { ... } }` | 试运行期间的 `plugin:log` 事件（已序列化） |
-| `done` | `{ "type": "done", "result": { ... } }` | 步骤执行完成，`result` 为 `SerializedExecutionResult` |
-| `error` | `{ "type": "error", "message": "..." }` | 试运行失败 |
+| type    | 格式                                    | 说明                                                  |
+| ------- | --------------------------------------- | ----------------------------------------------------- |
+| `log`   | `{ "type": "log", "event": { ... } }`   | 试运行期间的 `plugin:log` 事件（已序列化）            |
+| `done`  | `{ "type": "done", "result": { ... } }` | 步骤执行完成，`result` 为 `SerializedExecutionResult` |
+| `error` | `{ "type": "error", "message": "..." }` | 试运行失败                                            |
 
 `done.result` 字段说明：
 
-| 字段 | 说明 |
-| --- | --- |
-| `stepId` | 固定为 `"dry-run"` |
-| `status` | 步骤状态 |
-| `success` | 是否成功 |
-| `pluginResult` | 插件返回的 `PluginResult` |
-| `error` / `failureKind` / `skipReason` | 失败或跳过时可选 |
+| 字段                                   | 说明                      |
+| -------------------------------------- | ------------------------- |
+| `stepId`                               | 固定为 `"dry-run"`        |
+| `status`                               | 步骤状态                  |
+| `success`                              | 是否成功                  |
+| `pluginResult`                         | 插件返回的 `PluginResult` |
+| `error` / `failureKind` / `skipReason` | 失败或跳过时可选          |
 
 流结束后连接关闭。插件不存在时仍返回 HTTP `404`（非 SSE）。
 
@@ -179,26 +210,26 @@ Run 的 `events[]` 与 WS 回放共享同一缓冲逻辑：
 
 ### Workflows · 工作流定义
 
-| 方法 | 路径 | 说明 |
-| --- | --- | --- |
-| GET | `/workflows` | 工作流列表（按 `updatedAt` 降序） |
-| POST | `/workflows` | 创建工作流 |
-| POST | `/workflows/validate` | DAG 校验（不持久化） |
-| GET | `/workflows/:id` | 工作流详情 |
-| PUT | `/workflows/:id` | 更新工作流 |
-| DELETE | `/workflows/:id` | 删除工作流 |
-| POST | `/workflows/:id/run` | 触发已保存工作流运行 |
+| 方法   | 路径                  | 说明                              |
+| ------ | --------------------- | --------------------------------- |
+| GET    | `/workflows`          | 工作流列表（按 `updatedAt` 降序） |
+| POST   | `/workflows`          | 创建工作流                        |
+| POST   | `/workflows/validate` | DAG 校验（不持久化）              |
+| GET    | `/workflows/:id`      | 工作流详情                        |
+| PUT    | `/workflows/:id`      | 更新工作流                        |
+| DELETE | `/workflows/:id`      | 删除工作流                        |
+| POST   | `/workflows/:id/run`  | 触发已保存工作流运行              |
 
 **GET /workflows** Query：`search`、`page`、`pageSize`
 
 **WorkflowRecord** 响应结构（列表项 / 详情 / 创建 / 更新）：
 
-| 字段 | 说明 |
-| --- | --- |
-| `id` | 工作流 ID |
+| 字段         | 说明                            |
+| ------------ | ------------------------------- |
+| `id`         | 工作流 ID                       |
 | `definition` | 规范化后的 `WorkflowDefinition` |
-| `createdAt` | 创建时间 |
-| `updatedAt` | 更新时间 |
+| `createdAt`  | 创建时间                        |
+| `updatedAt`  | 更新时间                        |
 
 **POST /workflows** / **PUT /workflows/:id** 请求体（`WorkflowDraft`）：
 
@@ -252,25 +283,27 @@ Run 的 `events[]` 与 WS 回放共享同一缓冲逻辑：
 
 ### Runs · 运行实例（核心资源）
 
-| 方法 | 路径 | 说明 |
-| --- | --- | --- |
-| GET | `/runs` | 运行历史列表（活跃 Run 置顶） |
-| POST | `/runs` | 内联 workflow 触发运行（未保存即运行） |
-| GET | `/runs/:runId` | Run 聚合详情 |
-| GET | `/runs/:runId/events` | 事件缓冲回放 |
-| POST | `/runs/:runId/cancel` | 尽力取消 |
-| DELETE | `/runs/:runId` | 删除历史 Run（进行中的不可删） |
+| 方法   | 路径                  | 说明                                   |
+| ------ | --------------------- | -------------------------------------- |
+| GET    | `/runs`               | 运行历史列表（活跃 Run 置顶）          |
+| POST   | `/runs`               | 内联 workflow 触发运行（未保存即运行） |
+| GET    | `/runs/:runId`        | Run 聚合详情                           |
+| GET    | `/runs/:runId/events` | 事件缓冲回放                           |
+| POST   | `/runs/:runId/cancel` | 取消（`best-effort` / `hard`）         |
+| POST   | `/runs/:runId/pause`  | 暂停                                   |
+| POST   | `/runs/:runId/resume` | 恢复                                   |
+| DELETE | `/runs/:runId`        | 删除历史 Run（进行中的不可删）         |
 
 **GET /runs** Query：
 
-| 参数 | 说明 |
-| --- | --- |
-| `status` | `queued` / `running` / `finished` / `failed` / `rejected` / `cancelled` |
-| `workflowId` | 按工作流 ID 过滤 |
-| `search` | 搜索 runId / workflowId / workflow 名称 |
-| `page`、`pageSize` | 分页 |
+| 参数               | 说明                                                                                           |
+| ------------------ | ---------------------------------------------------------------------------------------------- |
+| `status`           | `queued` / `running` / `paused` / `pausing` / `finished` / `failed` / `rejected` / `cancelled` |
+| `workflowId`       | 按工作流 ID 过滤                                                                               |
+| `search`           | 搜索 runId / workflowId / workflow 名称                                                        |
+| `page`、`pageSize` | 分页                                                                                           |
 
-排序规则：`queued` / `running` 状态优先，同组内按 `createdAt` 降序。
+排序规则：活跃状态（含 `queued` / `running` / `pausing` / `paused`）优先，同组内按 `createdAt` 降序。
 
 **POST /runs** 请求体：
 
@@ -278,26 +311,28 @@ Run 的 `events[]` 与 WS 回放共享同一缓冲逻辑：
 {
   "workflow": { "id": "...", "name": "...", "steps": [...] },
   "priority": 0,
-  "traceId": "trace-xxx"
+  "traceId": "trace-xxx",
+  "failFast": true,
+  "maxParallelSteps": 1
 }
 ```
 
-`workflow` 为必填；省略 `traceId` 时服务端自动生成。`workflow` 亦接受 `WorkflowDraft` 格式。
+`workflow` 为必填；省略 `traceId` 时服务端自动生成。`workflow` 亦接受 `WorkflowDraft` 格式。可选字段：`priority`、`traceId`、`failFast`、`maxParallelSteps`。
 
 **GET /runs/:runId** 响应字段：
 
-| 字段 | 说明 |
-| --- | --- |
-| `runId` | Run 标识 |
-| `workflowId` | 工作流 ID |
-| `workflowSnapshot` | 提交时的 workflow 快照 |
-| `status` | 运行状态 |
-| `traceId` | 链路追踪 ID |
-| `counts` | `{ total, completed, failed, skipped }` |
-| `createdAt` / `startedAt` / `finishedAt` | 时间戳 |
-| `result` | 终态运行结果（序列化后的 `WorkflowRunResult`） |
-| `events` | 已缓冲的生命周期事件数组（含合并后的流式 log） |
-| `cancelled` | 取消时为 `"best-effort"` |
+| 字段                                     | 说明                                           |
+| ---------------------------------------- | ---------------------------------------------- |
+| `runId`                                  | Run 标识                                       |
+| `workflowId`                             | 工作流 ID                                      |
+| `workflowSnapshot`                       | 提交时的 workflow 快照                         |
+| `status`                                 | 运行状态                                       |
+| `traceId`                                | 链路追踪 ID                                    |
+| `counts`                                 | `{ total, completed, failed, skipped }`        |
+| `createdAt` / `startedAt` / `finishedAt` | 时间戳                                         |
+| `result`                                 | 终态运行结果（序列化后的 `WorkflowRunResult`） |
+| `events`                                 | 已缓冲的生命周期事件数组（含合并后的流式 log） |
+| `cancelled`                              | 取消时为 `"best-effort"` 或 `"hard"`           |
 
 **GET /runs/:runId/events** 响应：
 
@@ -308,7 +343,13 @@ Run 的 `events[]` 与 WS 回放共享同一缓冲逻辑：
 }
 ```
 
-**POST /runs/:runId/cancel** 响应：
+**POST /runs/:runId/cancel** 请求体（可选）：
+
+```json
+{ "mode": "best-effort" }
+```
+
+`mode`：`best-effort`（默认）\| `hard`。
 
 已终态（`finished` / `failed` / `rejected`）时返回当前状态，`cancelled` 为 `undefined`：
 
@@ -322,29 +363,35 @@ Run 的 `events[]` 与 WS 回放共享同一缓冲逻辑：
 { "runId": "uuid", "status": "cancelled", "cancelled": "best-effort" }
 ```
 
+**POST /runs/:runId/pause** 请求体（可选）：
+
+```json
+{ "waitInFlight": true, "abortInFlight": false }
+```
+
+**POST /runs/:runId/resume**：无请求体。状态不允许时返回 `409`。
+
 **DELETE /runs/:runId** 响应：
 
 ```json
 { "runId": "uuid", "deleted": true }
 ```
 
-`queued` / `running` 状态返回 `409`；不存在返回 `404`。
+进行中状态返回 `409`；不存在返回 `404`。
 
 ---
 
 ### Resources · 资源与队列
 
-| 方法 | 路径 | 说明 |
-| --- | --- | --- |
-| GET | `/resources` | 资源池快照 |
-| GET | `/resources/queue` | 资源调度队列状态 |
+| 方法 | 路径               | 说明             |
+| ---- | ------------------ | ---------------- |
+| GET  | `/resources`       | 资源池快照       |
+| GET  | `/resources/queue` | 资源调度队列状态 |
 
 **GET /resources** 响应示例：
 
 ```json
-[
-  { "id": "default-0", "type": "default", "name": "default-slot-0", "status": "available" }
-]
+[{ "id": "default-0", "type": "default", "name": "default-slot-0", "status": "available" }]
 ```
 
 **GET /resources/queue** 响应示例：
@@ -361,9 +408,9 @@ Run 的 `events[]` 与 WS 回放共享同一缓冲逻辑：
 
 ### Stats · 统计
 
-| 方法 | 路径 | 说明 |
-| --- | --- | --- |
-| GET | `/stats/overview` | 实时聚合概览 |
+| 方法 | 路径              | 说明         |
+| ---- | ----------------- | ------------ |
+| GET  | `/stats/overview` | 实时聚合概览 |
 
 响应示例：
 
@@ -373,8 +420,8 @@ Run 的 `events[]` 与 WS 回放共享同一缓冲逻辑：
   "finishedRuns": 5,
   "failedRuns": 1,
   "successRate": 0.833,
-  "pluginCount": 2,
-  "queue": { "byType": { ... } }
+  "pluginCount": 4,
+  "queue": { "byType": { "default": { "queueLength": 0, "runningCount": 0 } } }
 }
 ```
 
@@ -382,11 +429,11 @@ Run 的 `events[]` 与 WS 回放共享同一缓冲逻辑：
 
 ---
 
-### Test DevOps · 兼容验证（旧端点）
+### Test DevOps · 兼容验证
 
-| 方法 | 路径 | 说明 |
-| --- | --- | --- |
-| GET | `/test-devops` | 运行内置集成测试 workflow |
+| 方法 | 路径           | 说明                                                                       |
+| ---- | -------------- | -------------------------------------------------------------------------- |
+| GET  | `/test-devops` | 同步跑内置 integration workflow（engine 直跑，不经 RunManager 持久化列表） |
 
 响应示例：
 
@@ -410,18 +457,18 @@ Run 的 `events[]` 与 WS 回放共享同一缓冲逻辑：
 
 #### 入站消息
 
-| type | 格式 | 说明 |
-| --- | --- | --- |
-| `subscribe` | `{ "type": "subscribe", "runId": "uuid" }` | 订阅指定 Run；先回放已有事件，再接实时流 |
-| `unsubscribe` | `{ "type": "unsubscribe", "runId": "uuid" }` | 取消订阅 |
-| `run` | `{ "type": "run", "workflow": { ... } }` | 受理 Run 并自动订阅 |
+| type          | 格式                                                            | 说明                                                                      |
+| ------------- | --------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| `subscribe`   | `{ "type": "subscribe", "runId": "uuid", "fromEventIndex": 0 }` | 订阅指定 Run；先回放已有事件，再接实时流。`fromEventIndex` 可选，默认 `0` |
+| `unsubscribe` | `{ "type": "unsubscribe", "runId": "uuid" }`                    | 取消订阅                                                                  |
+| `run`         | `{ "type": "run", "workflow": { ... } }`                        | 受理 Run 并自动订阅                                                       |
 
 #### 出站消息
 
-| type | 格式 | 说明 |
-| --- | --- | --- |
-| `event` | `{ "type": "event", "runId": "uuid", "event": { ... } }` | 生命周期事件（已序列化） |
-| `done` | `{ "type": "done", "runId": "uuid", "result": { ... } }` | Run 完成 |
+| type    | 格式                                                      | 说明                              |
+| ------- | --------------------------------------------------------- | --------------------------------- |
+| `event` | `{ "type": "event", "runId": "uuid", "event": { ... } }`  | 生命周期事件（已序列化）          |
+| `done`  | `{ "type": "done", "runId": "uuid", "result": { ... } }`  | Run 完成                          |
 | `error` | `{ "type": "error", "runId"?: "uuid", "message": "..." }` | 错误（协议/订阅错误可能无 runId） |
 
 **生命周期事件类型**：`workflow:start`、`workflow:finished`、`step:queued`、`step:start`、`step:finished`、`plugin:log`
@@ -438,8 +485,8 @@ Run 的 `events[]` 与 WS 回放共享同一缓冲逻辑：
 
 #### 入站消息
 
-| type | 格式 | 说明 |
-| --- | --- | --- |
+| type  | 格式                                     | 说明                                       |
+| ----- | ---------------------------------------- | ------------------------------------------ |
 | `run` | `{ "type": "run", "workflow": { ... } }` | 向后兼容旧协议；内部 = 受理 Run + 自动订阅 |
 
 #### 出站消息
@@ -450,37 +497,44 @@ Run 的 `events[]` 与 WS 回放共享同一缓冲逻辑：
 
 ## 接口总览（速查）
 
-| # | 方法 | 路径 | 分组 |
-| --- | --- | --- | --- |
-| 1 | GET | `/` | 根 |
-| 2 | GET | `/healthz` | 健康 |
-| 3 | GET | `/plugins` | 插件 |
-| 4 | GET | `/plugins/:name` | 插件 |
-| 5 | GET | `/plugins/:name/config-schema` | 插件 |
-| 6 | POST | `/plugins/:name/dry-run` | 插件（SSE） |
-| 7 | GET | `/workflows` | 工作流 |
-| 8 | POST | `/workflows` | 工作流 |
-| 9 | POST | `/workflows/validate` | 工作流 |
-| 10 | GET | `/workflows/:id` | 工作流 |
-| 11 | PUT | `/workflows/:id` | 工作流 |
-| 12 | DELETE | `/workflows/:id` | 工作流 |
-| 13 | POST | `/workflows/:id/run` | 工作流 |
-| 14 | GET | `/runs` | 运行 |
-| 15 | POST | `/runs` | 运行 |
-| 16 | GET | `/runs/:runId` | 运行 |
-| 17 | GET | `/runs/:runId/events` | 运行 |
-| 18 | POST | `/runs/:runId/cancel` | 运行 |
-| 19 | DELETE | `/runs/:runId` | 运行 |
-| 20 | GET | `/resources` | 资源 |
-| 21 | GET | `/resources/queue` | 资源 |
-| 22 | GET | `/stats/overview` | 统计 |
-| 23 | GET | `/test-devops` | 兼容 |
-| 24 | WS | `/runs/ws` | WebSocket |
-| 25 | WS | `/test-devops/ws` | WebSocket |
+| #   | 方法   | 路径                           | 分组        |
+| --- | ------ | ------------------------------ | ----------- |
+| 1   | GET    | `/`                            | 根          |
+| 2   | GET    | `/healthz`                     | 健康        |
+| 3   | GET    | `/system/info`                 | 系统        |
+| 4   | GET    | `/plugins`                     | 插件        |
+| 5   | GET    | `/plugins/config-schemas`      | 插件        |
+| 6   | GET    | `/plugins/result-schemas`      | 插件        |
+| 7   | GET    | `/plugins/:name`               | 插件        |
+| 8   | GET    | `/plugins/:name/config-schema` | 插件        |
+| 9   | GET    | `/plugins/:name/result-schema` | 插件        |
+| 10  | POST   | `/plugins/:name/dry-run`       | 插件（SSE） |
+| 11  | GET    | `/workflows`                   | 工作流      |
+| 12  | POST   | `/workflows`                   | 工作流      |
+| 13  | POST   | `/workflows/validate`          | 工作流      |
+| 14  | GET    | `/workflows/:id`               | 工作流      |
+| 15  | PUT    | `/workflows/:id`               | 工作流      |
+| 16  | DELETE | `/workflows/:id`               | 工作流      |
+| 17  | POST   | `/workflows/:id/run`           | 工作流      |
+| 18  | GET    | `/runs`                        | 运行        |
+| 19  | POST   | `/runs`                        | 运行        |
+| 20  | GET    | `/runs/:runId`                 | 运行        |
+| 21  | GET    | `/runs/:runId/events`          | 运行        |
+| 22  | POST   | `/runs/:runId/cancel`          | 运行        |
+| 23  | POST   | `/runs/:runId/pause`           | 运行        |
+| 24  | POST   | `/runs/:runId/resume`          | 运行        |
+| 25  | DELETE | `/runs/:runId`                 | 运行        |
+| 26  | GET    | `/resources`                   | 资源        |
+| 27  | GET    | `/resources/queue`             | 资源        |
+| 28  | GET    | `/stats/overview`              | 统计        |
+| 29  | GET    | `/test-devops`                 | 兼容        |
+| 30  | WS     | `/runs/ws`                     | WebSocket   |
+| 31  | WS     | `/test-devops/ws`              | WebSocket   |
 
 ---
 
 ## 相关文档
 
+- Server README：[apps/server/README.md](../../apps/server/README.md)
 - 设计方案：[docs/plans/server-api.md](../plans/server-api.md)
 - 开发日志：[docs/dev-logs/server.md](./server.md)

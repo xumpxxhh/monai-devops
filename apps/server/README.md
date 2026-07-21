@@ -20,7 +20,7 @@
 - **实时通道**：
   - `runs` WebSocket：订阅单个 run 的事件流。
   - `test-devops` WebSocket：直接通过消息执行 workflow 并自动订阅结果。
-- **观测能力**：健康检查、运行统计、资源队列状态。
+- **观测能力**：健康检查、系统信息（部署环境）、运行统计、资源队列状态。
 
 ### 当前实现特性（重要）
 
@@ -28,6 +28,7 @@
   - workflow → `PrismaWorkflowRepository`（`workflows` 表）
   - run / events → `PrismaRunRepository`（`runs` + `run_events` 表）
 - 缺少 `DATABASE_URL` 时启动会直接失败（fail-fast）。
+- 部署环境由 `APP_ENV` 标识，经 `GET .../system/info` 暴露（见 §4、§8.1）。
 - 无内置种子 workflow，首次使用需通过 API 创建。
 
 ---
@@ -43,12 +44,15 @@ src/
   resources/       # 资源与队列状态
   stats/           # 聚合统计
   health/          # 健康检查
+  system/          # 系统信息（APP_ENV → GET /system/info）
   prisma/          # PrismaService / PrismaModule
   test-devops/     # DevOps 联调入口（HTTP + WS）
-  common/          # DTO、校验、序列化、异常过滤器
+  common/          # DTO、校验、序列化、异常过滤器、storage 启动护栏
+  preload-env.ts   # 环境文件加载（MONAI_ENV_FILE / .env.local / .env）
   **/*.spec.ts     # 单元测试（与源码同目录）
 test/              # e2e 测试（仅此目录）
 prisma/            # schema + migrations
+plugins.config.json
 ```
 
 仓库根目录另有 `docker-compose.yml`，用于本地 PostgreSQL。
@@ -72,20 +76,32 @@ pnpm install
 ## 4. 环境变量
 
 日常开发加载 `.env.local`、`.env`（若环境变量已存在则不覆盖）。  
-`pnpm dev:test` 通过 `MONAI_ENV_FILE=.env.test` 强制加载 `.env.test`（覆盖 `DATABASE_URL`）。  
+`pnpm dev:test` 通过 `MONAI_ENV_FILE=.env.test` 强制加载 `.env.test`（覆盖其中键，含 `DATABASE_URL`）。  
 Jest（unit / e2e）只使用 `.env.test`，且**强制**库名以 `_test` 结尾。
 
 > `GLOBAL_API_PREFIX`、`DATABASE_URL` 均为**必填项**，未配置会在启动时直接退出。
 
-| 变量名               | 是否必填 | 默认值 | 说明                                                      |
-| -------------------- | -------- | ------ | --------------------------------------------------------- |
-| `GLOBAL_API_PREFIX`  | 是       | 无     | 全局 API 前缀，例如 `api`。影响 HTTP、WS 路径。           |
-| `DATABASE_URL`       | 是       | 无     | PostgreSQL 连接串。开发库示例见下；测试库见 `.env.test`。 |
-| `PORT`               | 否       | `3000` | HTTP 服务端口。                                           |
-| `MAX_PARALLEL_STEPS` | 否       | `2`    | 引擎内单个 workflow 的默认并行步数上限。                  |
-| `RESOURCE_POOL_SIZE` | 否       | `5`    | 引擎默认资源池容量。                                      |
-| `MAX_ACTIVE_RUNS`    | 否       | `50`   | 活跃 run 上限（超过返回 429）。                           |
-| `RUN_HISTORY_LIMIT`  | 否       | `500`  | 单个 run 事件条数上限（超限时优先裁剪日志类事件）。       |
+| 变量名               | 是否必填 | 默认值      | 说明                                                                                                                          |
+| -------------------- | -------- | ----------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| `GLOBAL_API_PREFIX`  | 是       | 无          | 全局 API 前缀，例如 `api`。影响 HTTP、WS 路径。                                                                               |
+| `APP_ENV`            | 否       | `local-dev` | 部署环境标识，经 `GET .../system/info` 返回。合法值见下。非法值会报错。                                                       |
+| `DATABASE_URL`       | 是       | 无          | PostgreSQL 连接串。开发库示例见下；测试库见 `.env.test`。                                                                     |
+| `PORT`               | 否       | `3000`      | HTTP 服务端口。                                                                                                               |
+| `MAX_PARALLEL_STEPS` | 否       | `2`         | 引擎内单个 workflow 的默认并行步数上限。                                                                                      |
+| `RESOURCE_POOL_SIZE` | 否       | `5`         | 引擎默认资源池容量。                                                                                                          |
+| `MAX_ACTIVE_RUNS`    | 否       | `50`        | 活跃 run 上限（超过返回 429）。                                                                                               |
+| `RUN_HISTORY_LIMIT`  | 否       | `500`       | 单个 run 事件条数上限（超限时优先裁剪日志类事件）。                                                                           |
+| `MONAI_ENV_FILE`     | 否       | 无          | 若设置（如 `.env.test`），优先加载该文件并 **override**；否则 `.env.local` → `.env`。`pnpm dev:test` 会自动设为 `.env.test`。 |
+
+`APP_ENV` 合法值与中文标签（`appEnvLabel`）：
+
+| 值            | 标签     |
+| ------------- | -------- |
+| `local-dev`   | 本地开发 |
+| `online-dev`  | 线上开发 |
+| `local-test`  | 本地测试 |
+| `online-test` | 线上测试 |
+| `production`  | 生产     |
 
 示例（`apps/server/.env` 或 `.env.local`，日常开发库）：
 
@@ -100,7 +116,7 @@ RUN_HISTORY_LIMIT=500
 DATABASE_URL=postgresql://monai:monai@localhost:5432/monai_devops
 ```
 
-测试 / `dev:test` 使用已提交的 `.env.test`（指向 `monai_devops_test`）。**不要**靠手改 `.env` 在开发库与测试库之间切换。
+测试 / `dev:test` 使用已提交的 `.env.test`（指向 `monai_devops_test`，并含 `APP_ENV=local-test`、`GLOBAL_API_PREFIX=api/v1/devops`）。**不要**靠手改 `.env` 在开发库与测试库之间切换。
 
 也可直接复制开发模板：
 
@@ -174,8 +190,20 @@ pnpm dev:web
 pnpm dev        # → monai_devops
 pnpm dev:test   # → monai_devops_test
 pnpm build
+pnpm start      # nest start（非 watch）
 pnpm start:prod
 ```
+
+其它常用脚本（仍在 `apps/server`）：
+
+```bash
+pnpm lint / pnpm lint:fix
+pnpm format / pnpm format:check
+pnpm test:watch
+pnpm test:debug
+```
+
+> `prebuild` 会在构建前自动执行插件同步（等同根目录 `pnpm sync:plugins`）。
 
 启动前请确认：PostgreSQL 已就绪、对应库的 schema 已同步。server 启动日志会打印 `Using database: <name>`。
 
@@ -186,9 +214,11 @@ pnpm start:prod
 - `src/plugins/plugin-registry.ts` 为**自动生成文件**，由根脚本同步：
   - 根目录执行：`pnpm sync:plugins`
 - `apps/server/package.json` 中 `prebuild` 会自动触发同步脚本。
-- 当前 `plugins.config.json` 中启用：
+- 当前 `apps/server/plugins.config.json` 中启用：
   - `test-plugin`
   - `model-call-plugin`
+  - `muti-result-plugin`
+  - `print-plugin`
 
 如新增/删除插件，请先更新插件配置并执行同步，再启动服务。
 
@@ -198,17 +228,26 @@ pnpm start:prod
 
 以下示例默认：
 
-- `GLOBAL_API_PREFIX=api`
+- `GLOBAL_API_PREFIX=api`（日常 `pnpm dev`）
 - 服务地址为 `http://localhost:3000`
 
 即基础前缀为：`/api`
+
+使用 `.env.test` / `pnpm dev:test` / Jest 时，前缀为 `api/v1/devops`，路径形如 `/api/v1/devops/healthz`、`ws://localhost:3000/api/v1/devops/runs/ws`。
 
 HTTP 入参由全局 `ValidationPipe` + 各模块 `dto/` 校验。
 
 ### 8.1 健康与基础
 
-- `GET /api/healthz`：健康检查（包含 `engineReady`）
-- `GET /api/system/info`：系统信息（含部署环境 `appEnv` / `appEnvLabel`）
+- `GET /api/healthz`：健康检查，返回 `{ "status": "ok", "engineReady": boolean }`
+- `GET /api/system/info`：系统信息（部署环境），例如：
+
+```json
+{ "appEnv": "local-dev", "appEnvLabel": "本地开发" }
+```
+
+（取值来自 `APP_ENV`，见 §4）
+
 - `GET /api/`：基础探活（返回 `Hello World!`）
 
 ### 8.2 Workflows
@@ -243,13 +282,16 @@ curl -X POST "http://localhost:3000/api/workflows" \
 ### 8.3 Runs
 
 - `GET /api/runs?status=&workflowId=&search=&page=1&pageSize=20`
-- `POST /api/runs`（内联 workflow 提交）
+  - `status` 可选：`queued` \| `running` \| `paused` \| `pausing` \| `finished` \| `failed` \| `rejected` \| `cancelled`
+- `POST /api/runs`（内联 workflow 提交；可选 `priority`、`traceId`、`failFast`、`maxParallelSteps`）
 - `GET /api/runs/:runId`
 - `GET /api/runs/:runId/events`
 - `POST /api/runs/:runId/cancel`（`{ "mode": "best-effort" | "hard" }`）
 - `POST /api/runs/:runId/pause`（`{ "waitInFlight": true, "abortInFlight": false }`）
 - `POST /api/runs/:runId/resume`
 - `DELETE /api/runs/:runId`（仅允许删除终态 run）
+
+`POST /api/workflows/:id/run` 同样支持可选字段：`priority`、`traceId`、`failFast`、`maxParallelSteps`。
 
 内联提交 run 示例：
 
@@ -309,7 +351,9 @@ SSE 事件数据类型：
 - `GET /api/resources`：资源列表
 - `GET /api/resources/queue`：资源等待队列
 - `GET /api/stats/overview`：聚合统计（活跃/完成/失败/successRate/pluginCount/queue）
-- `GET /api/test-devops`：运行集成测试 workflow（HTTP 触发）
+- `GET /api/test-devops`：同步跑内置 integration workflow，大致返回
+  `{ "success": boolean, "message": string, "workflowId": "integration-closed-loop" }`
+  （走 engine 直跑，不经 RunManager 持久化列表）
 
 ---
 
@@ -321,7 +365,7 @@ SSE 事件数据类型：
 
 客户端可发送：
 
-- `{"type":"subscribe","runId":"<run-id>"}`
+- `{"type":"subscribe","runId":"<run-id>","fromEventIndex":0}`（`fromEventIndex` 可选，默认 `0`，用于事件回放起点）
 - `{"type":"unsubscribe","runId":"<run-id>"}`
 - `{"type":"run","workflow":{...}}`
 
