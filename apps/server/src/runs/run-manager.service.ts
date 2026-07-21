@@ -93,6 +93,8 @@ function mergeEngineControlStatus(record: RunRecord, engine?: RunStatusSnapshot)
 export class RunManagerService implements OnModuleInit {
   private readonly logger = new Logger(RunManagerService.name);
   private readonly eventChains = new Map<string, Promise<void>>();
+  /** 仅处理本服务 submit/save 过的 run，避免直连引擎的旁路调用误打仓储 */
+  private readonly managedRunIds = new Set<string>();
 
   constructor(
     private readonly engineService: EngineService,
@@ -102,11 +104,18 @@ export class RunManagerService implements OnModuleInit {
   ) {}
 
   onModuleInit(): void {
-    this.engineService.onEvent((event) => this.enqueueEngineEvent(event));
+    // 不向引擎回传 Promise：持久化串行在 eventChains 内完成，避免 DB 延迟/失败阻塞 core-engine
+    this.engineService.onEvent((event) => {
+      void this.enqueueEngineEvent(event);
+    });
   }
 
   private enqueueEngineEvent(event: WorkflowLifecycleEvent): Promise<void> {
     const runId = event.workflowRunId;
+    if (!this.managedRunIds.has(runId)) {
+      return Promise.resolve();
+    }
+
     const previous = this.eventChains.get(runId) ?? Promise.resolve();
     const current = previous
       .then(() => this.processEngineEvent(event))
@@ -170,6 +179,7 @@ export class RunManagerService implements OnModuleInit {
     };
 
     await this.runRepository.save(record);
+    this.managedRunIds.add(runId);
     this.logger.log(`Run ${runId} queued (workflow=${normalized.id}, traceId=${traceId})`);
 
     void this.executeRun(runId, normalized, {
@@ -293,7 +303,11 @@ export class RunManagerService implements OnModuleInit {
     if (NON_DELETABLE_STATUSES.includes(record.status)) {
       throw new HttpException('无法删除进行中的 Run', HttpStatus.CONFLICT);
     }
-    return this.runRepository.delete(runId);
+    const deleted = await this.runRepository.delete(runId);
+    if (deleted) {
+      this.managedRunIds.delete(runId);
+    }
+    return deleted;
   }
 
   async subscribeClientAsync(

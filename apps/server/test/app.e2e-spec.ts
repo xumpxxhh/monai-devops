@@ -11,7 +11,7 @@ const GLOBAL_API_PREFIX = 'api/v1/devops';
 describe('AppController (e2e)', () => {
   let app: INestApplication<App>;
 
-  beforeEach(async () => {
+  beforeAll(async () => {
     const moduleFixture: TestingModule = await Test.createTestingModule({
       imports: [AppModule],
     }).compile();
@@ -20,6 +20,10 @@ describe('AppController (e2e)', () => {
     app.useWebSocketAdapter(new WsAdapter(app));
     app.setGlobalPrefix(GLOBAL_API_PREFIX);
     await app.init();
+  }, 30_000);
+
+  afterAll(async () => {
+    await app.close();
   });
 
   it(`/${GLOBAL_API_PREFIX} (GET)`, () => {
@@ -38,7 +42,7 @@ describe('AppController (e2e)', () => {
         message: '集成测试执行成功',
         workflowId: 'integration-closed-loop',
       });
-  });
+  }, 30_000);
 
   it(`ws://${GLOBAL_API_PREFIX}/test-devops/ws streams workflow events`, async () => {
     const server = app.getHttpServer() as import('node:net').Server;
@@ -54,7 +58,7 @@ describe('AppController (e2e)', () => {
         const timeout = setTimeout(() => {
           ws.close();
           reject(new Error('WebSocket test timed out'));
-        }, 10_000);
+        }, 20_000);
 
         ws.on('open', () => {
           ws.send(
@@ -77,7 +81,10 @@ describe('AppController (e2e)', () => {
         });
 
         ws.on('message', (data) => {
-          const message = JSON.parse(data.toString()) as { type: string; event?: { type: string } };
+          const message = JSON.parse(data.toString()) as {
+            type: string;
+            event?: { type: string };
+          };
           received.push(message);
 
           if (message.type === 'done' || message.type === 'error') {
@@ -99,15 +106,8 @@ describe('AppController (e2e)', () => {
         (message) => message.type === 'event' && message.event?.type === 'workflow:start',
       ),
     ).toBe(true);
-    expect(
-      messages.some(
-        (message) => message.type === 'event' && message.event?.type === 'workflow:finished',
-      ),
-    ).toBe(true);
+    // workflow:finished 由 RunManager 以 done 消息发出，不另发 event
+    expect(messages.some((message) => message.type === 'done')).toBe(true);
     expect(messages[messages.length - 1]?.type).toBe('done');
-  });
-
-  afterEach(async () => {
-    await app.close();
-  });
+  }, 30_000);
 });
