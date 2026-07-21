@@ -1,0 +1,61 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Run {
+  runId            String    @id @map("run_id")
+  workflowId       String    @map("workflow_id")
+  workflowName     String    @map("workflow_name")
+  status           String
+  isActive         Boolean   @default(true) @map("is_active")
+  traceId          String?   @map("trace_id")
+  workflowSnapshot Json      @map("workflow_snapshot")
+  countsTotal      Int       @default(0) @map("counts_total")
+  countsCompleted  Int       @default(0) @map("counts_completed")
+  countsFailed     Int       @default(0) @map("counts_failed")
+  countsSkipped    Int       @default(0) @map("counts_skipped")
+  result           Json?
+  cancelled        String?
+  createdBy        BigInt?   @map("created_by")
+  source           String?   @default("api")
+  metadata         Json      @default("{}")
+  createdAt        DateTime  @default(now()) @map("created_at")
+  updatedAt        DateTime  @updatedAt @map("updated_at")
+  startedAt        DateTime? @map("started_at")
+  finishedAt       DateTime? @map("finished_at")
+  events           RunEvent[]
+
+  @@index([isActive, createdAt])
+  @@index([workflowId])
+  @@index([workflowName])
+  @@map("runs")
+}
+
+model RunEvent {
+  id         BigInt   @id @default(autoincrement())
+  runId      String   @map("run_id")
+  eventIndex Int      @map("event_index")
+  type       String
+  payload    Json
+  createdAt  DateTime @default(now()) @map("created_at")
+  run        Run      @relation(fields: [runId], references: [runId], onDelete: Cascade)
+
+  @@unique([runId, eventIndex])
+  @@map("run_events")
+}
+
+model Workflow {
+  id         String   @id
+  name       String   @unique
+  definition Json
+  createdBy  BigInt?  @map("created_by")
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  @@map("workflows")
+}

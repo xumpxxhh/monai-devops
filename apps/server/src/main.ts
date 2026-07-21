@@ -1,5 +1,6 @@
 import './preload-env.js';
 import 'reflect-metadata';
+import { ValidationPipe } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import { ConfigService } from '@nestjs/config';
 import { WsAdapter } from '@nestjs/platform-ws';
@@ -21,6 +22,14 @@ async function bootstrap() {
 
   app.setGlobalPrefix(globalApiPrefix);
   app.enableCors();
+  app.useGlobalPipes(
+    new ValidationPipe({
+      whitelist: true,
+      forbidNonWhitelisted: true,
+      transform: true,
+      transformOptions: { enableImplicitConversion: true },
+    }),
+  );
   app.useGlobalFilters(new AllExceptionsFilter());
   app.enableShutdownHooks();
 
