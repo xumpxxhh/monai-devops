@@ -1,0 +1,40 @@
+{
+  "name": "@monai-devops/embedding-plugin",
+  "version": "1.0.0",
+  "description": "Embedding Plugin plugin for monai-devops",
+  "private": true,
+  "type": "module",
+  "sideEffects": false,
+  "files": [
+    "dist"
+  ],
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "check-types": "tsc --noEmit",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "format": "prettier --write .",
+    "format:check": "prettier --check ."
+  },
+  "dependencies": {
+    "@langchain/openai": "^1.5.3",
+    "@monai-devops/plugin-sdk": "workspace:*"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "typescript": "catalog:"
+  },
+  "packageManager": "pnpm@10.18.2"
+}
