@@ -17,6 +17,8 @@
     "test": "turbo run test",
     "create:plugin": "node scripts/create-plugin.mjs",
     "sync:plugins": "node scripts/sync-plugin-registry.mjs",
+    "db:up": "docker compose up -d",
+    "db:down": "docker compose down",
     "prepare": "husky"
   },
   "devDependencies": {

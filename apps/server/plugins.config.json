@@ -3,6 +3,7 @@
     "test-plugin",
     "model-call-plugin",
     "muti-result-plugin",
-    "print-plugin"
+    "print-plugin",
+    "embedding-plugin"
   ]
 }

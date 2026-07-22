@@ -46,7 +46,8 @@
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.1",
     "ws": "^8.21.0",
-    "zod-to-json-schema": "^3.24.0"
+    "zod-to-json-schema": "^3.24.0",
+    "@monai-devops/embedding-plugin": "workspace:*"
   },
   "devDependencies": {
     "@jest/globals": "30.4.1",

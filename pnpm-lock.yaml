@@ -65,6 +65,9 @@ importers:
       '@monai-devops/core-engine':
         specifier: workspace:*
         version: link:../../packages/core-engine
+      '@monai-devops/embedding-plugin':
+        specifier: workspace:*
+        version: link:../../plugins/embedding-plugin
       '@monai-devops/model-call-plugin':
         specifier: workspace:*
         version: link:../../plugins/model-call-plugin
@@ -306,6 +309,22 @@ importers:
       tsx:
         specifier: ^4.19.4
         version: 4.22.4
+      typescript:
+        specifier: ~5.9.3
+        version: 5.9.3
+
+  plugins/embedding-plugin:
+    dependencies:
+      '@langchain/openai':
+        specifier: ^1.5.3
+        version: 1.5.3(@langchain/core@1.2.1(openai@6.45.0(ws@8.21.0)(zod@3.25.76))(ws@8.21.0))(ws@8.21.0)
+      '@monai-devops/plugin-sdk':
+        specifier: workspace:*
+        version: link:../../packages/plugin-sdk
+    devDependencies:
+      '@types/node':
+        specifier: ^24.0.0
+        version: 24.12.4
       typescript:
         specifier: ~5.9.3
         version: 5.9.3
