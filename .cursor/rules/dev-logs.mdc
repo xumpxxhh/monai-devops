@@ -1,0 +1,45 @@
+---
+description: 提交代码前向 docs/dev-logs 追加包级开发日志；约定格式与路径映射
+alwaysApply: true
+---
+
+# 开发日志（docs/dev-logs）
+
+在帮助用户 **git commit / 提交代码** 之前，必须先为本次改动涉及的包追加开发日志，再执行提交。纯咨询、不提交、或仅改 `docs/dev-logs` / `api-list.md` 时跳过。
+
+## 路径映射
+
+| 改动路径 | 日志文件 |
+|---------|---------|
+| `packages/core-engine/` | `docs/dev-logs/core-engine.md` |
+| `packages/plugin-sdk/` | `docs/dev-logs/plugin-sdk.md` |
+| `plugins/` | `docs/dev-logs/plugins.md` |
+| `apps/server/` | `docs/dev-logs/server.md` |
+| `apps/web/` | `docs/dev-logs/web.md` |
+
+- 跨包改动：每个包各写一条（只列该包相关文件）。
+- 仅改 `docs/`、根配置、CI 等无对应包时：不写包日志。
+- **`docs/dev-logs/api-list.md` 是接口清单，不是 changelog，勿按本规则追加。**
+
+## 条目格式
+
+在对应 md **文件顶部标题下方、最新条目之前**插入（新条目在上）：
+
+```markdown
+## YYYY-MM-DD
+
+- **变更**：一句话说明做了什么（可含为何，控制在一两句内）
+- **文件**：`相对包根的路径或仓库相对路径`（逗号分隔，重要文件即可，勿堆砌）
+```
+
+要求：
+
+- 日期用当天（本地日历日）。
+- 同日多次提交：合并进同一 `## YYYY-MM-DD`，用多组 `- **变更**` / `- **文件**`，或一条变更里用分号串联。
+- 整体短：单条通常不超过 5 行。
+- 文件不存在时先建，仅含 `# <包标识> 开发日志` 标题再追加。
+
+## 与 commit 的关系
+
+- 日志文件改动与业务改动一并 `git add` 后提交（可同批或紧随的 `docs` 批）。
+- 详细提交流程见 `.claude/skills/git-commit/SKILL.md`。
