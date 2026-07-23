@@ -14,11 +14,11 @@
 
 `apps/server` 基于 **NestJS 11 + Express + ws**，当前仅有 3 个端点：
 
-| 类型 | 路径 | 说明 |
-| --- | --- | --- |
-| HTTP `GET` | `/{prefix}` | 返回 `"Hello World!"` |
-| HTTP `GET` | `/{prefix}/test-devops` | 硬编码运行一个 workflow，一次性返回结果 |
-| WebSocket | `/{prefix}/test-devops/ws` | 发 `{ type:'run', workflow }`，收 `event` / `done` / `error` |
+| 类型       | 路径                       | 说明                                                         |
+| ---------- | -------------------------- | ------------------------------------------------------------ |
+| HTTP `GET` | `/{prefix}`                | 返回 `"Hello World!"`                                        |
+| HTTP `GET` | `/{prefix}/test-devops`    | 硬编码运行一个 workflow，一次性返回结果                      |
+| WebSocket  | `/{prefix}/test-devops/ws` | 发 `{ type:'run', workflow }`，收 `event` / `done` / `error` |
 
 关键实现特征（决定为何需要架构升级）：
 
@@ -46,10 +46,10 @@
 
 `core-engine` 已经是**完整的进程内编排内核**（DAG 校验、并行调度、资源池、插件注册表、生命周期事件、错误分层）。`apps/server` 不应重新实现任何编排逻辑，职责是把内核**网络化、长生命周期化、可观测化**。
 
-| 维度 | 边界 |
-| --- | --- |
-| **服务负责** | 协议适配（HTTP/WS）、Engine 实例生命周期、Run 状态机与历史、事件流缓冲/回放/扇出、入参校验与错误契约、配置与可观测性、状态持久化抽象 |
-| **服务不负责** | DAG 校验算法、调度/资源分配、插件执行、条件求值 —— 全部委托内核 |
+| 维度           | 边界                                                                                                                                 |
+| -------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| **服务负责**   | 协议适配（HTTP/WS）、Engine 实例生命周期、Run 状态机与历史、事件流缓冲/回放/扇出、入参校验与错误契约、配置与可观测性、状态持久化抽象 |
+| **服务不负责** | DAG 校验算法、调度/资源分配、插件执行、条件求值 —— 全部委托内核                                                                      |
 
 **一句话**：`server = core-engine 的「网络运行时」`。设计质量由「是否干净地包住内核能力面」决定，而非由前端字段诉求决定。
 
@@ -141,11 +141,11 @@ stateDiagram-v2
 
 内核 observer 是「即时推送、无历史、单消费」。服务补三件事：
 
-| 能力 | 说明 |
-| --- | --- |
-| **缓冲** | 事件先落 `RunRecord.events[]`，再分发 |
+| 能力     | 说明                                                    |
+| -------- | ------------------------------------------------------- |
+| **缓冲** | 事件先落 `RunRecord.events[]`，再分发                   |
 | **回放** | 新订阅者先按序回放已有事件，再接实时流（刷新/断线重连） |
-| **扇出** | 同一 Run 可被多个 WS 连接订阅 |
+| **扇出** | 同一 Run 可被多个 WS 连接订阅                           |
 
 主通道 **WebSocket**（沿用现有 `ws` 依赖与 `event/done/error` 协议）；协议从「连上即跑」升级为「订阅 runId」。
 
@@ -166,10 +166,10 @@ stateDiagram-v2
 
 内核支持两档取消，由请求体 `mode` 选择（默认 `best-effort`）：
 
-| `mode` | 行为 |
-| --- | --- |
-| `best-effort` | 停止调度未开始步骤；资源队列中步骤取消；**in-flight 跑完**；响应 `cancelled: 'best-effort'` |
-| `hard` | 向 in-flight 步骤注入 `AbortSignal`（`getAbortSignal`）；插件应协作退出；`inFlightTimeoutMs` 超时后步骤 `SKIPPED / user_cancelled`；响应 `cancelled: 'hard'` |
+| `mode`        | 行为                                                                                                                                                         |
+| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `best-effort` | 停止调度未开始步骤；资源队列中步骤取消；**in-flight 跑完**；响应 `cancelled: 'best-effort'`                                                                  |
+| `hard`        | 向 in-flight 步骤注入 `AbortSignal`（`getAbortSignal`）；插件应协作退出；`inFlightTimeoutMs` 超时后步骤 `SKIPPED / user_cancelled`；响应 `cancelled: 'hard'` |
 
 `POST /runs/:runId/cancel` 请求体：`{ "mode"?: "best-effort" | "hard" }`。
 
@@ -179,14 +179,14 @@ stateDiagram-v2
 
 ### 5.7 决策 G · 配置与可观测性
 
-| 配置项 | 用途 |
-| --- | --- |
-| `GLOBAL_API_PREFIX` | HTTP 全局前缀 + WS path（统一来源） |
-| `PORT` | 监听端口 |
-| `MAX_PARALLEL_STEPS` | 步骤并行上限 |
-| `RESOURCE_POOL_SIZE` | 资源池容量 |
-| `MAX_ACTIVE_RUNS` | 活跃 Run 软上限 |
-| `RUN_HISTORY_LIMIT` | 历史保留上限 |
+| 配置项               | 用途                                |
+| -------------------- | ----------------------------------- |
+| `GLOBAL_API_PREFIX`  | HTTP 全局前缀 + WS path（统一来源） |
+| `PORT`               | 监听端口                            |
+| `MAX_PARALLEL_STEPS` | 步骤并行上限                        |
+| `RESOURCE_POOL_SIZE` | 资源池容量                          |
+| `MAX_ACTIVE_RUNS`    | 活跃 Run 软上限                     |
+| `RUN_HISTORY_LIMIT`  | 历史保留上限                        |
 
 可观测性：`GET /healthz`、`GET /stats/overview`、Run 级 `traceId` 结构化日志。
 
@@ -225,52 +225,52 @@ API 是领域模型的 HTTP/WS 投影，按服务资源边界归组。
 
 ### 7.1 Engine / Plugins（内核能力的只读暴露）
 
-| 方法 | 路径 | 说明 |
-| --- | --- | --- |
-| `GET` | `/healthz` | 存活与 engine 就绪 |
-| `GET` | `/plugins` | 插件注册表（`name / version / description / hasConfigSchema`） |
-| `GET` | `/plugins/:name` | 单插件详情（含 `hasConfigSchema`） |
-| `GET` | `/plugins/:name/config-schema` | 插件 config 的 JSON Schema，响应 `{ name, configJsonSchema }` |
-| `POST` | `/plugins/:name/dry-run` | 单步试运行，body `{ config }` → `ExecutionResult` |
+| 方法   | 路径                           | 说明                                                           |
+| ------ | ------------------------------ | -------------------------------------------------------------- |
+| `GET`  | `/healthz`                     | 存活与 engine 就绪                                             |
+| `GET`  | `/plugins`                     | 插件注册表（`name / version / description / hasConfigSchema`） |
+| `GET`  | `/plugins/:name`               | 单插件详情（含 `hasConfigSchema`）                             |
+| `GET`  | `/plugins/:name/config-schema` | 插件 config 的 JSON Schema，响应 `{ name, configJsonSchema }`  |
+| `POST` | `/plugins/:name/dry-run`       | 单步试运行，body `{ config }` → `ExecutionResult`              |
 
 ### 7.2 Workflows（定义 CRUD + 校验 + 触发）
 
-| 方法 | 路径 | 说明 |
-| --- | --- | --- |
-| `GET` | `/workflows` | 列表（`search / page / pageSize`） |
-| `POST` | `/workflows` | 创建，body = `WorkflowDefinition` |
-| `GET` | `/workflows/:id` | 详情 |
-| `PUT` | `/workflows/:id` | 更新 |
-| `DELETE` | `/workflows/:id` | 删除 |
-| `POST` | `/workflows/validate` | 不持久化的 DAG 校验 |
-| `POST` | `/workflows/:id/run` | 触发运行，返回 `{ runId, status:'queued' }` |
-| `POST` | `/runs` | 内联 workflow 触发（未保存即运行） |
+| 方法     | 路径                  | 说明                                        |
+| -------- | --------------------- | ------------------------------------------- |
+| `GET`    | `/workflows`          | 列表（`search / page / pageSize`）          |
+| `POST`   | `/workflows`          | 创建，body = `WorkflowDefinition`           |
+| `GET`    | `/workflows/:id`      | 详情                                        |
+| `PUT`    | `/workflows/:id`      | 更新                                        |
+| `DELETE` | `/workflows/:id`      | 删除                                        |
+| `POST`   | `/workflows/validate` | 不持久化的 DAG 校验                         |
+| `POST`   | `/workflows/:id/run`  | 触发运行，返回 `{ runId, status:'queued' }` |
+| `POST`   | `/runs`               | 内联 workflow 触发（未保存即运行）          |
 
 Run 级 context 可选：`priority / traceId / maxParallelSteps / failFast`。
 
 ### 7.3 Runs（服务核心一等资源）
 
-| 方法 | 路径 | 说明 |
-| --- | --- | --- |
-| `GET` | `/runs` | 历史列表（`status / workflowId / search / page / pageSize`，活跃置顶） |
-| `GET` | `/runs/:runId` | Run 聚合（状态、counts、时间、result、workflow 快照） |
-| `GET` | `/runs/:runId/events` | 事件缓冲回放（6 类序列化事件） |
-| `POST` | `/runs/:runId/cancel` | 取消（body：`mode?: best-effort \| hard`） |
-| `POST` | `/runs/:runId/pause` | 暂停（body：`waitInFlight?, abortInFlight?`） |
-| `POST` | `/runs/:runId/resume` | 继续 |
-| `DELETE` | `/runs/:runId` | 删除历史（可选） |
+| 方法     | 路径                  | 说明                                                                   |
+| -------- | --------------------- | ---------------------------------------------------------------------- |
+| `GET`    | `/runs`               | 历史列表（`status / workflowId / search / page / pageSize`，活跃置顶） |
+| `GET`    | `/runs/:runId`        | Run 聚合（状态、counts、时间、result、workflow 快照）                  |
+| `GET`    | `/runs/:runId/events` | 事件缓冲回放（6 类序列化事件）                                         |
+| `POST`   | `/runs/:runId/cancel` | 取消（body：`mode?: best-effort \| hard`）                             |
+| `POST`   | `/runs/:runId/pause`  | 暂停（body：`waitInFlight?, abortInFlight?`）                          |
+| `POST`   | `/runs/:runId/resume` | 继续                                                                   |
+| `DELETE` | `/runs/:runId`        | 删除历史（可选）                                                       |
 
 ### 7.4 Resources（调度可观测性）
 
-| 方法 | 路径 | 说明 |
-| --- | --- | --- |
-| `GET` | `/resources` | 资源池快照（`id / type / name / status`） |
+| 方法  | 路径               | 说明                                                  |
+| ----- | ------------------ | ----------------------------------------------------- |
+| `GET` | `/resources`       | 资源池快照（`id / type / name / status`）             |
 | `GET` | `/resources/queue` | `getResourceWaitQueue().getQueueStatus()`（`byType`） |
 
 ### 7.5 Stats
 
-| 方法 | 路径 | 说明 |
-| --- | --- | --- |
+| 方法  | 路径              | 说明                            |
+| ----- | ----------------- | ------------------------------- |
 | `GET` | `/stats/overview` | 活跃/成功率/排队/插件数实时聚合 |
 
 ---
@@ -281,9 +281,9 @@ Run 级 context 可选：`priority / traceId / maxParallelSteps / failFast`。
 
 ```ts
 type WsInboundMessage =
-  | { type: 'subscribe'; runId: string }   // 主路径
+  | { type: 'subscribe'; runId: string } // 主路径
   | { type: 'unsubscribe'; runId: string }
-  | { type: 'run'; workflow: WorkflowDefinition };  // 兼容即时模式
+  | { type: 'run'; workflow: WorkflowDefinition }; // 兼容即时模式
 ```
 
 **出站消息**（沿用现有协议）：
@@ -346,11 +346,11 @@ type WsOutboundMessage =
 
 ## 附录 A · 与 web-ui.md §10 的对照（验证覆盖，非设计驱动）
 
-| web-ui §10 | 本方案 |
-| --- | --- |
-| `GET /plugins` | §7.1 Engine/Plugins |
-| workflows CRUD | §7.2 Workflows |
-| `GET /runs`、`GET /runs/:runId` | §7.3 Runs（+ 事件回放） |
-| `GET /resources/queue` | §7.4 Resources |
-| 运行取消 | §5.6 决策 F 尽力取消 |
-| 按 runId 订阅 / 多任务 | §5.3 决策 C + §8 WS 通道 |
+| web-ui §10                      | 本方案                   |
+| ------------------------------- | ------------------------ |
+| `GET /plugins`                  | §7.1 Engine/Plugins      |
+| workflows CRUD                  | §7.2 Workflows           |
+| `GET /runs`、`GET /runs/:runId` | §7.3 Runs（+ 事件回放）  |
+| `GET /resources/queue`          | §7.4 Resources           |
+| 运行取消                        | §5.6 决策 F 尽力取消     |
+| 按 runId 订阅 / 多任务          | §5.3 决策 C + §8 WS 通道 |

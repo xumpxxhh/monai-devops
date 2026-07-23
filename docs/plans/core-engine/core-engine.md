@@ -13,21 +13,21 @@
 
 ## 优先级总览
 
-| ID | 优先级 | 问题 | 模块 | 状态 |
-| --- | --- | --- | --- | --- |
-| CE-001 | 高 | hard cancel 超时后资源提前释放，插件仍在后台运行 | executor / resource | 已修复 |
-| CE-002 | 高 | `executionHistory` 按 `workflowId` 键，并发 run 互相覆盖 | executor | 已修复 |
-| CE-003 | 高 | `scheduleWorkflow` 重试语义失效且非幂等 | scheduler / engine | 已修复 |
-| CE-004 | 中 | `pluginFailureKind` 分支死代码，`failureKind` 无法区分 | executor/helpers | 已修复 |
-| CE-005 | 中 | `assertValidWorkflowRunId` 校验 trim 值却使用原始 id | executor | 已修复 |
-| CE-006 | 中 | `registerResource` 池满时静默丢弃 | resource / engine | 已修复 |
-| CE-007 | 低 | `allocationLock` 伪互斥 + 死代码 | resource | 已修复 |
-| CE-008 | 低 | `step:queued` 语义需文档澄清（进入调度流程，不保证物理等待） | resource / engine | 已澄清 |
-| CE-009 | 低 | 堆取消为惰性删除，队列长度失真 | scheduler / resource | 待优化 |
-| CE-010 | 低 | `resourceType` 拼错静默降级到 default 池 | engine | 待增强 |
-| CE-011 | 低 | 全内存单进程，无持久化 | 整体 | 已知边界 |
-| CE-012 | 低 | observer 抛错导致步骤 FAILED | executor / observer | 待评估 |
-| CE-013 | 低 | 测试与 CI 工程化不足 | 工程 | 待增强 |
+| ID     | 优先级 | 问题                                                         | 模块                 | 状态     |
+| ------ | ------ | ------------------------------------------------------------ | -------------------- | -------- |
+| CE-001 | 高     | hard cancel 超时后资源提前释放，插件仍在后台运行             | executor / resource  | 已修复   |
+| CE-002 | 高     | `executionHistory` 按 `workflowId` 键，并发 run 互相覆盖     | executor             | 已修复   |
+| CE-003 | 高     | `scheduleWorkflow` 重试语义失效且非幂等                      | scheduler / engine   | 已修复   |
+| CE-004 | 中     | `pluginFailureKind` 分支死代码，`failureKind` 无法区分       | executor/helpers     | 已修复   |
+| CE-005 | 中     | `assertValidWorkflowRunId` 校验 trim 值却使用原始 id         | executor             | 已修复   |
+| CE-006 | 中     | `registerResource` 池满时静默丢弃                            | resource / engine    | 已修复   |
+| CE-007 | 低     | `allocationLock` 伪互斥 + 死代码                             | resource             | 已修复   |
+| CE-008 | 低     | `step:queued` 语义需文档澄清（进入调度流程，不保证物理等待） | resource / engine    | 已澄清   |
+| CE-009 | 低     | 堆取消为惰性删除，队列长度失真                               | scheduler / resource | 待优化   |
+| CE-010 | 低     | `resourceType` 拼错静默降级到 default 池                     | engine               | 待增强   |
+| CE-011 | 低     | 全内存单进程，无持久化                                       | 整体                 | 已知边界 |
+| CE-012 | 低     | observer 抛错导致步骤 FAILED                                 | executor / observer  | 待评估   |
+| CE-013 | 低     | 测试与 CI 工程化不足                                         | 工程                 | 待增强   |
 
 ---
 
@@ -288,11 +288,11 @@ export function pluginFailureKind(pluginResult: PluginResult): StepFailureKind {
 
 ## 修订记录
 
-| 日期 | 说明 |
-| --- | --- |
+| 日期       | 说明                                                                                                     |
+| ---------- | -------------------------------------------------------------------------------------------------------- |
 | 2026-07-07 | resource-scheduler 并入 resource/wait-queue；API 重命名为 createResourceWaitQueue / getResourceWaitQueue |
-| 2026-07-07 | CE-007 修复：移除 resource manager 中 `allocationLock` 伪互斥与死代码 |
-| 2026-07-07 | CE-008 文档语义澄清：`step:queued` 表示进入资源调度流程，不保证物理等待 |
-| 2026-07-07 | CE-004 ~ CE-006 中优先级问题修复 |
-| 2026-07-07 | CE-001 ~ CE-003 高优先级问题修复 |
-| 2026-07-07 | 初版：源码审查问题归档（13 项） |
+| 2026-07-07 | CE-007 修复：移除 resource manager 中 `allocationLock` 伪互斥与死代码                                    |
+| 2026-07-07 | CE-008 文档语义澄清：`step:queued` 表示进入资源调度流程，不保证物理等待                                  |
+| 2026-07-07 | CE-004 ~ CE-006 中优先级问题修复                                                                         |
+| 2026-07-07 | CE-001 ~ CE-003 高优先级问题修复                                                                         |
+| 2026-07-07 | 初版：源码审查问题归档（13 项）                                                                          |

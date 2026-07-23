@@ -15,15 +15,15 @@
 
 原型共 **7 个视图**：
 
-| 视图 | 文件 | 原型优先级 | 核心价值 |
-| --- | --- | --- | --- |
-| 概览 Dashboard | `dashboard.html` | V2 | 平台健康度快照（进行中、成功率、资源、插件数） |
-| 工作流列表 | `workflows.html` | P0 | 管理工作流，搜索、一键运行、进编排器 |
-| 工作流编排器 | `workflow-editor.html` | P0 | 三栏可视化 DAG 编辑 + 环检测 + 发起运行 |
-| 运行列表 | `runs.html` | P0 | 筛选状态/工作流/时间，进行中置顶 |
-| **运行详情** ★ | `run-detail.html` | **核心** | 实时 DAG 状态视图 + 事件/日志流 + 单步下钻排障 |
-| 插件管理 | `plugins.html` | P1 | 已注册插件列表 + 单步试运行 |
-| 资源与调度 | `resources.html` | P1 | 资源池占用 + 调度队列，解释「为什么排队」 |
+| 视图           | 文件                   | 原型优先级 | 核心价值                                       |
+| -------------- | ---------------------- | ---------- | ---------------------------------------------- |
+| 概览 Dashboard | `dashboard.html`       | V2         | 平台健康度快照（进行中、成功率、资源、插件数） |
+| 工作流列表     | `workflows.html`       | P0         | 管理工作流，搜索、一键运行、进编排器           |
+| 工作流编排器   | `workflow-editor.html` | P0         | 三栏可视化 DAG 编辑 + 环检测 + 发起运行        |
+| 运行列表       | `runs.html`            | P0         | 筛选状态/工作流/时间，进行中置顶               |
+| **运行详情** ★ | `run-detail.html`      | **核心**   | 实时 DAG 状态视图 + 事件/日志流 + 单步下钻排障 |
+| 插件管理       | `plugins.html`         | P1         | 已注册插件列表 + 单步试运行                    |
+| 资源与调度     | `resources.html`       | P1         | 资源池占用 + 调度队列，解释「为什么排队」      |
 
 ---
 
@@ -46,11 +46,11 @@
 
 当前 `apps/server` 对外仅有：
 
-| 类型 | 路径 | 说明 |
-| --- | --- | --- |
-| HTTP `GET` | `/{prefix}` | 返回 `"Hello World!"` |
-| HTTP `GET` | `/{prefix}/test-devops` | 硬编码运行一个 workflow，一次性返回 `IntegrationTestResult` |
-| WebSocket | `/{prefix}/test-devops/ws` | 发 `{ type:'run', workflow }`，收 `event` / `done` / `error` |
+| 类型       | 路径                       | 说明                                                         |
+| ---------- | -------------------------- | ------------------------------------------------------------ |
+| HTTP `GET` | `/{prefix}`                | 返回 `"Hello World!"`                                        |
+| HTTP `GET` | `/{prefix}/test-devops`    | 硬编码运行一个 workflow，一次性返回 `IntegrationTestResult`  |
+| WebSocket  | `/{prefix}/test-devops/ws` | 发 `{ type:'run', workflow }`，收 `event` / `done` / `error` |
 
 **缺口（原型需要、后端尚无）**：
 
@@ -108,6 +108,7 @@ export type WorkflowLifecycleEvent =
    待后端补齐对应 REST/WS 接口时**仅替换实现、不改 UI**。每个 mock 点在 UI 上以「演示数据」标注，避免误导。
 
 > 决策记录（可在评审中调整）：
+>
 > - **D1 工作流存储**：P0 阶段工作流定义存 `localStorage`（前端本地草稿）。理由：后端无持久化，且原型的"列表/复制/导出"均可在本地完成。后端补 CRUD 后切换。
 > - **D2 运行历史**：浏览器会话内用内存 store 记录本次会话发起过的运行（含已结束的事件快照）；跨会话历史待后端 `GET /runs`。
 > - **D3 插件列表**：先内置一份与原型一致的静态插件清单（含 `test-plugin`），真实可运行的仅 `test-plugin`；待后端 `GET /plugins`。
@@ -118,22 +119,22 @@ export type WorkflowLifecycleEvent =
 
 ## 4. 技术选型
 
-| 关注点 | 选型 | 理由 |
-| --- | --- | --- |
-| 样式 | **Tailwind CSS v3 + 自定义 token** | 原型即 Tailwind 编写，迁移成本最低；token 已在 `theme.js` 定义好，直接搬进 `tailwind.config`。选 v3（生态稳定、与原型 `tailwind.config` 写法一致）。 |
-| 设计 token | 迁移 `docs/prototype/assets/theme.js` → `tailwind.config.{js,ts}`；动效迁移 `console.css` → `src/index.css` | 颜色（brand/canvas/surface/ink/completed/running/queued/failed/skipped…）、圆角（card/ctrl/pill）、阴影、字体（JetBrains Mono）一比一还原。 |
-| 图标 | **FontAwesome 6**（与原型一致） | 原型大量使用 `fa-solid` 图标，沿用可直接复用类名。可用 CDN（演示）或 `@fortawesome/react-fontawesome`（工程化，推荐后者）。 |
-| **UI 组件库** | **不用重组件库（Ant Design / MUI）** | 见下方 §4.1 决策。重组件库的默认样式会与高度定制的 Control Room 主题打架，覆盖成本高于自研。 |
-| 展示组件 | **Tailwind + 自研原子组件** | 承载定制视觉（StatusBadge / ProgressBar / DagNode 等），保住原型质感。 |
-| 交互 / 可达性 | **无头库 Radix UI（或 Headless UI）** | 只提供行为、零样式，用 Tailwind 上妆。用于 Dialog / Drawer / Dropdown / Tabs / Tooltip / Popover —— 借力其焦点管理、键盘可达、点击外部关闭、定位，避免自己踩坑。 |
-| DAG 画布 | **React Flow**（专用库，非通用组件库） | 编排器的可视化 DAG（拖拽建节点、连线、自动布局、缩放）是通用组件库覆盖不到的范畴，用专用库。运行详情的 DAG 状态视图可复用同一套渲染或用只读 SVG。 |
-| 路由 | **react-router-dom 7**（已装） | 沿用。新增带侧边栏的布局路由 + 全屏路由（编排器/运行详情）。 |
-| 服务端状态 | **TanStack Query**（推荐）或自研 hooks | 列表/详情类「请求-缓存-失效」用 Query；WebSocket 实时流单独用自定义 hook。若想零依赖，P0 也可仅用 hooks，后续再引入。 |
-| WebSocket | 自研 `useWorkflowRun` hook + `WorkflowRunClient` 类 | 封装连接、自动重连、`event/done/error` 解析、单连接单任务约束、卸载清理（沉淀自 `Test.tsx`）。 |
-| 客户端状态 | React 内置（Context + useReducer）起步；如复杂度上升再引 Zustand | 运行详情页的"事件 → DAG/日志聚合"是核心状态，用 reducer 清晰可测。 |
-| 类型共享 | 从 `@monai-devops/core-engine` / `plugin-sdk` 复用类型 + 前端定义「序列化版」镜像类型 | 避免手抄；序列化差异（Error→{name,message}）单独建 `Serialized*` 类型。 |
-| 表单/校验 | 轻量自研（JSON 校验、DAG 环检测、id 唯一性） | 原型交互简单，无需重表单库。 |
-| 测试 | **Vitest + React Testing Library**；事件聚合 reducer 重点单测 | reducer 是纯函数，最高性价比的测试点。 |
+| 关注点        | 选型                                                                                                        | 理由                                                                                                                                                             |
+| ------------- | ----------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 样式          | **Tailwind CSS v3 + 自定义 token**                                                                          | 原型即 Tailwind 编写，迁移成本最低；token 已在 `theme.js` 定义好，直接搬进 `tailwind.config`。选 v3（生态稳定、与原型 `tailwind.config` 写法一致）。             |
+| 设计 token    | 迁移 `docs/prototype/assets/theme.js` → `tailwind.config.{js,ts}`；动效迁移 `console.css` → `src/index.css` | 颜色（brand/canvas/surface/ink/completed/running/queued/failed/skipped…）、圆角（card/ctrl/pill）、阴影、字体（JetBrains Mono）一比一还原。                      |
+| 图标          | **FontAwesome 6**（与原型一致）                                                                             | 原型大量使用 `fa-solid` 图标，沿用可直接复用类名。可用 CDN（演示）或 `@fortawesome/react-fontawesome`（工程化，推荐后者）。                                      |
+| **UI 组件库** | **不用重组件库（Ant Design / MUI）**                                                                        | 见下方 §4.1 决策。重组件库的默认样式会与高度定制的 Control Room 主题打架，覆盖成本高于自研。                                                                     |
+| 展示组件      | **Tailwind + 自研原子组件**                                                                                 | 承载定制视觉（StatusBadge / ProgressBar / DagNode 等），保住原型质感。                                                                                           |
+| 交互 / 可达性 | **无头库 Radix UI（或 Headless UI）**                                                                       | 只提供行为、零样式，用 Tailwind 上妆。用于 Dialog / Drawer / Dropdown / Tabs / Tooltip / Popover —— 借力其焦点管理、键盘可达、点击外部关闭、定位，避免自己踩坑。 |
+| DAG 画布      | **React Flow**（专用库，非通用组件库）                                                                      | 编排器的可视化 DAG（拖拽建节点、连线、自动布局、缩放）是通用组件库覆盖不到的范畴，用专用库。运行详情的 DAG 状态视图可复用同一套渲染或用只读 SVG。                |
+| 路由          | **react-router-dom 7**（已装）                                                                              | 沿用。新增带侧边栏的布局路由 + 全屏路由（编排器/运行详情）。                                                                                                     |
+| 服务端状态    | **TanStack Query**（推荐）或自研 hooks                                                                      | 列表/详情类「请求-缓存-失效」用 Query；WebSocket 实时流单独用自定义 hook。若想零依赖，P0 也可仅用 hooks，后续再引入。                                            |
+| WebSocket     | 自研 `useWorkflowRun` hook + `WorkflowRunClient` 类                                                         | 封装连接、自动重连、`event/done/error` 解析、单连接单任务约束、卸载清理（沉淀自 `Test.tsx`）。                                                                   |
+| 客户端状态    | React 内置（Context + useReducer）起步；如复杂度上升再引 Zustand                                            | 运行详情页的"事件 → DAG/日志聚合"是核心状态，用 reducer 清晰可测。                                                                                               |
+| 类型共享      | 从 `@monai-devops/core-engine` / `plugin-sdk` 复用类型 + 前端定义「序列化版」镜像类型                       | 避免手抄；序列化差异（Error→{name,message}）单独建 `Serialized*` 类型。                                                                                          |
+| 表单/校验     | 轻量自研（JSON 校验、DAG 环检测、id 唯一性）                                                                | 原型交互简单，无需重表单库。                                                                                                                                     |
+| 测试          | **Vitest + React Testing Library**；事件聚合 reducer 重点单测                                               | reducer 是纯函数，最高性价比的测试点。                                                                                                                           |
 
 > 待确认（评审决策）：是否引入 TanStack Query 与 Zustand。本计划默认 **P0 仅用 hooks + Context**，P1 视情况引入 Query。
 
@@ -156,15 +157,15 @@ export type WorkflowLifecycleEvent =
 
 沿用原型导航（`assets/app.js` 中 `NAV`）：概览 / 工作流 / 运行 / 插件 / 资源，外加全屏的编排器与运行详情。
 
-| 路由 | 页面 | 布局 | 数据源（P0） |
-| --- | --- | --- | --- |
-| `/` | 概览 Dashboard | 侧边栏布局 | mock + 会话内运行统计 |
-| `/workflows` | 工作流列表 | 侧边栏布局 | localStorage |
-| `/workflows/:id/edit`（与 `/workflows/new`） | 工作流编排器 | 全屏布局 | localStorage |
-| `/runs` | 运行列表 | 侧边栏布局 | 会话内运行 store |
-| `/runs/:runId` | **运行详情** ★ | 全屏布局 | **WebSocket 实时** |
-| `/plugins` | 插件管理 + 单步试运行 | 侧边栏布局 | 静态清单 + ws 单步运行 |
-| `/resources` | 资源与调度 | 侧边栏布局 | mock（标注） |
+| 路由                                         | 页面                  | 布局       | 数据源（P0）           |
+| -------------------------------------------- | --------------------- | ---------- | ---------------------- |
+| `/`                                          | 概览 Dashboard        | 侧边栏布局 | mock + 会话内运行统计  |
+| `/workflows`                                 | 工作流列表            | 侧边栏布局 | localStorage           |
+| `/workflows/:id/edit`（与 `/workflows/new`） | 工作流编排器          | 全屏布局   | localStorage           |
+| `/runs`                                      | 运行列表              | 侧边栏布局 | 会话内运行 store       |
+| `/runs/:runId`                               | **运行详情** ★        | 全屏布局   | **WebSocket 实时**     |
+| `/plugins`                                   | 插件管理 + 单步试运行 | 侧边栏布局 | 静态清单 + ws 单步运行 |
+| `/resources`                                 | 资源与调度            | 侧边栏布局 | mock（标注）           |
 
 两种布局（对应原型）：
 
@@ -226,7 +227,10 @@ apps/web/src/
 `serialize-workflow-event.ts` 输出对齐的「序列化版」类型：
 
 ```ts
-interface SerializedError { name: string; message: string }
+interface SerializedError {
+  name: string;
+  message: string;
+}
 
 interface ExecutionResultSerialized {
   stepId: string;
@@ -258,9 +262,9 @@ interface ExecutionResultSerialized {
 interface RunState {
   runId: string;
   workflowName: string;
-  steps: Record<string, StepView>;   // 由 step:* 事件驱动状态机
-  edges: Edge[];                       // 由 dependsOn 推导
-  logs: LogLine[];                     // plugin:log + 事件转写
+  steps: Record<string, StepView>; // 由 step:* 事件驱动状态机
+  edges: Edge[]; // 由 dependsOn 推导
+  logs: LogLine[]; // plugin:log + 事件转写
   counts: { completed; running; queued; failed; skipped; total };
   status: 'running' | 'finished';
   finalResult?: WorkflowRunResultSerialized;
