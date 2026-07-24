@@ -330,6 +330,64 @@ describe('WorkflowObserver', () => {
     engine.destroy();
   });
 
+  it('injects parent on nested child step:queued when subworkflow waits for resources', async () => {
+    const { events, observer } = collectEvents();
+    const parentRunId = 'nested-queued-parent';
+    const engine = createEngine({
+      plugins: [testPlugin],
+      observer,
+      defaultPoolSize: 1,
+      resources: { autoCleanup: false },
+      resolveWorkflow: async () => ({
+        id: 'child-wf',
+        name: 'child-wf',
+        steps: [
+          {
+            id: 'inner',
+            name: 'inner',
+            plugin: 'test-plugin',
+            config: { type: 'unit', resourceType: 'runner' },
+          },
+        ],
+      }),
+    });
+
+    const runPromise = engine.runWorkflow(parentRunId, {
+      id: 'parent-wf',
+      name: 'parent-wf',
+      steps: [
+        {
+          id: 'call',
+          name: 'call',
+          kind: 'workflow',
+          workflowRef: { importId: 'imp-1' },
+        },
+      ],
+    });
+
+    await new Promise((r) => setTimeout(r, 50));
+    const childQueued = events.filter(
+      (e) => e.type === WorkflowEventTypes.STEP_QUEUED && e.workflowRunId !== parentRunId,
+    );
+    assert.ok(childQueued.length >= 1, 'expected nested step:queued while waiting for runner');
+    for (const e of childQueued) {
+      assert.ok(e.parent);
+      assert.equal(e.parent!.runId, parentRunId);
+      assert.equal(e.parent!.stepId, 'call');
+    }
+
+    engine.getResourceManager().registerResource({
+      id: 'r-nested',
+      type: 'runner',
+      name: 'runner-nested',
+      status: 'available',
+    });
+
+    const run = await runPromise;
+    assert.equal(run.success, true);
+    engine.destroy();
+  });
+
   it('injects workflowRunId into step execution context as runId', async () => {
     let capturedRunId: string | undefined;
     const executor = createWorkflowExecutor({

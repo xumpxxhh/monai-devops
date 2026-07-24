@@ -4,4 +4,10 @@
  */
 
 export { WorkflowEventTypes, type WorkflowEventType } from './event-types.js';
-export type { WorkflowLifecycleEvent, WorkflowObserver, WorkflowRunMeta } from './types.js';
+export type {
+  WorkflowEventParent,
+  WorkflowIterationChildResultSummary,
+  WorkflowLifecycleEvent,
+  WorkflowObserver,
+  WorkflowRunMeta,
+} from './types.js';

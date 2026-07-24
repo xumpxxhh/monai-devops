@@ -15,4 +15,6 @@ export const WorkflowContextKeys = {
   traceId: 'traceId',
   logger: 'logger',
   signal: 'signal',
+  /** 当前 run state（只读感知；插件可选消费） */
+  state: 'state',
 } as const;

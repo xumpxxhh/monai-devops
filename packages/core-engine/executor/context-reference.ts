@@ -5,7 +5,15 @@
 
 import type { ZodType } from '@monai-devops/plugin-sdk';
 import { StepExecutionError, StepFailureKinds, WorkflowValidationError } from '../errors.js';
-import type { WorkflowDefinition, WorkflowStep } from './types.js';
+import { SET_STATE_RESULT_SCHEMA, WORKFLOW_REF_RESULT_SCHEMA } from './builtin-step-kinds.js';
+import { getStepReferencePayload } from './step-kind-validation.js';
+import {
+  getStepKind,
+  isPluginStep,
+  StepKinds,
+  type WorkflowDefinition,
+  type WorkflowStep,
+} from './types.js';
 
 export type ContextRef = {
   $ref: {
@@ -173,11 +181,29 @@ export interface ValidateWorkflowContextReferencesOptions {
   resolvePluginResultSchema?: (pluginName: string) => ZodType | undefined;
 }
 
+/** 按来源步骤 kind 解析可用于 $ref 校验的 resultSchema */
+export function resolveStepResultSchema(
+  sourceStep: WorkflowStep,
+  resolvePluginResultSchema?: (pluginName: string) => ZodType | undefined,
+): ZodType | undefined {
+  const kind = getStepKind(sourceStep);
+  if (kind === StepKinds.SET_STATE) {
+    return SET_STATE_RESULT_SCHEMA;
+  }
+  if (kind === StepKinds.WORKFLOW) {
+    return WORKFLOW_REF_RESULT_SCHEMA;
+  }
+  if (isPluginStep(sourceStep) && resolvePluginResultSchema) {
+    return resolvePluginResultSchema(sourceStep.plugin);
+  }
+  return undefined;
+}
+
 /**
- * 静态校验工作流 config 中的 ContextRef：
+ * 静态校验工作流中的 ContextRef：
  * - fromStepId 存在
  * - fromStepId 是当前步骤祖先
- * - 来源插件已声明 resultSchema
+ * - 来源步骤允许被引用（插件需声明 resultSchema；内置 kind 走固定 schema）
  */
 export function validateWorkflowContextReferences(
   workflow: WorkflowDefinition,
@@ -187,7 +213,8 @@ export function validateWorkflowContextReferences(
   const stepById = new Map<string, WorkflowStep>(workflow.steps.map((s) => [s.id, s]));
 
   for (const step of workflow.steps) {
-    const refs = extractContextReferences(step.config);
+    const payload = getStepReferencePayload(step);
+    const refs = extractContextReferences(payload);
     if (refs.length === 0) continue;
 
     const ancestors = getAncestorIds(step.id, workflow.steps);
@@ -208,11 +235,14 @@ export function validateWorkflowContextReferences(
       }
 
       const sourceStep = stepById.get(fromStepId)!;
-      if (resolvePluginResultSchema) {
-        const schema = resolvePluginResultSchema(sourceStep.plugin);
+      const sourceKind = getStepKind(sourceStep);
+
+      if (resolvePluginResultSchema || sourceKind !== StepKinds.PLUGIN) {
+        const schema = resolveStepResultSchema(sourceStep, resolvePluginResultSchema);
         if (!schema) {
+          const pluginLabel = isPluginStep(sourceStep) ? `（插件 "${sourceStep.plugin}"）` : '';
           throw new WorkflowValidationError(
-            `步骤 "${step.id}" 引用了步骤 "${fromStepId}"（插件 "${sourceStep.plugin}"），但该插件未声明 resultSchema`,
+            `步骤 "${step.id}" 引用了步骤 "${fromStepId}"${pluginLabel}，但该步骤未声明 resultSchema`,
           );
         }
       }

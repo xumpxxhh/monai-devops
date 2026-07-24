@@ -10,7 +10,8 @@
     "declarationMap": true,
     "composite": true,
     "outDir": "dist",
-    "rootDir": "."
+    "rootDir": ".",
+    "types": ["node"]
   },
   "include": ["**/*.ts"],
   "exclude": ["dist", "node_modules"]
