@@ -4,7 +4,7 @@
 > 下文路径与 Base URL 以当前本地 `.env` 为准：`GLOBAL_API_PREFIX=api/v1/devops`，`PORT=3000`。  
 > 日常模板 `.env.example` 使用 `api`；`.env.test` / `pnpm dev:test` / Jest 亦为 `api/v1/devops`。
 
-**最近更新**：2026-07-21
+**最近更新**：2026-07-24
 
 **Base URL**：`http://localhost:3000/api/v1/devops`
 
@@ -44,6 +44,7 @@ HTTP 异常统一由 `AllExceptionsFilter` 返回：
 | 资源不存在                 | `404` | —                                                                       |
 | 工作流名称或 ID 冲突       | `409` | 如「工作流名称「xxx」已存在」                                           |
 | 删除进行中的 Run           | `409` | 「无法删除进行中的 Run」                                                |
+| 公开工作流仍被引用时删除   | `409` | 附引用方工作流 id/名称列表                                              |
 | 状态冲突（如非运行态暂停） | `409` | —                                                                       |
 | 路径 id 与 body.id 不一致  | `400` | —                                                                       |
 | `APP_ENV` 非法             | `500` | 首次读取 `GET /system/info` 时抛错                                      |
@@ -210,30 +211,33 @@ Run 的 `events[]` 与 WS 回放共享同一缓冲逻辑：
 
 ### Workflows · 工作流定义
 
-| 方法   | 路径                  | 说明                              |
-| ------ | --------------------- | --------------------------------- |
-| GET    | `/workflows`          | 工作流列表（按 `updatedAt` 降序） |
-| POST   | `/workflows`          | 创建工作流                        |
-| POST   | `/workflows/validate` | DAG 校验（不持久化）              |
-| GET    | `/workflows/:id`      | 工作流详情                        |
-| PUT    | `/workflows/:id`      | 更新工作流                        |
-| DELETE | `/workflows/:id`      | 删除工作流                        |
-| POST   | `/workflows/:id/run`  | 触发已保存工作流运行              |
+| 方法   | 路径                        | 说明                                                                 |
+| ------ | --------------------------- | -------------------------------------------------------------------- |
+| GET    | `/step-kinds`               | 内置步骤形态清单（`BUILTIN_STEP_KIND_DEFINITIONS`）                  |
+| GET    | `/workflows`                | 公开工作流列表（按 `updatedAt` 降序；过滤私有拷贝）                  |
+| POST   | `/workflows`                | 创建工作流                                                            |
+| POST   | `/workflows/validate`       | DAG / kind / 嵌套 / `$ref` 校验（不持久化）                          |
+| GET    | `/workflows/:id`            | 工作流详情                                                           |
+| PUT    | `/workflows/:id`            | 更新工作流                                                           |
+| DELETE | `/workflows/:id`            | 删除工作流（公开且仍被引用 → `409`）                                 |
+| POST   | `/workflows/:id/run`        | 触发已保存工作流运行                                                 |
+| GET    | `/workflows/:id/imports`    | 已导入子工作流列表                                                   |
+| POST   | `/workflows/:id/imports`    | 导入子工作流（`reference` / `copy`）                                 |
 
-**GET /workflows** Query：`search`、`page`、`pageSize`
+**GET /workflows** Query：`search`、`page`、`pageSize`。仅返回 `ownerWorkflowId IS NULL` 的公开工作流。
 
 **WorkflowRecord** 响应结构（列表项 / 详情 / 创建 / 更新）：
 
 | 字段         | 说明                            |
 | ------------ | ------------------------------- |
 | `id`         | 工作流 ID                       |
-| `definition` | 规范化后的 `WorkflowDefinition` |
+| `definition` | 规范化后的 `WorkflowDefinition`（可含 `stateSchema`、多 `kind` 步骤） |
 | `createdAt`  | 创建时间                        |
 | `updatedAt`  | 更新时间                        |
 
 **POST /workflows** / **PUT /workflows/:id** 请求体（`WorkflowDraft`）：
 
-`id` 与 `step.id` 可省略，由服务端生成 UUID。草稿编排阶段可用 `clientRef` 表达步骤间依赖（`dependsOn` 引用 `clientRef` 或已有 `step.id`）。
+`id` 与 `step.id` 可省略，由服务端生成 UUID。草稿编排阶段可用 `clientRef` 表达步骤间依赖（`dependsOn` 引用 `clientRef` 或已有 `step.id`）。步骤 `kind` 默认 `plugin`；`workflow` 步骤须引用本工作流已存在的 `importId`（建议顺序：先 create 父 → `POST .../imports` → 再 PUT 写入 workflow 步骤）。
 
 ```json
 {
@@ -262,6 +266,23 @@ Run 的 `events[]` 与 WS 回放共享同一缓冲逻辑：
 
 校验失败时返回 `400` + `WorkflowValidationError`。
 
+**POST /workflows/:id/imports** 请求体：
+
+```json
+{
+  "childWorkflowId": "source-workflow-id",
+  "mode": "reference",
+  "stepId": "optional-hint"
+}
+```
+
+- `mode: "reference"`：指向公开源工作流，实时解析最新定义
+- `mode: "copy"`：新建私有 `Workflow`（`ownerWorkflowId` = 父 id，名称带 `__copy__` 后缀）+ 对应 `WorkflowImport`
+
+**GET /workflows/:id/imports** 响应：导入记录列表（含 `importId`、`mode`、`childWorkflowId`、子工作流名称等）。
+
+**GET /step-kinds** 响应：内置步骤定义数组（`kind` / `label` / `description` / `configSchema`）。
+
 **POST /workflows/:id/run** 请求体（可选 Run 上下文）：
 
 ```json
@@ -269,9 +290,12 @@ Run 的 `events[]` 与 WS 回放共享同一缓冲逻辑：
   "priority": 0,
   "traceId": "trace-xxx",
   "failFast": true,
-  "maxParallelSteps": 1
+  "maxParallelSteps": 1,
+  "initialState": { "count": 0 }
 }
 ```
+
+`initialState` 仅当目标工作流声明了 `stateSchema` 时允许，否则 `400`。
 
 响应：
 
@@ -283,16 +307,17 @@ Run 的 `events[]` 与 WS 回放共享同一缓冲逻辑：
 
 ### Runs · 运行实例（核心资源）
 
-| 方法   | 路径                  | 说明                                   |
-| ------ | --------------------- | -------------------------------------- |
-| GET    | `/runs`               | 运行历史列表（活跃 Run 置顶）          |
-| POST   | `/runs`               | 内联 workflow 触发运行（未保存即运行） |
-| GET    | `/runs/:runId`        | Run 聚合详情                           |
-| GET    | `/runs/:runId/events` | 事件缓冲回放                           |
-| POST   | `/runs/:runId/cancel` | 取消（`best-effort` / `hard`）         |
-| POST   | `/runs/:runId/pause`  | 暂停                                   |
-| POST   | `/runs/:runId/resume` | 恢复                                   |
-| DELETE | `/runs/:runId`        | 删除历史 Run（进行中的不可删）         |
+| 方法   | 路径                     | 说明                                          |
+| ------ | ------------------------ | --------------------------------------------- |
+| GET    | `/runs`                  | 运行历史列表（活跃 Run 置顶）                 |
+| POST   | `/runs`                  | 内联 workflow 触发运行（未保存即运行）        |
+| GET    | `/runs/:runId`           | Run 聚合详情                                  |
+| GET    | `/runs/:runId/events`    | 事件缓冲回放（含子执行并入的嵌套事件）        |
+| GET    | `/runs/:runId/children`  | 兼容路由；子执行不落独立行，恒 `{ children: [] }` |
+| POST   | `/runs/:runId/cancel`    | 取消（`best-effort` / `hard`）                |
+| POST   | `/runs/:runId/pause`     | 暂停                                          |
+| POST   | `/runs/:runId/resume`    | 恢复                                          |
+| DELETE | `/runs/:runId`           | 删除历史 Run（进行中的不可删）                |
 
 **GET /runs** Query：
 
@@ -317,7 +342,7 @@ Run 的 `events[]` 与 WS 回放共享同一缓冲逻辑：
 }
 ```
 
-`workflow` 为必填；省略 `traceId` 时服务端自动生成。`workflow` 亦接受 `WorkflowDraft` 格式。可选字段：`priority`、`traceId`、`failFast`、`maxParallelSteps`。
+`workflow` 为必填；省略 `traceId` 时服务端自动生成。`workflow` 亦接受 `WorkflowDraft` 格式。可选字段：`priority`、`traceId`、`failFast`、`maxParallelSteps`、`initialState`（须声明 `stateSchema`）。
 
 **GET /runs/:runId** 响应字段：
 
@@ -509,27 +534,31 @@ Run 的 `events[]` 与 WS 回放共享同一缓冲逻辑：
 | 8   | GET    | `/plugins/:name/config-schema` | 插件        |
 | 9   | GET    | `/plugins/:name/result-schema` | 插件        |
 | 10  | POST   | `/plugins/:name/dry-run`       | 插件（SSE） |
-| 11  | GET    | `/workflows`                   | 工作流      |
-| 12  | POST   | `/workflows`                   | 工作流      |
-| 13  | POST   | `/workflows/validate`          | 工作流      |
-| 14  | GET    | `/workflows/:id`               | 工作流      |
-| 15  | PUT    | `/workflows/:id`               | 工作流      |
-| 16  | DELETE | `/workflows/:id`               | 工作流      |
-| 17  | POST   | `/workflows/:id/run`           | 工作流      |
-| 18  | GET    | `/runs`                        | 运行        |
-| 19  | POST   | `/runs`                        | 运行        |
-| 20  | GET    | `/runs/:runId`                 | 运行        |
-| 21  | GET    | `/runs/:runId/events`          | 运行        |
-| 22  | POST   | `/runs/:runId/cancel`          | 运行        |
-| 23  | POST   | `/runs/:runId/pause`           | 运行        |
-| 24  | POST   | `/runs/:runId/resume`          | 运行        |
-| 25  | DELETE | `/runs/:runId`                 | 运行        |
-| 26  | GET    | `/resources`                   | 资源        |
-| 27  | GET    | `/resources/queue`             | 资源        |
-| 28  | GET    | `/stats/overview`              | 统计        |
-| 29  | GET    | `/test-devops`                 | 兼容        |
-| 30  | WS     | `/runs/ws`                     | WebSocket   |
-| 31  | WS     | `/test-devops/ws`              | WebSocket   |
+| 11  | GET    | `/step-kinds`                  | 工作流      |
+| 12  | GET    | `/workflows`                   | 工作流      |
+| 13  | POST   | `/workflows`                   | 工作流      |
+| 14  | POST   | `/workflows/validate`          | 工作流      |
+| 15  | GET    | `/workflows/:id`               | 工作流      |
+| 16  | PUT    | `/workflows/:id`               | 工作流      |
+| 17  | DELETE | `/workflows/:id`               | 工作流      |
+| 18  | POST   | `/workflows/:id/run`           | 工作流      |
+| 19  | GET    | `/workflows/:id/imports`       | 工作流      |
+| 20  | POST   | `/workflows/:id/imports`       | 工作流      |
+| 21  | GET    | `/runs`                        | 运行        |
+| 22  | POST   | `/runs`                        | 运行        |
+| 23  | GET    | `/runs/:runId`                 | 运行        |
+| 24  | GET    | `/runs/:runId/events`          | 运行        |
+| 25  | GET    | `/runs/:runId/children`        | 运行        |
+| 26  | POST   | `/runs/:runId/cancel`          | 运行        |
+| 27  | POST   | `/runs/:runId/pause`           | 运行        |
+| 28  | POST   | `/runs/:runId/resume`          | 运行        |
+| 29  | DELETE | `/runs/:runId`                 | 运行        |
+| 30  | GET    | `/resources`                   | 资源        |
+| 31  | GET    | `/resources/queue`             | 资源        |
+| 32  | GET    | `/stats/overview`              | 统计        |
+| 33  | GET    | `/test-devops`                 | 兼容        |
+| 34  | WS     | `/runs/ws`                     | WebSocket   |
+| 35  | WS     | `/test-devops/ws`              | WebSocket   |
 
 ---
 

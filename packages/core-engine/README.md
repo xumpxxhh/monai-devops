@@ -379,7 +379,7 @@ const snap = engine.getRunStatus(workflowRunId);
 - 父 run 的 pause / resume / cancel 经 `RunHandle` 订阅级联到活跃子 run
 - 某轮子工作流失败 → 立即终止循环，父步骤 `FAILED` / `SUBWORKFLOW_FAILED`
 
-设计全文见 [`docs/plans/integration.md`](../../docs/plans/integration.md)。
+设计全文见 [`docs/plans/workflow-composable/design.md`](../../docs/plans/workflow-composable/design.md)。
 
 ### 内置步骤清单
 

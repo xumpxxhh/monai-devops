@@ -1,5 +1,18 @@
 # apps/web 开发日志
 
+## 2026-07-24
+
+- **变更**：README 同步可组合编辑器与运行详情嵌套日志能力
+- **文件**：`README.md`
+- **变更**：阶段 5 工作流可组合化前端：多 kind 编辑器、导入/stateSchema、运行详情 parent/迭代聚合
+- **文件**：`src/features/editor/*`, `src/features/workflows/WorkflowsListPage.tsx`, `src/features/run-detail/*`, `src/shared/api/workflows.ts`, `src/shared/api/runs.ts`, `src/shared/types/index.ts`
+- **变更**：子 run 并入父后，运行详情去掉 children 跳转，迭代抽屉展示嵌套日志；防御无 parent 的异 runId 事件不污染 DAG
+- **文件**：`src/features/run-detail/RunDetailPage.tsx`, `src/features/run-detail/run-state.ts`, `src/features/run-detail/run-state.test.ts`
+- **变更**：嵌套日志按 nesting 分组折叠展示 + 等宽字体改为 @fontsource/jetbrains-mono 本地化加载
+- **文件**：`src/features/run-detail/RunDetailPage.tsx`, `src/features/run-detail/run-state.ts`, `src/index.css`, `src/main.tsx`
+- **变更**：编辑器组件拆分（EditableWorkflowTitle、StepInspectorPanel、WorkflowSettingsModal、workflow-name）+ palette 新增 workflow-import 类型（已导入子工作流直接拖入画布）+ 步骤名重复前端校验
+- **文件**：`src/features/editor/*`, `src/shared/utils/format-time.ts`
+
 ## 2026-07-01
 
 - **变更**：从 Vite 脚手架升级为可演示控制台；对接 server REST/WS；落地 7 个业务视图与 Radix+Tailwind 表单组件
