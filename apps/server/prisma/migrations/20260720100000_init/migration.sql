@@ -16,10 +16,10 @@ CREATE TABLE "runs" (
     "created_by" BIGINT,
     "source" TEXT DEFAULT 'api',
     "metadata" JSONB NOT NULL DEFAULT '{}',
-    "created_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "updated_at" TIMESTAMPTZ NOT NULL,
-    "started_at" TIMESTAMPTZ,
-    "finished_at" TIMESTAMPTZ,
+    "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updated_at" TIMESTAMP(3) NOT NULL,
+    "started_at" TIMESTAMP(3),
+    "finished_at" TIMESTAMP(3),
 
     CONSTRAINT "runs_pkey" PRIMARY KEY ("run_id")
 );
@@ -31,7 +31,7 @@ CREATE TABLE "run_events" (
     "event_index" INTEGER NOT NULL,
     "type" TEXT NOT NULL,
     "payload" JSONB NOT NULL,
-    "created_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
     CONSTRAINT "run_events_pkey" PRIMARY KEY ("id")
 );
@@ -42,8 +42,8 @@ CREATE TABLE "workflows" (
     "name" TEXT NOT NULL,
     "definition" JSONB NOT NULL,
     "created_by" BIGINT,
-    "created_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "updated_at" TIMESTAMPTZ NOT NULL,
+    "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updated_at" TIMESTAMP(3) NOT NULL,
 
     CONSTRAINT "workflows_pkey" PRIMARY KEY ("id")
 );

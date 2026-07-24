@@ -1,3 +1,4 @@
+import { isPluginStep } from '@monai-devops/core-engine';
 import { normalizeWorkflowIds } from './normalize-workflow-ids.js';
 
 describe('normalizeWorkflowIds', () => {
@@ -128,9 +129,12 @@ describe('normalizeWorkflowIds', () => {
     const stepUp = result.steps.find((s) => s.name === 'Up')!;
     const stepDown = result.steps.find((s) => s.name === 'Down')!;
     expect(stepDown.dependsOn).toEqual([stepUp.id]);
-    expect(stepDown.config).toEqual({
-      type: { $ref: { fromStepId: stepUp.id, path: ['type'] } },
-    });
+    expect(isPluginStep(stepDown)).toBe(true);
+    if (isPluginStep(stepDown)) {
+      expect(stepDown.config).toEqual({
+        type: { $ref: { fromStepId: stepUp.id, path: ['type'] } },
+      });
+    }
   });
 
   it('remaps ContextRef.fromStepId when step ids are regenerated', () => {
@@ -160,8 +164,11 @@ describe('normalizeWorkflowIds', () => {
     const stepA = result.steps.find((s) => s.name === 'A')!;
     const stepB = result.steps.find((s) => s.name === 'B')!;
     expect(stepA.id).not.toBe('old-a');
-    expect(stepB.config).toEqual({
-      type: { $ref: { fromStepId: stepA.id, path: ['type'] } },
-    });
+    expect(isPluginStep(stepB)).toBe(true);
+    if (isPluginStep(stepB)) {
+      expect(stepB.config).toEqual({
+        type: { $ref: { fromStepId: stepA.id, path: ['type'] } },
+      });
+    }
   });
 });

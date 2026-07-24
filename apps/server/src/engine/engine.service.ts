@@ -2,9 +2,13 @@ import { Global, Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nest
 import { ConfigService } from '@nestjs/config';
 import type { PluginConfig, ZodType } from '@monai-devops/plugin-sdk';
 import {
+  BUILTIN_STEP_KIND_DEFINITIONS,
   createEngine,
+  type EmbeddedRunHooks,
+  type ExecuteWorkflowCallOptions,
   type ExecutionContext,
   type ExecutionResult,
+  type ResolveWorkflow,
   type WorkflowDefinition,
   type WorkflowLifecycleEvent,
   type WorkflowRunResult,
@@ -13,7 +17,10 @@ import {
 import { registeredPlugins } from '../plugins/plugin-registry.js';
 import { toPluginConfigJsonSchema } from '../plugins/plugin-config-schema.js';
 import { toPluginResultJsonSchema } from '../plugins/plugin-result-schema.js';
-import { validateWorkflowDefinition } from '../common/validation/validate-workflow.js';
+import {
+  validateWorkflowDefinition,
+  type ValidateWorkflowDefinitionOptions,
+} from '../common/validation/validate-workflow.js';
 
 type EngineInstance = ReturnType<typeof createEngine>;
 type EventHandler = (event: WorkflowLifecycleEvent) => void | Promise<void>;
@@ -25,17 +32,35 @@ export class EngineService implements OnModuleInit, OnModuleDestroy {
   private engine!: EngineInstance;
   private ready = false;
   private readonly eventHandlers = new Set<EventHandler>();
+  private resolveWorkflowImpl?: ResolveWorkflow;
+  private embeddedRunHooksImpl?: EmbeddedRunHooks;
 
   constructor(private readonly config: ConfigService) {}
 
   onModuleInit(): void {
     const maxParallelSteps = this.config.get<number>('MAX_PARALLEL_STEPS', 2);
     const resourcePoolSize = this.config.get<number>('RESOURCE_POOL_SIZE', 5);
+    const maxNestingDepth = this.config.get<number>('MAX_NESTING_DEPTH', 3);
 
     this.engine = createEngine({
       plugins: registeredPlugins,
       maxParallelSteps,
       defaultPoolSize: resourcePoolSize,
+      maxNestingDepth,
+      resolveWorkflow: (importId) => {
+        if (!this.resolveWorkflowImpl) {
+          return Promise.reject(new Error(`未配置 resolveWorkflow，无法解析 importId=${importId}`));
+        }
+        return this.resolveWorkflowImpl(importId);
+      },
+      embeddedRunHooks: {
+        onChildRunStart: async (childRunId, childDefinition, ctx) => {
+          await this.embeddedRunHooksImpl?.onChildRunStart(childRunId, childDefinition, ctx);
+        },
+        onChildRunFinished: async (childRunId, result) => {
+          await this.embeddedRunHooksImpl?.onChildRunFinished(childRunId, result);
+        },
+      },
       observer: {
         onEvent: async (event) => {
           for (const handler of this.eventHandlers) {
@@ -47,8 +72,18 @@ export class EngineService implements OnModuleInit, OnModuleDestroy {
 
     this.ready = true;
     this.logger.log(
-      `Engine initialized (maxParallelSteps=${maxParallelSteps}, resourcePoolSize=${resourcePoolSize})`,
+      `Engine initialized (maxParallelSteps=${maxParallelSteps}, resourcePoolSize=${resourcePoolSize}, maxNestingDepth=${maxNestingDepth})`,
     );
+  }
+
+  /** 由 Workflows / Runs 模块在启动后注入查库实现 */
+  setResolveWorkflow(resolve: ResolveWorkflow): void {
+    this.resolveWorkflowImpl = resolve;
+  }
+
+  /** 由 RunManager 注入子 run 落表回调 */
+  setEmbeddedRunHooks(hooks: EmbeddedRunHooks): void {
+    this.embeddedRunHooksImpl = hooks;
   }
 
   onModuleDestroy(): void {
@@ -69,9 +104,14 @@ export class EngineService implements OnModuleInit, OnModuleDestroy {
     return () => this.eventHandlers.delete(handler);
   }
 
-  validateWorkflow(workflow: WorkflowDefinition): void {
-    validateWorkflowDefinition(workflow, {
+  async validateWorkflow(
+    workflow: WorkflowDefinition,
+    options: Omit<ValidateWorkflowDefinitionOptions, 'resolvePluginResultSchema'> = {},
+  ): Promise<void> {
+    await validateWorkflowDefinition(workflow, {
+      ...options,
       resolvePluginResultSchema: (name) => this.resolvePluginResultSchema(name),
+      resolveWorkflow: options.resolveWorkflow ?? this.resolveWorkflowImpl,
     });
   }
 
@@ -79,8 +119,9 @@ export class EngineService implements OnModuleInit, OnModuleDestroy {
     workflowRunId: string,
     workflow: WorkflowDefinition,
     context: Partial<ExecutionContext> = {},
+    callOptions?: ExecuteWorkflowCallOptions,
   ): Promise<WorkflowRunResult> {
-    return this.engine.runWorkflow(workflowRunId, workflow, context);
+    return this.engine.runWorkflow(workflowRunId, workflow, context, callOptions);
   }
 
   dryRunPlugin(
@@ -122,6 +163,15 @@ export class EngineService implements OnModuleInit, OnModuleDestroy {
       description: plugin.description,
       hasConfigSchema: Boolean(plugin.configSchema),
       hasResultSchema: Boolean(plugin.resultSchema),
+    }));
+  }
+
+  getStepKinds() {
+    return BUILTIN_STEP_KIND_DEFINITIONS.map((def) => ({
+      kind: def.kind,
+      label: def.label,
+      description: def.description,
+      configSchema: def.configSchema,
     }));
   }
 

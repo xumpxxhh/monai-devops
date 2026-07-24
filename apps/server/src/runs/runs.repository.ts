@@ -35,6 +35,9 @@ export interface RunRecord {
   events: SerializedWorkflowLifecycleEvent[];
   cancelled?: 'best-effort' | 'hard';
   createdBy?: bigint;
+  source?: string;
+  metadata?: Record<string, unknown>;
+  parentRunId?: string;
 }
 
 export interface RunListFilter {
@@ -43,6 +46,7 @@ export interface RunListFilter {
   search?: string;
   /** 对应 runs.metadata jsonb；后续可扩展筛选维度 */
   metadata?: Record<string, unknown>;
+  parentRunId?: string;
   page: number;
   pageSize: number;
 }
@@ -52,6 +56,7 @@ export interface RunRepository {
   update(runId: string, patch: Partial<RunRecord>): Promise<RunRecord | undefined>;
   findById(runId: string): Promise<RunRecord | undefined>;
   list(filter: RunListFilter): Promise<{ items: RunRecord[]; total: number }>;
+  listByParentRunId(parentRunId: string): Promise<RunRecord[]>;
   appendEvent(runId: string, event: SerializedWorkflowLifecycleEvent): Promise<void>;
   delete(runId: string): Promise<boolean>;
   countActive(): Promise<number>;

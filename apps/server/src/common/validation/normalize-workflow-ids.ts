@@ -1,6 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import {
+  getStepKind,
   isContextRef,
+  StepKinds,
   type WorkflowDefinition,
   type WorkflowStep,
 } from '@monai-devops/core-engine';
@@ -10,8 +12,16 @@ export interface WorkflowDraftStep {
   clientRef?: string;
   id?: string;
   name: string;
-  plugin: string;
-  config: WorkflowStep['config'];
+  kind?: WorkflowStep['kind'];
+  plugin?: string;
+  config?: Record<string, unknown>;
+  patch?: Record<string, unknown>;
+  workflowRef?: { importId: string };
+  inputState?: unknown;
+  loop?: {
+    maxIterations: number;
+    until?: { when: string; equals?: unknown; exists?: boolean };
+  };
   condition?: WorkflowStep['condition'];
   dependsOn?: string[];
   priority?: number;
@@ -21,6 +31,7 @@ export interface WorkflowDraft {
   id?: string;
   name: string;
   steps: WorkflowDraftStep[];
+  stateSchema?: WorkflowDefinition['stateSchema'];
 }
 
 export interface NormalizeWorkflowIdsOptions {
@@ -68,38 +79,94 @@ function resolveDependsOn(
 }
 
 /**
- * 将 config 中 ContextRef.fromStepId 经 refMap 重写为规范化后的步骤 id。
- * dependsOn 已由 resolveDependsOn 处理；config 内引用必须同步改写，否则 ID 轮换后会校验失败。
+ * 将对象树中 ContextRef.fromStepId 经 refMap 重写为规范化后的步骤 id。
  */
-function remapConfigContextReferences(
-  config: unknown,
+function remapContextReferences(
+  value: unknown,
   refMap: Map<string, string>,
   stepLabel: string,
 ): unknown {
-  if (isContextRef(config)) {
-    const { fromStepId, path } = config.$ref;
+  if (isContextRef(value)) {
+    const { fromStepId, path } = value.$ref;
     const resolved = refMap.get(fromStepId);
     if (!resolved) {
       throw new WorkflowValidationError(
-        `步骤 ${stepLabel} 的 config 引用 ${fromStepId} 无法解析（非已知步骤 id 或 clientRef）`,
+        `步骤 ${stepLabel} 的引用 ${fromStepId} 无法解析（非已知步骤 id 或 clientRef）`,
       );
     }
     return { $ref: { fromStepId: resolved, path } };
   }
 
-  if (Array.isArray(config)) {
-    return config.map((item) => remapConfigContextReferences(item, refMap, stepLabel));
+  if (Array.isArray(value)) {
+    return value.map((item) => remapContextReferences(item, refMap, stepLabel));
   }
 
-  if (typeof config === 'object' && config !== null) {
+  if (typeof value === 'object' && value !== null) {
     const out: Record<string, unknown> = {};
-    for (const [key, value] of Object.entries(config)) {
-      out[key] = remapConfigContextReferences(value, refMap, stepLabel);
+    for (const [key, nested] of Object.entries(value)) {
+      out[key] = remapContextReferences(nested, refMap, stepLabel);
     }
     return out;
   }
 
-  return config;
+  return value;
+}
+
+function normalizeDraftStep(
+  step: WorkflowDraftStep,
+  finalId: string,
+  refMap: Map<string, string>,
+): WorkflowStep {
+  const stepLabel = step.name || finalId;
+  const kind = getStepKind(step as WorkflowStep);
+  const base = {
+    id: finalId,
+    name: step.name,
+    ...(step.condition !== undefined ? { condition: step.condition } : {}),
+    dependsOn: resolveDependsOn(step.dependsOn, refMap, stepLabel),
+    ...(step.priority !== undefined ? { priority: step.priority } : {}),
+  };
+
+  if (kind === StepKinds.SET_STATE) {
+    return {
+      ...base,
+      kind: StepKinds.SET_STATE,
+      patch: (remapContextReferences(step.patch ?? {}, refMap, stepLabel) ?? {}) as Record<
+        string,
+        unknown
+      >,
+    };
+  }
+
+  if (kind === StepKinds.WORKFLOW) {
+    const importId = step.workflowRef?.importId?.trim();
+    if (!importId) {
+      throw new WorkflowValidationError(`步骤 ${stepLabel} 缺少 workflowRef.importId`);
+    }
+    return {
+      ...base,
+      kind: StepKinds.WORKFLOW,
+      workflowRef: { importId },
+      ...(step.inputState !== undefined
+        ? { inputState: remapContextReferences(step.inputState, refMap, stepLabel) }
+        : {}),
+      ...(step.loop !== undefined ? { loop: step.loop } : {}),
+    };
+  }
+
+  if (!step.plugin?.trim()) {
+    throw new WorkflowValidationError(`步骤 ${stepLabel} 缺少 plugin`);
+  }
+  if (!step.config || typeof step.config !== 'object') {
+    throw new WorkflowValidationError(`步骤 ${stepLabel} 的 config 必须是对象`);
+  }
+
+  return {
+    ...base,
+    ...(step.kind !== undefined ? { kind: StepKinds.PLUGIN } : {}),
+    plugin: step.plugin.trim(),
+    config: remapContextReferences(step.config, refMap, stepLabel) as Record<string, unknown>,
+  };
 }
 
 export function normalizeWorkflowIds(
@@ -126,26 +193,14 @@ export function normalizeWorkflowIds(
     }
   }
 
-  const steps: WorkflowStep[] = assigned.map(({ step, finalId }) => {
-    const { clientRef: _clientRef, id: _stepId, ...rest } = step;
-    void _clientRef;
-    void _stepId;
-    const stepLabel = step.name || finalId;
-    return {
-      ...rest,
-      id: finalId,
-      config: remapConfigContextReferences(
-        step.config,
-        refMap,
-        stepLabel,
-      ) as WorkflowStep['config'],
-      dependsOn: resolveDependsOn(step.dependsOn, refMap, stepLabel),
-    };
-  });
+  const steps: WorkflowStep[] = assigned.map(({ step, finalId }) =>
+    normalizeDraftStep(step, finalId, refMap),
+  );
 
   return {
     id: workflowId,
     name: draft.name,
     steps,
+    ...(draft.stateSchema !== undefined ? { stateSchema: draft.stateSchema } : {}),
   };
 }

@@ -1,9 +1,14 @@
 import { Injectable } from '@nestjs/common';
 import type { WorkflowDefinition } from '@monai-devops/core-engine';
-import type { Workflow as PrismaWorkflow } from '@prisma/client';
+import type {
+  Workflow as PrismaWorkflow,
+  WorkflowImport as PrismaWorkflowImport,
+} from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { toInputJson } from '../prisma/prisma-json.js';
 import {
+  type WorkflowImportMode,
+  type WorkflowImportRecord,
   type WorkflowListFilter,
   type WorkflowRecord,
   type WorkflowRepository,
@@ -16,6 +21,24 @@ function toWorkflowRecord(row: PrismaWorkflow): WorkflowRecord {
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
     createdBy: row.createdBy ?? undefined,
+    ownerWorkflowId: row.ownerWorkflowId ?? undefined,
+  };
+}
+
+function toImportRecord(
+  row: PrismaWorkflowImport & {
+    childWorkflow?: Pick<PrismaWorkflow, 'name' | 'updatedAt'>;
+  },
+): WorkflowImportRecord {
+  return {
+    id: row.id,
+    parentWorkflowId: row.parentWorkflowId,
+    childWorkflowId: row.childWorkflowId,
+    stepId: row.stepId,
+    mode: row.mode as WorkflowImportMode,
+    createdAt: row.createdAt,
+    childWorkflowName: row.childWorkflow?.name,
+    childWorkflowUpdatedAt: row.childWorkflow?.updatedAt,
   };
 }
 
@@ -30,6 +53,7 @@ export class PrismaWorkflowRepository implements WorkflowRepository {
         name: record.definition.name,
         definition: toInputJson(record.definition),
         createdBy: record.createdBy ?? null,
+        ownerWorkflowId: record.ownerWorkflowId ?? null,
         createdAt: record.createdAt,
         updatedAt: record.updatedAt,
       },
@@ -54,14 +78,19 @@ export class PrismaWorkflowRepository implements WorkflowRepository {
   }
 
   async list(filter: WorkflowListFilter) {
-    const where = filter.search?.trim()
-      ? {
-          OR: [
-            { id: { contains: filter.search.trim(), mode: 'insensitive' as const } },
-            { name: { contains: filter.search.trim(), mode: 'insensitive' as const } },
-          ],
-        }
-      : undefined;
+    const publicOnly = filter.publicOnly !== false;
+    const search = filter.search?.trim();
+    const where = {
+      ...(publicOnly ? { ownerWorkflowId: null } : {}),
+      ...(search
+        ? {
+            OR: [
+              { id: { contains: search, mode: 'insensitive' as const } },
+              { name: { contains: search, mode: 'insensitive' as const } },
+            ],
+          }
+        : {}),
+    };
 
     const [total, rows] = await Promise.all([
       this.prisma.workflow.count({ where }),
@@ -103,5 +132,90 @@ export class PrismaWorkflowRepository implements WorkflowRepository {
     } catch {
       return false;
     }
+  }
+
+  async listImports(parentWorkflowId: string): Promise<WorkflowImportRecord[]> {
+    const rows = await this.prisma.workflowImport.findMany({
+      where: { parentWorkflowId },
+      include: { childWorkflow: { select: { name: true, updatedAt: true } } },
+      orderBy: { createdAt: 'asc' },
+    });
+    return rows.map(toImportRecord);
+  }
+
+  async findImportById(importId: string): Promise<WorkflowImportRecord | undefined> {
+    const row = await this.prisma.workflowImport.findUnique({
+      where: { id: importId },
+      include: { childWorkflow: { select: { name: true, updatedAt: true } } },
+    });
+    return row ? toImportRecord(row) : undefined;
+  }
+
+  async createImport(record: WorkflowImportRecord): Promise<WorkflowImportRecord> {
+    const row = await this.prisma.workflowImport.create({
+      data: {
+        id: record.id,
+        parentWorkflowId: record.parentWorkflowId,
+        childWorkflowId: record.childWorkflowId,
+        stepId: record.stepId,
+        mode: record.mode,
+        createdAt: record.createdAt,
+      },
+      include: { childWorkflow: { select: { name: true, updatedAt: true } } },
+    });
+    return toImportRecord(row);
+  }
+
+  async updateImportStepIds(
+    parentWorkflowId: string,
+    stepIdByImportId: Map<string, string>,
+  ): Promise<void> {
+    if (stepIdByImportId.size === 0) return;
+    await this.prisma.$transaction(
+      [...stepIdByImportId.entries()].map(([importId, stepId]) =>
+        this.prisma.workflowImport.updateMany({
+          where: { id: importId, parentWorkflowId },
+          data: { stepId },
+        }),
+      ),
+    );
+  }
+
+  async deleteUnusedImports(
+    parentWorkflowId: string,
+    keepImportIds: ReadonlySet<string>,
+  ): Promise<void> {
+    const existing = await this.prisma.workflowImport.findMany({
+      where: { parentWorkflowId },
+      select: { id: true },
+    });
+    const toDelete = existing.map((row) => row.id).filter((id) => !keepImportIds.has(id));
+    if (toDelete.length === 0) return;
+    await this.prisma.workflowImport.deleteMany({
+      where: { id: { in: toDelete } },
+    });
+  }
+
+  async listReferencingParents(
+    childWorkflowId: string,
+  ): Promise<Array<{ id: string; name: string }>> {
+    const rows = await this.prisma.workflowImport.findMany({
+      where: { childWorkflowId },
+      include: { parentWorkflow: { select: { id: true, name: true } } },
+    });
+    const seen = new Map<string, string>();
+    for (const row of rows) {
+      seen.set(row.parentWorkflow.id, row.parentWorkflow.name);
+    }
+    return [...seen.entries()].map(([id, name]) => ({ id, name }));
+  }
+
+  async resolveWorkflowByImportId(importId: string): Promise<WorkflowDefinition | undefined> {
+    const row = await this.prisma.workflowImport.findUnique({
+      where: { id: importId },
+      include: { childWorkflow: true },
+    });
+    if (!row) return undefined;
+    return row.childWorkflow.definition as unknown as WorkflowDefinition;
   }
 }

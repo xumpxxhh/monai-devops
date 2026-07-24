@@ -14,9 +14,9 @@
 
 ### 核心能力
 
-- **工作流管理**：创建、更新、校验、删除、触发执行。
-- **运行管理**：提交运行、查询详情、事件回放、暂停/恢复/取消、删除历史。
-- **插件能力**：查看插件元数据、导出插件配置 schema、插件 dry-run（SSE 流式返回日志）。
+- **工作流管理**：创建、更新、校验、删除、触发执行；支持导入子工作流（引用 / 拷贝）与 `stateSchema`。
+- **运行管理**：提交运行、查询详情、事件回放、暂停/恢复/取消、删除历史；嵌套子执行事件并入顶层父 run（不落独立子行）。
+- **插件能力**：查看插件元数据、导出插件配置 schema、插件 dry-run（SSE 流式返回日志）；`GET /step-kinds` 暴露内置步骤形态。
 - **实时通道**：
   - `runs` WebSocket：订阅单个 run 的事件流。
   - `test-devops` WebSocket：直接通过消息执行 workflow 并自动订阅结果。
@@ -252,13 +252,15 @@ HTTP 入参由全局 `ValidationPipe` + 各模块 `dto/` 校验。
 
 ### 8.2 Workflows
 
-- `GET /api/workflows?search=&page=1&pageSize=20`
+- `GET /api/workflows?search=&page=1&pageSize=20`（仅公开工作流；`ownerWorkflowId` 非空的私有拷贝不出现在列表）
 - `POST /api/workflows`
 - `POST /api/workflows/validate`
 - `GET /api/workflows/:id`
 - `PUT /api/workflows/:id`
-- `DELETE /api/workflows/:id`
-- `POST /api/workflows/:id/run`（触发运行）
+- `DELETE /api/workflows/:id`（公开工作流若仍被其他工作流引用 → `409` + 引用方列表）
+- `POST /api/workflows/:id/run`（触发运行；可选 `initialState`，仅当目标声明了 `stateSchema`）
+- `GET /api/workflows/:id/imports` / `POST /api/workflows/:id/imports`（导入子工作流：`mode: reference | copy`；copy 会新建私有 `Workflow`）
+- `GET /api/step-kinds`（内置步骤形态清单，供编辑器与插件列表并列）
 
 创建 workflow 示例：
 
@@ -279,6 +281,12 @@ curl -X POST "http://localhost:3000/api/workflows" \
   }'
 ```
 
+**可组合约定（摘要）**
+
+1. 先创建父工作流 → `POST .../imports` → 再 `PUT` 写入 `kind: 'workflow'` 步骤（create 时尚无 import，带 workflow 步骤会 400）。
+2. `workflow` 步骤只存 `workflowRef.importId`；运行时经 `resolveWorkflow` 两跳查库（reference/copy 同一路径）。
+3. 嵌套子执行**不**落独立 `runs` 行；事件（含 `parent` / 迭代事件）写入并推流到顶层父 run。
+
 ### 8.3 Runs
 
 - `GET /api/runs?status=&workflowId=&search=&page=1&pageSize=20`
@@ -286,12 +294,13 @@ curl -X POST "http://localhost:3000/api/workflows" \
 - `POST /api/runs`（内联 workflow 提交；可选 `priority`、`traceId`、`failFast`、`maxParallelSteps`）
 - `GET /api/runs/:runId`
 - `GET /api/runs/:runId/events`
+- `GET /api/runs/:runId/children`（兼容路由；子执行不落表，恒返回 `{ runId, children: [] }`）
 - `POST /api/runs/:runId/cancel`（`{ "mode": "best-effort" | "hard" }`）
 - `POST /api/runs/:runId/pause`（`{ "waitInFlight": true, "abortInFlight": false }`）
 - `POST /api/runs/:runId/resume`
 - `DELETE /api/runs/:runId`（仅允许删除终态 run）
 
-`POST /api/workflows/:id/run` 同样支持可选字段：`priority`、`traceId`、`failFast`、`maxParallelSteps`。
+`POST /api/workflows/:id/run` 与 `POST /api/runs` 同样支持可选字段：`priority`、`traceId`、`failFast`、`maxParallelSteps`、`initialState`（未声明 `stateSchema` 时传 `initialState` → 400）。
 
 内联提交 run 示例：
 

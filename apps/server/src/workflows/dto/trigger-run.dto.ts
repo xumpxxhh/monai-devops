@@ -18,4 +18,8 @@ export class TriggerRunDto {
   @IsInt()
   @Min(1)
   maxParallelSteps?: number;
+
+  /** 仅当目标工作流声明了 stateSchema 时允许 */
+  @IsOptional()
+  initialState?: unknown;
 }

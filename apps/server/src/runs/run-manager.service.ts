@@ -9,6 +9,7 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import {
+  parseState,
   StepStatuses,
   WorkflowRunIdValidationError,
   WorkflowValidationError,
@@ -40,6 +41,7 @@ export interface SubmitRunOptions {
   traceId?: string;
   failFast?: boolean;
   maxParallelSteps?: number;
+  initialState?: unknown;
 }
 
 export interface CancelRunOptions {
@@ -93,8 +95,10 @@ function mergeEngineControlStatus(record: RunRecord, engine?: RunStatusSnapshot)
 export class RunManagerService implements OnModuleInit {
   private readonly logger = new Logger(RunManagerService.name);
   private readonly eventChains = new Map<string, Promise<void>>();
-  /** 仅处理本服务 submit/save 过的 run，避免直连引擎的旁路调用误打仓储 */
+  /** 仅处理本服务 submit/save 过的顶层 run，避免直连引擎的旁路调用误打仓储 */
   private readonly managedRunIds = new Set<string>();
+  /** 嵌入子执行 childRunId → 顶层 API runId；子 run 不落表，事件写入并推流到 root */
+  private readonly childRootRunIds = new Map<string, string>();
 
   constructor(
     private readonly engineService: EngineService,
@@ -108,27 +112,54 @@ export class RunManagerService implements OnModuleInit {
     this.engineService.onEvent((event) => {
       void this.enqueueEngineEvent(event);
     });
+    this.engineService.setEmbeddedRunHooks({
+      onChildRunStart: (childRunId, childDefinition, ctx) =>
+        this.onChildRunStart(childRunId, childDefinition, ctx),
+      onChildRunFinished: (childRunId, result) => this.onChildRunFinished(childRunId, result),
+    });
+  }
+
+  /** 将嵌入子事件解析到应持久化/推流的顶层 runId */
+  private resolvePersistRunId(event: WorkflowLifecycleEvent): string {
+    const mapped = this.childRootRunIds.get(event.workflowRunId);
+    if (mapped) return mapped;
+    if (event.parent) {
+      return this.childRootRunIds.get(event.parent.runId) ?? event.parent.runId;
+    }
+    return event.workflowRunId;
+  }
+
+  private isNestedEngineEvent(event: WorkflowLifecycleEvent): boolean {
+    return this.childRootRunIds.has(event.workflowRunId) || Boolean(event.parent);
+  }
+
+  private clearChildMappingsForRoot(rootRunId: string): void {
+    for (const [childId, root] of this.childRootRunIds) {
+      if (root === rootRunId) {
+        this.childRootRunIds.delete(childId);
+      }
+    }
   }
 
   private enqueueEngineEvent(event: WorkflowLifecycleEvent): Promise<void> {
-    const runId = event.workflowRunId;
-    if (!this.managedRunIds.has(runId)) {
+    const persistRunId = this.resolvePersistRunId(event);
+    if (!this.managedRunIds.has(persistRunId)) {
       return Promise.resolve();
     }
 
-    const previous = this.eventChains.get(runId) ?? Promise.resolve();
+    const previous = this.eventChains.get(persistRunId) ?? Promise.resolve();
     const current = previous
       .then(() => this.processEngineEvent(event))
       .catch((error: unknown) => {
         const message = error instanceof Error ? error.message : 'Unknown error';
-        this.logger.error(`Failed to process ${event.type} for run ${runId}: ${message}`);
+        this.logger.error(`Failed to process ${event.type} for run ${persistRunId}: ${message}`);
       })
       .finally(() => {
-        if (this.eventChains.get(runId) === current) {
-          this.eventChains.delete(runId);
+        if (this.eventChains.get(persistRunId) === current) {
+          this.eventChains.delete(persistRunId);
         }
       });
-    this.eventChains.set(runId, current);
+    this.eventChains.set(persistRunId, current);
     return current;
   }
 
@@ -156,12 +187,24 @@ export class RunManagerService implements OnModuleInit {
     });
 
     try {
-      this.engineService.validateWorkflow(normalized);
+      await this.engineService.validateWorkflow(normalized);
     } catch (error) {
       if (error instanceof WorkflowValidationError) {
         throw error;
       }
       throw error;
+    }
+
+    if (options.initialState !== undefined) {
+      if (normalized.stateSchema === undefined) {
+        throw new WorkflowValidationError(
+          `工作流 "${normalized.id}" 未声明 stateSchema，不允许传入 initialState`,
+        );
+      }
+      const parsed = parseState(normalized.stateSchema, options.initialState);
+      if (!parsed.success) {
+        throw new WorkflowValidationError(`initialState 不符合 stateSchema：${parsed.message}`);
+      }
     }
 
     const runId = randomUUID();
@@ -176,6 +219,8 @@ export class RunManagerService implements OnModuleInit {
       counts: this.initialCounts(normalized),
       createdAt: new Date(),
       events: [],
+      source: 'api',
+      metadata: {},
     };
 
     await this.runRepository.save(record);
@@ -185,6 +230,7 @@ export class RunManagerService implements OnModuleInit {
     void this.executeRun(runId, normalized, {
       traceId,
       priority: options.priority,
+      initialState: options.initialState,
     });
 
     return { runId, status: 'queued' as const };
@@ -204,6 +250,18 @@ export class RunManagerService implements OnModuleInit {
   async getEvents(runId: string): Promise<RunRecord['events'] | undefined> {
     const record = await this.runRepository.findById(runId);
     return record?.events;
+  }
+
+  /**
+   * 子工作流执行不再落独立 Run 行；保留接口兼容，恒返回空列表。
+   * 嵌套可观测性见父 run 事件流中的 `parent` / `workflow:iteration:*`。
+   */
+  async listChildren(parentRunId: string): Promise<RunRecord[]> {
+    const parent = await this.runRepository.findById(parentRunId);
+    if (!parent) {
+      throw new HttpException('Run 不存在', HttpStatus.NOT_FOUND);
+    }
+    return [];
   }
 
   async cancelRun(runId: string, options: CancelRunOptions = {}) {
@@ -306,6 +364,7 @@ export class RunManagerService implements OnModuleInit {
     const deleted = await this.runRepository.delete(runId);
     if (deleted) {
       this.managedRunIds.delete(runId);
+      this.clearChildMappingsForRoot(runId);
     }
     return deleted;
   }
@@ -335,7 +394,7 @@ export class RunManagerService implements OnModuleInit {
   private async executeRun(
     runId: string,
     workflow: WorkflowDefinition,
-    context: { traceId: string; priority?: number },
+    context: { traceId: string; priority?: number; initialState?: unknown },
   ): Promise<void> {
     const existing = await this.runRepository.findById(runId);
     if (existing?.status === 'cancelled') {
@@ -343,7 +402,15 @@ export class RunManagerService implements OnModuleInit {
     }
 
     try {
-      const result = await this.engineService.runWorkflow(runId, workflow, context);
+      const result = await this.engineService.runWorkflow(
+        runId,
+        workflow,
+        {
+          traceId: context.traceId,
+          priority: context.priority,
+        },
+        context.initialState !== undefined ? { initialState: context.initialState } : undefined,
+      );
       await this.finalizeIfNeeded(runId, result);
     } catch (error) {
       if (
@@ -374,7 +441,27 @@ export class RunManagerService implements OnModuleInit {
     }
   }
 
+  private async onChildRunStart(
+    childRunId: string,
+    _childDefinition: WorkflowDefinition,
+    ctx: { parentRunId: string; stepId: string; iteration: number },
+  ): Promise<void> {
+    const rootRunId = this.childRootRunIds.get(ctx.parentRunId) ?? ctx.parentRunId;
+    this.childRootRunIds.set(childRunId, rootRunId);
+    this.logger.log(
+      `Embedded run ${childRunId} mapped to root=${rootRunId} (parent=${ctx.parentRunId}, step=${ctx.stepId}, iter=${ctx.iteration})`,
+    );
+  }
+
+  private async onChildRunFinished(childRunId: string, _result: WorkflowRunResult): Promise<void> {
+    // 映射保留到顶层 run 收尾，避免异步事件链仍需 resolvePersistRunId
+    this.logger.debug(`Embedded run ${childRunId} finished (mapping retained until root settles)`);
+  }
+
   private async finalizeIfNeeded(runId: string, result: WorkflowRunResult): Promise<void> {
+    // 等本 run 事件链排空后再清映射，避免仍在途的嵌套事件丢 root
+    await (this.eventChains.get(runId) ?? Promise.resolve());
+
     const record = await this.runRepository.findById(runId);
     if (
       !record ||
@@ -382,6 +469,7 @@ export class RunManagerService implements OnModuleInit {
       record.status === 'failed' ||
       record.status === 'cancelled'
     ) {
+      this.clearChildMappingsForRoot(runId);
       return;
     }
 
@@ -394,60 +482,69 @@ export class RunManagerService implements OnModuleInit {
       counts: this.countsFromResult(result),
       ...(status === 'cancelled' ? { cancelled: 'best-effort' as const } : {}),
     });
+    this.clearChildMappingsForRoot(runId);
     this.runStream.fanOut(runId, { type: 'done', result: serialized });
   }
 
   private async processEngineEvent(event: WorkflowLifecycleEvent): Promise<void> {
-    const runId = event.workflowRunId;
+    const persistRunId = this.resolvePersistRunId(event);
+    const nested = this.isNestedEngineEvent(event);
     const serialized = serializeWorkflowEvent(event);
-    await this.runRepository.appendEvent(runId, serialized);
+    await this.runRepository.appendEvent(persistRunId, serialized);
+
+    // 嵌套子执行：只写入父事件流，不改父 Run 的 status/counts/result
+    if (nested) {
+      this.runStream.fanOut(persistRunId, { type: 'event', event: serialized });
+      return;
+    }
 
     if (event.type === 'workflow:start') {
-      await this.runRepository.update(runId, {
+      await this.runRepository.update(persistRunId, {
         status: 'running',
         startedAt: new Date(),
       });
     }
 
     if (event.type === 'step:finished') {
-      const record = await this.runRepository.findById(runId);
+      const record = await this.runRepository.findById(persistRunId);
       if (record) {
         const counts = { ...record.counts };
         if (event.result.status === StepStatuses.COMPLETED) counts.completed += 1;
         if (event.result.status === StepStatuses.FAILED) counts.failed += 1;
         if (event.result.status === StepStatuses.SKIPPED) counts.skipped += 1;
-        await this.runRepository.update(runId, { counts });
+        await this.runRepository.update(persistRunId, { counts });
       }
     }
 
     if (event.type === 'workflow:cancelled') {
-      await this.runRepository.update(runId, {
+      await this.runRepository.update(persistRunId, {
         status: 'running',
         cancelled: event.mode,
       });
     }
 
     if (event.type === 'workflow:paused') {
-      await this.runRepository.update(runId, { status: 'paused' });
+      await this.runRepository.update(persistRunId, { status: 'paused' });
     }
 
     if (event.type === 'workflow:resumed') {
-      await this.runRepository.update(runId, { status: 'running' });
+      await this.runRepository.update(persistRunId, { status: 'running' });
     }
 
     if (event.type === 'workflow:finished') {
       const serializedResult = serializeWorkflowRunResult(event.result);
       const status = runStatusFromWorkflowResult(event.result);
-      await this.runRepository.update(runId, {
+      await this.runRepository.update(persistRunId, {
         status,
         finishedAt: new Date(),
         result: serializedResult,
         counts: this.countsFromResult(event.result),
         ...(status === 'cancelled' ? { cancelled: 'best-effort' as const } : {}),
       });
-      this.runStream.fanOut(runId, { type: 'done', result: serializedResult });
+      this.clearChildMappingsForRoot(persistRunId);
+      this.runStream.fanOut(persistRunId, { type: 'done', result: serializedResult });
     } else {
-      this.runStream.fanOut(runId, { type: 'event', event: serialized });
+      this.runStream.fanOut(persistRunId, { type: 'event', event: serialized });
     }
   }
 

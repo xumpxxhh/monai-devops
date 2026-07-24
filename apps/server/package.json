@@ -8,8 +8,8 @@
   "scripts": {
     "prebuild": "node ../../scripts/sync-plugin-registry.mjs",
     "build": "nest build",
-    "format": "prettier --write .",
-    "format:check": "prettier --check .",
+    "format": "prettier --write . --ignore-path ../../.prettierignore",
+    "format:check": "prettier --check . --ignore-path ../../.prettierignore",
     "dev": "nest start --watch",
     "dev:test": "node ./scripts/dev-with-test-env.mjs start --watch",
     "start": "nest start",
@@ -22,7 +22,8 @@
     "test:debug": "node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/.bin/jest --runInBand",
     "test:e2e": "node --experimental-vm-modules node_modules/jest/bin/jest.js --config ./test/jest-e2e.json",
     "db:generate": "prisma generate",
-    "db:migrate": "prisma migrate dev",
+    "db:migrate": "prisma migrate deploy",
+    "db:migrate:dev": "prisma migrate dev",
     "db:migrate:test": "node ./scripts/migrate-test-db.mjs",
     "db:studio": "prisma studio"
   },

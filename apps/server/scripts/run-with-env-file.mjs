@@ -10,9 +10,7 @@ import { config } from 'dotenv';
 const args = process.argv.slice(2);
 const sep = args.indexOf('--');
 if (sep <= 0 || sep === args.length - 1) {
-  console.error(
-    'Usage: node scripts/run-with-env-file.mjs <env-file> -- <command> [args...]',
-  );
+  console.error('Usage: node scripts/run-with-env-file.mjs <env-file> -- <command> [args...]');
   process.exit(1);
 }
 

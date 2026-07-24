@@ -56,6 +56,13 @@ export class RunsController {
     return { runId, events };
   }
 
+  /** 子执行不再落独立 Run；保留路由兼容，children 恒为空数组 */
+  @Get(':runId/children')
+  async getChildren(@Param('runId') runId: string) {
+    const children = await this.runManager.listChildren(runId);
+    return { runId, children };
+  }
+
   @Post(':runId/cancel')
   cancel(@Param('runId') runId: string, @Body() body: CancelRunDto = {}) {
     return this.runManager.cancelRun(runId, body);
