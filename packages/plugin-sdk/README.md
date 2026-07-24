@@ -289,13 +289,13 @@ const engine = createEngine({ plugins: [myPlugin] });
 
 入口 [`index.ts`](./index.ts) 导出：
 
-| 模块       | 导出                                                                                                                  |
-| ---------- | --------------------------------------------------------------------------------------------------------------------- |
-| `./types`  | `PluginManifest`、`PluginConfig`、`InferPluginConfig`、`PluginContext`、`PluginResult`、`PluginFailureCodes`、`PluginFailureCode` |
-| `./base`   | `createPlugin`、`getConfig`、`getContext`、`PluginDefinition`、`PluginExecuteFn`、`CreatePluginOptions`、`CreatePluginOptionsWithSchema`、`CreatePluginOptionsWithoutSchema` |
-| `./hooks`  | `PluginHooks`                                                                                                         |
-| `./validation` | `formatZodError`                                                                                                  |
-| `./logger` | `PluginLogger`、`PluginLogEntry`、`PluginLogLevel`、`PluginLogStream`、`PluginContextKeys`、`getLogger`、`noopLogger`、`z` |
+| 模块           | 导出                                                                                                                                                                         |
+| -------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `./types`      | `PluginManifest`、`PluginConfig`、`InferPluginConfig`、`PluginContext`、`PluginResult`、`PluginFailureCodes`、`PluginFailureCode`                                            |
+| `./base`       | `createPlugin`、`getConfig`、`getContext`、`PluginDefinition`、`PluginExecuteFn`、`CreatePluginOptions`、`CreatePluginOptionsWithSchema`、`CreatePluginOptionsWithoutSchema` |
+| `./hooks`      | `PluginHooks`                                                                                                                                                                |
+| `./validation` | `formatZodError`                                                                                                                                                             |
+| `./logger`     | `PluginLogger`、`PluginLogEntry`、`PluginLogLevel`、`PluginLogStream`、`PluginContextKeys`、`getLogger`、`noopLogger`、`z`                                                   |
 
 ## 开发与构建
 
