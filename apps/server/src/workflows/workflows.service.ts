@@ -90,9 +90,8 @@ export class WorkflowsService implements OnModuleInit {
     const knownImportIds = new Set(imports.map((row) => row.id));
     await this.engineService.validateWorkflow(definition, { knownImportIds });
 
-    const { importIds, stepIdByImportId } = collectWorkflowImportRefs(definition);
+    const { stepIdByImportId } = collectWorkflowImportRefs(definition);
     await this.workflowRepository.updateImportStepIds(id, stepIdByImportId);
-    await this.workflowRepository.deleteUnusedImports(id, importIds);
 
     const updated = await this.workflowRepository.update(id, definition);
     if (!updated) {
@@ -165,6 +164,17 @@ export class WorkflowsService implements OnModuleInit {
     }
     if (source.id === parent.id) {
       throw new HttpException('不能导入自身', HttpStatus.BAD_REQUEST);
+    }
+
+    const existingImports = await this.workflowRepository.listImports(parentWorkflowId);
+    const copyPrefix = `${source.definition.name}__copy__`;
+    const alreadyImported = existingImports.some((row) => {
+      if (row.childWorkflowId === source.id) return true;
+      if (row.mode === 'copy' && row.childWorkflowName?.startsWith(copyPrefix)) return true;
+      return false;
+    });
+    if (alreadyImported) {
+      throw new HttpException('该工作流已导入', HttpStatus.BAD_REQUEST);
     }
 
     let childWorkflowId = source.id;

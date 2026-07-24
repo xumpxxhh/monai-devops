@@ -34,10 +34,16 @@ export async function validateWorkflowDefinition(
     throw new WorkflowValidationError('workflow.steps 必须是非空数组');
   }
 
+  const seenNames = new Set<string>();
   for (const step of workflow.steps) {
     if (!step.id?.trim() || !step.name?.trim()) {
       throw new WorkflowValidationError('每个 step 需要非空的 id、name');
     }
+    const name = step.name.trim();
+    if (seenNames.has(name)) {
+      throw new WorkflowValidationError(`步骤名称「${name}」重复`);
+    }
+    seenNames.add(name);
   }
 
   validateStepKinds(workflow);

@@ -128,3 +128,17 @@ describe('validateWorkflowDefinition context references', () => {
     await expect(validateWorkflowDefinition(workflow)).rejects.toThrow(/不存在的步骤/);
   });
 });
+
+describe('validateWorkflowDefinition step names', () => {
+  it('rejects duplicate step names', async () => {
+    const workflow = baseWorkflow([
+      { id: 'a', name: '处理', plugin: 'p-a', config: {} },
+      { id: 'b', name: '处理', plugin: 'p-b', config: {} },
+    ]);
+
+    await expect(validateWorkflowDefinition(workflow)).rejects.toBeInstanceOf(
+      WorkflowValidationError,
+    );
+    await expect(validateWorkflowDefinition(workflow)).rejects.toThrow(/步骤名称「处理」重复/);
+  });
+});

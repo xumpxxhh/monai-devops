@@ -8,6 +8,7 @@
   "scripts": {
     "prebuild": "node ../../scripts/sync-plugin-registry.mjs",
     "build": "nest build",
+    "check-types": "tsc --noEmit",
     "format": "prettier --write . --ignore-path ../../.prettierignore",
     "format:check": "prettier --check . --ignore-path ../../.prettierignore",
     "dev": "nest start --watch",
