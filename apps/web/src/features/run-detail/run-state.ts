@@ -7,7 +7,7 @@ import type {
 import type { StepUiStatus } from '../../shared/types/status';
 import type { Edge, Node } from '@xyflow/react';
 import { directedEdgeOptions } from '../../shared/dag/flow-layout';
-import { getStepKind, StepKinds, type StepKind } from '@monai-devops/core-engine';
+import { StepKinds, type StepKind } from '@monai-devops/core-engine';
 
 export interface DagStepNodeData {
   label: string;
@@ -100,7 +100,7 @@ type WorkflowStepLike = {
 
 function resolveKind(step: { kind?: StepKind; plugin?: string } | undefined): StepKind {
   if (!step) return StepKinds.PLUGIN;
-  return getStepKind(step as { kind?: StepKind });
+  return step.kind ?? StepKinds.PLUGIN;
 }
 
 function displayPlugin(step: { kind?: StepKind; plugin?: string } | undefined): string {

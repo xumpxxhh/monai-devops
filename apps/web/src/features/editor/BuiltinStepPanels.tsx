@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useState } from 'react';
 import { Field, Input, Select, Textarea, Checkbox } from '../../shared/ui/form';
 import { TabsBar } from '../../shared/ui/Tabs';
 import type { ConfigReferenceSource } from '../../shared/ui/json-schema-form/types';
@@ -177,13 +177,15 @@ export function SetStateStepPanel({
 
 export function WorkflowRefStepPanel({
   importId,
-  imports,
+  importLabel,
+  importMode,
   inputState,
   loop,
   onChange,
 }: {
   importId: string;
-  imports: Array<{ id: string; label: string; mode: string }>;
+  importLabel: string;
+  importMode: string;
   inputState?: unknown;
   loop?: { maxIterations: number; until?: { when: string; equals?: unknown; exists?: boolean } };
   onChange: (patch: {
@@ -202,21 +204,16 @@ export function WorkflowRefStepPanel({
     loop?.until?.equals === undefined ? '' : JSON.stringify(loop.until.equals),
   );
 
-  const importOptions = useMemo(
-    () => imports.map((row) => ({ value: row.id, label: `${row.label} · ${row.mode}` })),
-    [imports],
-  );
+  const modeLabel =
+    importMode === 'copy' ? '拷贝' : importMode === 'reference' ? '引用' : importMode;
+  const importSummary = importId
+    ? `${importLabel || importId}${modeLabel ? ` · ${modeLabel}` : ''} · ${importId.slice(0, 8)}`
+    : '未绑定导入记录';
 
   return (
     <div className="space-y-3">
-      <Field label="已导入子工作流" htmlFor="workflow-import-id">
-        <Select
-          id="workflow-import-id"
-          value={importId}
-          onValueChange={(value) => onChange({ workflowRef: { importId: value } })}
-          options={importOptions}
-          placeholder={imports.length === 0 ? '请先导入子工作流' : '选择导入记录'}
-        />
+      <Field label="已导入子工作流">
+        <Input mono readOnly value={importSummary} />
       </Field>
       <Field label="inputState（JSON，可选）" error={inputError || undefined}>
         <Textarea
@@ -285,9 +282,10 @@ export function WorkflowRefStepPanel({
           onChange({
             loop: {
               maxIterations: loop.maxIterations,
-              until: untilWhen.trim()
-                ? { when: untilWhen.trim(), ...(equals !== undefined ? { equals } : {}) }
-                : undefined,
+              until: {
+                when: untilWhen.trim() || 'state',
+                ...(equals !== undefined ? { equals } : {}),
+              },
             },
           });
         }}
@@ -297,24 +295,24 @@ export function WorkflowRefStepPanel({
           <Field label="until.when">
             <Input
               value={untilWhen}
-              placeholder="done"
+              placeholder="如 done"
               onChange={(e) => {
                 const when = e.target.value;
                 setUntilWhen(when);
                 if (!loop?.maxIterations) return;
-                let equals: unknown;
-                if (untilEquals.trim()) {
-                  try {
-                    equals = JSON.parse(untilEquals) as unknown;
-                  } catch {
-                    equals = untilEquals;
-                  }
-                }
                 onChange({
                   loop: {
                     maxIterations: loop.maxIterations,
                     until: when.trim()
-                      ? { when: when.trim(), ...(equals !== undefined ? { equals } : {}) }
+                      ? {
+                          when: when.trim(),
+                          ...(loop.until?.equals !== undefined
+                            ? { equals: loop.until.equals }
+                            : {}),
+                          ...(loop.until?.exists !== undefined
+                            ? { exists: loop.until.exists }
+                            : {}),
+                        }
                       : undefined,
                   },
                 });

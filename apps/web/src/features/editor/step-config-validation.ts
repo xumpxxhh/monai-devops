@@ -1,5 +1,6 @@
 import type { StepKind } from '@monai-devops/core-engine';
 import { StepKinds, getStepKind, type WorkflowStep } from '@monai-devops/core-engine';
+import type { WorkflowDraftStep } from '../../shared/api/workflows';
 import type { JsonObjectSchema } from '../../shared/ui/json-schema-form/types';
 import {
   coerceValidatedValues,
@@ -124,7 +125,7 @@ export type DraftStepNodeData = EditorNodeConfigData & {
 export function nodeDataToDraftStep(
   data: DraftStepNodeData,
   dependsOn: string[],
-): Omit<WorkflowStep, 'id'> & { id?: string; clientRef?: string } {
+): WorkflowDraftStep {
   const kind = data.kind ?? StepKinds.PLUGIN;
   const base = {
     clientRef: data.clientRef,

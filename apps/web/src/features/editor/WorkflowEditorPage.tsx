@@ -43,12 +43,12 @@ import {
 } from '@monai-devops/core-engine';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import {
-  faCog,
   faPlay,
   faSave,
   faGripLinesVertical,
   faGripLines,
   faFileImport,
+  faSliders,
 } from '@fortawesome/free-solid-svg-icons';
 import { stepKindsApi, workflowsApi, type WorkflowDraft } from '../../shared/api/workflows';
 import { runsApi } from '../../shared/api/runs';
@@ -64,11 +64,14 @@ import {
   validateAllStepConfigs,
   validateStepConfig,
 } from './step-config-validation';
-import { SetStateStepPanel, StateSchemaEditor, WorkflowRefStepPanel } from './BuiltinStepPanels';
 import { ImportWorkflowModal } from './ImportWorkflowModal';
+import { EditableWorkflowTitle } from './EditableWorkflowTitle';
+import { StepInspectorPanel } from './StepInspectorPanel';
+import { WorkflowSettingsModal } from './WorkflowSettingsModal';
+import { defaultWorkflowName, validateWorkflowName } from './workflow-name';
 import { FullscreenLayout } from '../../layouts/FullscreenLayout';
-import { Field, Input, Select, Checkbox, Textarea } from '../../shared/ui/form';
-import { PluginConfigFormModal, preloadPluginConfigSchemas } from '../../shared/plugins';
+import { Field, Input, Checkbox, Textarea } from '../../shared/ui/form';
+import { preloadPluginConfigSchemas } from '../../shared/plugins';
 import type {
   ConfigReferenceSource,
   JsonObjectSchema,
@@ -123,7 +126,8 @@ interface TopologySnapshot {
 
 type PaletteItem =
   | { type: 'plugin'; plugin: PluginInfo }
-  | { type: 'builtin'; definition: StepKindDefinition };
+  | { type: 'builtin'; definition: StepKindDefinition }
+  | { type: 'workflow-import'; importId: string; label: string; mode: string };
 
 export interface WorkflowFlowHandle {
   getNodes: () => Node<StepNodeData>[];
@@ -286,13 +290,6 @@ function buildDraft(
   };
 }
 
-function validateWorkflowName(name: string): string | undefined {
-  if (!name.trim()) {
-    return '工作流名称不能为空';
-  }
-  return undefined;
-}
-
 function dagStepsFromNodes(nodes: Node<StepNodeData>[], edges: Edge[]) {
   return nodes.map((node) => ({
     id: node.id,
@@ -413,27 +410,34 @@ const WorkflowFlow = forwardRef<
         const clientRef = createClientRef();
         const count = nodes.length;
         const data: StepNodeData =
-          item.type === 'builtin'
-            ? item.definition.kind === StepKinds.SET_STATE
-              ? {
-                  label: item.definition.label,
-                  kind: StepKinds.SET_STATE,
-                  clientRef,
-                  patch: {},
-                }
-              : {
-                  label: item.definition.label,
-                  kind: StepKinds.WORKFLOW,
-                  clientRef,
-                  workflowRef: { importId: '' },
-                }
-            : {
-                label: `步骤 ${count + 1}`,
-                kind: StepKinds.PLUGIN,
-                plugin: item.plugin.name,
+          item.type === 'workflow-import'
+            ? {
+                label: item.label,
+                kind: StepKinds.WORKFLOW,
                 clientRef,
-                config: {},
-              };
+                workflowRef: { importId: item.importId },
+              }
+            : item.type === 'builtin'
+              ? item.definition.kind === StepKinds.SET_STATE
+                ? {
+                    label: item.definition.label,
+                    kind: StepKinds.SET_STATE,
+                    clientRef,
+                    patch: {},
+                  }
+                : {
+                    label: item.definition.label,
+                    kind: StepKinds.WORKFLOW,
+                    clientRef,
+                    workflowRef: { importId: '' },
+                  }
+              : {
+                  label: `步骤 ${count + 1}`,
+                  kind: StepKinds.PLUGIN,
+                  plugin: item.plugin.name,
+                  clientRef,
+                  config: {},
+                };
 
         const newNode: Node<StepNodeData> = {
           id: clientRef,
@@ -565,9 +569,10 @@ export default function WorkflowEditorPage() {
   const flowRef = useRef<WorkflowFlowHandle>(null);
 
   const [workflowId, setWorkflowId] = useState<string | null>(null);
-  const [workflowName, setWorkflowName] = useState('');
+  const [workflowName, setWorkflowName] = useState(defaultWorkflowName);
   const [workflowNameError, setWorkflowNameError] = useState('');
   const [stateSchema, setStateSchema] = useState<Record<string, unknown> | undefined>();
+  const [settingsModalOpen, setSettingsModalOpen] = useState(false);
   const [plugins, setPlugins] = useState<PluginInfo[]>([]);
   const [stepKinds, setStepKinds] = useState<StepKindDefinition[]>([]);
   const [imports, setImports] = useState<WorkflowImportRecord[]>([]);
@@ -708,9 +713,10 @@ export default function WorkflowEditorPage() {
       ...draft,
       steps: draft.steps.map((step, index) => {
         const node = nodes[index];
-        if (!node || getStepKind(step as WorkflowStep) !== StepKinds.PLUGIN) return step;
-        if (!('plugin' in step) || !step.plugin) return step;
-        const result = validateStepConfig(step.plugin, step.config ?? {}, schemaMap);
+        if (!node || node.data.kind !== StepKinds.PLUGIN) return step;
+        const plugin = node.data.plugin;
+        if (!plugin) return step;
+        const result = validateStepConfig(plugin, node.data.config ?? {}, schemaMap);
         return result.ok ? { ...step, config: result.config } : step;
       }),
     };
@@ -754,7 +760,7 @@ export default function WorkflowEditorPage() {
 
     const hasSetState = nodes.some((n) => n.data.kind === StepKinds.SET_STATE);
     if (hasSetState && !stateSchema) {
-      toast.error('存在 set_state 步骤时必须声明 stateSchema');
+      toast.error('存在 set_state 步骤时须在工作流设置中声明 stateSchema');
       return false;
     }
 
@@ -762,6 +768,26 @@ export default function WorkflowEditorPage() {
       if (node.data.kind === StepKinds.WORKFLOW && !node.data.workflowRef?.importId) {
         toast.error(`步骤「${node.data.label}」未选择已导入的子工作流`);
         flowRef.current?.selectNode(node.id);
+        return false;
+      }
+    }
+
+    const stepNameCounts = new Map<string, string[]>();
+    for (const node of nodes) {
+      const name = node.data.label.trim();
+      if (!name) {
+        toast.error('每个步骤需要非空名称');
+        flowRef.current?.selectNode(node.id);
+        return false;
+      }
+      const ids = stepNameCounts.get(name) ?? [];
+      ids.push(node.id);
+      stepNameCounts.set(name, ids);
+    }
+    for (const [name, ids] of stepNameCounts) {
+      if (ids.length > 1) {
+        toast.error(`步骤名称「${name}」重复`);
+        flowRef.current?.selectNode(ids[0]!);
         return false;
       }
     }
@@ -865,13 +891,22 @@ export default function WorkflowEditorPage() {
 
   const handleAddBuiltin = (definition: StepKindDefinition) => {
     if (definition.kind === StepKinds.SET_STATE && !stateSchema) {
-      toast.warning('请先在右侧声明 stateSchema，再添加 set_state 步骤');
-    }
-    if (definition.kind === StepKinds.WORKFLOW && imports.length === 0) {
-      toast.warning('请先「导入子工作流」，再添加 workflow 步骤');
+      toast.warning('请先在「工作流设置」中声明 stateSchema，再添加 set_state 步骤');
     }
     flowRef.current?.addPaletteItem({ type: 'builtin', definition });
   };
+
+  const handleAddWorkflowImport = (row: WorkflowImportRecord) => {
+    const label = row.childWorkflowName ?? row.childWorkflowId;
+    flowRef.current?.addPaletteItem({
+      type: 'workflow-import',
+      importId: row.id,
+      label,
+      mode: row.mode,
+    });
+  };
+
+  const controlFlowKinds = stepKinds.filter((kind) => kind.kind !== StepKinds.WORKFLOW);
 
   const openImportModal = () => {
     if (!workflowId) {
@@ -883,6 +918,32 @@ export default function WorkflowEditorPage() {
 
   const actions = (
     <>
+      <div className="flex items-center gap-4 text-sm mr-1">
+        <Checkbox
+          id="fail-fast"
+          checked={failFast}
+          onCheckedChange={setFailFast}
+          label="failFast"
+        />
+        <label className="flex items-center gap-2 text-muted whitespace-nowrap">
+          并行
+          <Input
+            type="number"
+            min={1}
+            className="w-14 h-8 px-2"
+            value={maxParallel}
+            onChange={(e) => setMaxParallel(Number(e.target.value))}
+          />
+        </label>
+      </div>
+      <button
+        type="button"
+        onClick={() => setSettingsModalOpen(true)}
+        className="inline-flex items-center gap-2 h-9 px-4 rounded-ctrl border border-line text-sm hover:bg-raised"
+      >
+        <FontAwesomeIcon icon={faSliders} />
+        工作流设置
+      </button>
       <button
         type="button"
         onClick={openImportModal}
@@ -924,19 +985,29 @@ export default function WorkflowEditorPage() {
     label: row.childWorkflowName ?? row.childWorkflowId,
     mode: row.mode,
   }));
+  const selectedImport = selection?.data.workflowRef?.importId
+    ? importOptions.find((row) => row.id === selection.data.workflowRef?.importId)
+    : undefined;
 
   return (
     <FullscreenLayout
       backTo="/workflows"
       backLabel="工作流"
-      title={workflowName.trim() || '未命名工作流'}
+      title={
+        <EditableWorkflowTitle
+          value={workflowName}
+          onChange={setWorkflowName}
+          error={workflowNameError || undefined}
+          onErrorChange={setWorkflowNameError}
+        />
+      }
       actions={actions}
     >
       <div className="flex h-full">
         <aside className="w-56 shrink-0 border-r border-line bg-surface p-4 overflow-auto">
           <h3 className="text-xs font-medium text-faint uppercase tracking-wider mb-3">控制流</h3>
           <div className="space-y-1 mb-6">
-            {stepKinds.map((kind) => (
+            {controlFlowKinds.map((kind) => (
               <button
                 key={kind.kind}
                 type="button"
@@ -947,6 +1018,28 @@ export default function WorkflowEditorPage() {
                 <div className="text-xs text-faint truncate">{kind.description}</div>
               </button>
             ))}
+          </div>
+          <h3 className="text-xs font-medium text-faint uppercase tracking-wider mb-3">子工作流</h3>
+          <div className="space-y-1 mb-6">
+            {imports.length === 0 ? (
+              <p className="px-3 py-2 text-xs text-faint">请先导入子工作流</p>
+            ) : (
+              imports.map((row) => {
+                const label = row.childWorkflowName ?? row.childWorkflowId;
+                const modeLabel = row.mode === 'copy' ? '拷贝' : '引用';
+                return (
+                  <button
+                    key={row.id}
+                    type="button"
+                    onClick={() => handleAddWorkflowImport(row)}
+                    className="w-full text-left px-3 py-2 rounded-ctrl text-sm hover:bg-raised border border-transparent hover:border-line"
+                  >
+                    <div className="font-medium truncate">{label}</div>
+                    <div className="text-xs text-faint truncate">{modeLabel}</div>
+                  </button>
+                );
+              })
+            )}
           </div>
           <h3 className="text-xs font-medium text-faint uppercase tracking-wider mb-3">插件</h3>
           <div className="space-y-1">
@@ -974,168 +1067,35 @@ export default function WorkflowEditorPage() {
           />
         </ReactFlowProvider>
 
-        <aside className="w-80 shrink-0 border-l border-line bg-surface p-4 overflow-auto">
-          <h3 className="text-xs font-medium text-faint uppercase tracking-wider mb-3">工作流</h3>
-          <Field label="ID" htmlFor="workflow-id">
-            <Input
-              id="workflow-id"
-              mono
-              readOnly
-              value={workflowId ?? ''}
-              placeholder="保存后生成"
-            />
-          </Field>
-          <Field
-            label="名称"
-            htmlFor="workflow-name"
-            className="mb-4"
-            error={workflowNameError || undefined}
-          >
-            <Input
-              id="workflow-name"
-              value={workflowName}
-              placeholder="请输入工作流名称"
-              onChange={(e) => {
-                setWorkflowName(e.target.value);
-                if (workflowNameError) {
-                  setWorkflowNameError(validateWorkflowName(e.target.value) ?? '');
-                }
-              }}
-            />
-          </Field>
-
-          <div className="flex gap-4 mb-4 text-sm items-center">
-            <Checkbox
-              id="fail-fast"
-              checked={failFast}
-              onCheckedChange={setFailFast}
-              label="failFast"
-            />
-            <label className="flex items-center gap-2 text-muted whitespace-nowrap">
-              并行
-              <Input
-                type="number"
-                min={1}
-                className="w-14 h-8 px-2"
-                value={maxParallel}
-                onChange={(e) => setMaxParallel(Number(e.target.value))}
-              />
-            </label>
-          </div>
-
-          <h3 className="text-xs font-medium text-faint uppercase tracking-wider mb-3">
-            State Schema
-          </h3>
-          <StateSchemaEditor value={stateSchema} onChange={setStateSchema} />
-
-          {imports.length > 0 && (
-            <div className="mt-4">
-              <h3 className="text-xs font-medium text-faint uppercase tracking-wider mb-2">
-                已导入子工作流
-              </h3>
-              <ul className="space-y-1 text-xs">
-                {imports.map((row) => (
-                  <li key={row.id} className="rounded-ctrl border border-line px-2 py-1.5">
-                    <div className="font-medium truncate">
-                      {row.childWorkflowName ?? row.childWorkflowId}
-                    </div>
-                    <div className="text-faint font-mono truncate">
-                      {row.mode} · {row.id.slice(0, 8)}
-                    </div>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
-
-          {selection ? (
-            <>
-              <h3 className="text-xs font-medium text-faint uppercase tracking-wider mb-3 mt-6">
-                步骤属性
-              </h3>
-              <Field label="步骤 ID" htmlFor="step-id">
-                <Input
-                  id="step-id"
-                  mono
-                  readOnly
-                  value={selectedStepId ?? ''}
-                  placeholder="保存后生成"
-                />
-              </Field>
-              <Field label="名称" htmlFor="step-name">
-                <Input
-                  id="step-name"
-                  value={selection.data.label}
-                  onChange={(e) => updateSelected({ label: e.target.value })}
-                />
-              </Field>
-              <Field label="类型">
-                <Input mono readOnly value={selection.data.kind} />
-              </Field>
-
-              {selection.data.kind === StepKinds.PLUGIN && (
-                <>
-                  <Field label="插件" htmlFor="step-plugin">
-                    <Select
-                      id="step-plugin"
-                      value={selection.data.plugin ?? ''}
-                      onValueChange={(plugin) => updateSelected({ plugin })}
-                      options={plugins.map((p) => ({ value: p.name, label: p.name }))}
-                    />
-                  </Field>
-                  <Field label="配置">
-                    <button
-                      type="button"
-                      onClick={() => setConfigModalOpen(true)}
-                      className="inline-flex items-center gap-2 h-9 px-3 rounded-ctrl border border-line text-sm hover:bg-raised w-full justify-center"
-                    >
-                      <FontAwesomeIcon icon={faCog} />
-                      编辑配置
-                    </button>
-                    <p className="mt-2 text-xs text-faint font-mono truncate">
-                      {JSON.stringify(selection.data.config ?? {})}
-                    </p>
-                  </Field>
-                  <PluginConfigFormModal
-                    open={configModalOpen}
-                    onOpenChange={setConfigModalOpen}
-                    pluginName={selection.data.plugin ?? ''}
-                    value={(selection.data.config ?? {}) as Record<string, unknown>}
-                    onConfirm={(config) => updateSelected({ config })}
-                    referenceSources={selectedReferenceSources}
-                  />
-                </>
-              )}
-
-              {selection.data.kind === StepKinds.SET_STATE && (
-                <SetStateStepPanel
-                  patch={selection.data.patch}
-                  onChange={(patch) => updateSelected({ patch })}
-                  referenceSources={selectedReferenceSources}
-                />
-              )}
-
-              {selection.data.kind === StepKinds.WORKFLOW && (
-                <WorkflowRefStepPanel
-                  importId={selection.data.workflowRef?.importId ?? ''}
-                  imports={importOptions}
-                  inputState={selection.data.inputState}
-                  loop={selection.data.loop}
-                  onChange={(patch) => updateSelected(patch)}
-                />
-              )}
-            </>
-          ) : (
-            <p className="text-sm text-faint mt-6">点击画布中的节点编辑属性</p>
-          )}
-        </aside>
+        <StepInspectorPanel
+          selection={selection}
+          selectedStepId={selectedStepId}
+          selectedImport={selectedImport}
+          configModalOpen={configModalOpen}
+          onConfigModalOpenChange={setConfigModalOpen}
+          referenceSources={selectedReferenceSources}
+          onUpdate={updateSelected}
+        />
       </div>
+
+      <WorkflowSettingsModal
+        open={settingsModalOpen}
+        onOpenChange={setSettingsModalOpen}
+        workflowId={workflowId}
+        workflowName={workflowName}
+        onWorkflowNameChange={setWorkflowName}
+        workflowNameError={workflowNameError}
+        onWorkflowNameErrorChange={setWorkflowNameError}
+        stateSchema={stateSchema}
+        onStateSchemaChange={setStateSchema}
+      />
 
       {workflowId && (
         <ImportWorkflowModal
           open={importModalOpen}
           onOpenChange={setImportModalOpen}
           parentWorkflowId={workflowId}
+          imports={imports}
           onImported={() => void refreshImports(workflowId)}
         />
       )}

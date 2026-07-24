@@ -14,6 +14,8 @@ export interface SelectProps {
   onValueChange: (value: string) => void;
   options: SelectOption[];
   placeholder?: string;
+  /** 选项为空时下拉面板内展示的文案 */
+  emptyText?: string;
   disabled?: boolean;
   className?: string;
   triggerClassName?: string;
@@ -26,6 +28,7 @@ export function Select({
   onValueChange,
   options,
   placeholder = '请选择…',
+  emptyText = '暂无选项',
   disabled,
   className,
   triggerClassName,
@@ -54,23 +57,27 @@ export function Select({
           sideOffset={4}
         >
           <SelectPrimitive.Viewport className="p-1 min-w-[var(--radix-select-trigger-width)]">
-            {options.map((option) => (
-              <SelectPrimitive.Item
-                key={option.value}
-                value={option.value}
-                disabled={option.disabled}
-                className={mergeClass(
-                  'relative flex cursor-pointer select-none items-center rounded-ctrl py-2 pl-8 pr-3 text-sm text-ink outline-none',
-                  'data-[highlighted]:bg-brand-soft data-[highlighted]:text-brand',
-                  'data-[disabled]:pointer-events-none data-[disabled]:opacity-50',
-                )}
-              >
-                <SelectPrimitive.ItemIndicator className="absolute left-2 flex items-center text-brand">
-                  <FontAwesomeIcon icon={faCheck} className="text-xs" />
-                </SelectPrimitive.ItemIndicator>
-                <SelectPrimitive.ItemText>{option.label}</SelectPrimitive.ItemText>
-              </SelectPrimitive.Item>
-            ))}
+            {options.length === 0 ? (
+              <div className="px-3 py-2 text-sm text-faint select-none">{emptyText}</div>
+            ) : (
+              options.map((option) => (
+                <SelectPrimitive.Item
+                  key={option.value}
+                  value={option.value}
+                  disabled={option.disabled}
+                  className={mergeClass(
+                    'relative flex cursor-pointer select-none items-center rounded-ctrl py-2 pl-8 pr-3 text-sm text-ink outline-none',
+                    'data-[highlighted]:bg-brand-soft data-[highlighted]:text-brand',
+                    'data-[disabled]:pointer-events-none data-[disabled]:opacity-50',
+                  )}
+                >
+                  <SelectPrimitive.ItemIndicator className="absolute left-2 flex items-center text-brand">
+                    <FontAwesomeIcon icon={faCheck} className="text-xs" />
+                  </SelectPrimitive.ItemIndicator>
+                  <SelectPrimitive.ItemText>{option.label}</SelectPrimitive.ItemText>
+                </SelectPrimitive.Item>
+              ))
+            )}
           </SelectPrimitive.Viewport>
         </SelectPrimitive.Content>
       </SelectPrimitive.Portal>

@@ -1,13 +1,14 @@
 import { Link, Outlet } from 'react-router-dom';
+import type { ReactNode } from 'react';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faArrowLeft, faDiagramProject } from '@fortawesome/free-solid-svg-icons';
 
 interface FullscreenLayoutProps {
   backTo?: string;
   backLabel?: string;
-  title?: string;
-  actions?: React.ReactNode;
-  children?: React.ReactNode;
+  title?: ReactNode;
+  actions?: ReactNode;
+  children?: ReactNode;
 }
 
 export function FullscreenLayout({
@@ -28,8 +29,8 @@ export function FullscreenLayout({
             <FontAwesomeIcon icon={faArrowLeft} />
             {backLabel}
           </Link>
-          <div className="flex items-center gap-2 text-sm font-medium">
-            <FontAwesomeIcon icon={faDiagramProject} className="text-brand" />
+          <div className="flex items-center gap-2 min-w-0">
+            <FontAwesomeIcon icon={faDiagramProject} className="text-brand text-base shrink-0" />
             {title}
           </div>
         </div>

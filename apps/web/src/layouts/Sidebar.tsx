@@ -9,6 +9,7 @@ import {
 } from '@fortawesome/free-solid-svg-icons';
 import type { RunRecord } from '../shared/types';
 import { RUN_STATUS_META } from '../shared/types/status';
+import { formatAbsoluteRunTime, formatRelativeRunTime } from '../shared/utils/format-time';
 
 const NAV = [
   { to: '/', label: '概览', icon: faGaugeHigh, end: true },
@@ -20,6 +21,12 @@ const NAV = [
 
 interface SidebarProps {
   recentRuns?: RunRecord[];
+}
+
+function getWorkflowDisplayName(run: RunRecord): string {
+  const name = run.workflowSnapshot?.name?.trim();
+  if (name) return name;
+  return `未命名工作流 (${run.workflowId.slice(0, 8)})`;
 }
 
 export function Sidebar({ recentRuns = [] }: SidebarProps) {
@@ -63,18 +70,26 @@ export function Sidebar({ recentRuns = [] }: SidebarProps) {
           <div className="px-2 space-y-0.5 overflow-auto flex-1">
             {recentRuns.slice(0, 5).map((run) => {
               const meta = RUN_STATUS_META[run.status] ?? RUN_STATUS_META.queued;
+              const displayName = getWorkflowDisplayName(run);
+              const when = run.startedAt ?? run.createdAt;
+              const tooltip = `${displayName} · ${formatAbsoluteRunTime(when)} · Run ${run.runId}`;
               return (
                 <NavLink
                   key={run.runId}
                   to={`/runs/${run.runId}`}
-                  className="group flex items-center gap-2 px-3 py-1.5 rounded-ctrl text-xs text-muted hover:bg-raised hover:text-ink transition-colors"
+                  title={tooltip}
+                  className="group flex items-start gap-2 px-3 py-1.5 rounded-ctrl text-sm text-muted hover:bg-raised hover:text-ink transition-colors"
                 >
-                  <span className={`w-2 h-2 rounded-full ${meta.dot}`} />
-                  <span className="truncate flex-1">
-                    {run.workflowSnapshot?.name ?? run.workflowId}
-                  </span>
-                  <span className="font-mono text-faint group-hover:text-muted">
-                    #{run.runId.slice(0, 6)}
+                  <span className={`w-2 h-2 shrink-0 rounded-full mt-1.5 ${meta.dot}`} />
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-ink">{displayName}</span>
+                    <span className="block truncate text-xs text-faint mt-0.5">
+                      {formatRelativeRunTime(when)}
+                      <span className="mx-1">·</span>
+                      <span className={meta.color}>{meta.label}</span>
+                      <span className="mx-1">·</span>
+                      <span className="font-mono">{run.runId.slice(0, 8)}</span>
+                    </span>
                   </span>
                 </NavLink>
               );

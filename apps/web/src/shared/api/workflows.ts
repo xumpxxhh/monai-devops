@@ -8,7 +8,10 @@ import type {
   WorkflowRecord,
 } from '../types';
 
-export type WorkflowDraftStep = Omit<WorkflowStep, 'id'> & {
+/** Omit 对联合不分配；需先展开各成员再去掉 id，否则会丢掉 plugin/patch/workflowRef 等判别字段 */
+type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never;
+
+export type WorkflowDraftStep = DistributiveOmit<WorkflowStep, 'id'> & {
   id?: string;
   clientRef?: string;
 };

@@ -3,7 +3,6 @@ import { Link, useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import {
-  faChevronDown,
   faChevronRight,
   faEllipsisVertical,
   faPenToSquare,
@@ -58,7 +57,7 @@ function cloneStepToDraft(step: WorkflowStep, clientRef: string, refByStepId: Ma
   };
 }
 
-function WorkflowImportsRow({ parentId, colSpan }: { parentId: string; colSpan: number }) {
+function WorkflowImportsContent({ parentId }: { parentId: string }) {
   const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
   const [imports, setImports] = useState<WorkflowImportRecord[]>([]);
@@ -84,61 +83,85 @@ function WorkflowImportsRow({ parentId, colSpan }: { parentId: string; colSpan: 
   }, [parentId]);
 
   return (
-    <tr className="bg-raised/40">
-      <td colSpan={colSpan} className="px-4 py-3">
-        {loading ? (
-          <p className="text-xs text-faint">加载子工作流…</p>
-        ) : imports.length === 0 ? (
-          <p className="text-xs text-faint">尚未导入子工作流</p>
-        ) : (
-          <table className="w-full text-xs">
-            <thead>
-              <tr className="text-left text-faint">
-                <th className="py-1 font-medium">子工作流</th>
-                <th className="py-1 font-medium">模式</th>
-                <th className="py-1 font-medium">更新时间</th>
-                <th className="py-1 font-medium w-28">操作</th>
+    <div className="px-4 py-3">
+      {loading ? (
+        <p className="text-xs text-faint">加载子工作流…</p>
+      ) : imports.length === 0 ? (
+        <p className="text-xs text-faint">尚未导入子工作流</p>
+      ) : (
+        <table className="w-full text-xs">
+          <thead>
+            <tr className="text-left text-faint">
+              <th className="py-1 font-medium">子工作流</th>
+              <th className="py-1 font-medium">模式</th>
+              <th className="py-1 font-medium">更新时间</th>
+              <th className="py-1 font-medium w-28">操作</th>
+            </tr>
+          </thead>
+          <tbody>
+            {imports.map((row) => (
+              <tr key={row.id} className="border-t border-line-soft">
+                <td className="py-2">
+                  <div className="font-medium">{row.childWorkflowName ?? row.childWorkflowId}</div>
+                  <div className="font-mono text-faint">{row.childWorkflowId}</div>
+                </td>
+                <td className="py-2">{row.mode}</td>
+                <td className="py-2 text-muted">
+                  {row.childWorkflowUpdatedAt
+                    ? new Date(row.childWorkflowUpdatedAt).toLocaleString()
+                    : '—'}
+                </td>
+                <td className="py-2">
+                  {row.mode === 'copy' ? (
+                    <button
+                      type="button"
+                      className="text-brand hover:underline"
+                      onClick={() => navigate(`/workflows/${row.childWorkflowId}/edit`)}
+                    >
+                      编辑
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      className="text-muted hover:underline"
+                      onClick={() => navigate(`/workflows/${row.childWorkflowId}/edit`)}
+                    >
+                      查看
+                    </button>
+                  )}
+                </td>
               </tr>
-            </thead>
-            <tbody>
-              {imports.map((row) => (
-                <tr key={row.id} className="border-t border-line-soft">
-                  <td className="py-2">
-                    <div className="font-medium">
-                      {row.childWorkflowName ?? row.childWorkflowId}
-                    </div>
-                    <div className="font-mono text-faint">{row.childWorkflowId}</div>
-                  </td>
-                  <td className="py-2">{row.mode}</td>
-                  <td className="py-2 text-muted">
-                    {row.childWorkflowUpdatedAt
-                      ? new Date(row.childWorkflowUpdatedAt).toLocaleString()
-                      : '—'}
-                  </td>
-                  <td className="py-2">
-                    {row.mode === 'copy' ? (
-                      <button
-                        type="button"
-                        className="text-brand hover:underline"
-                        onClick={() => navigate(`/workflows/${row.childWorkflowId}/edit`)}
-                      >
-                        编辑
-                      </button>
-                    ) : (
-                      <button
-                        type="button"
-                        className="text-muted hover:underline"
-                        onClick={() => navigate(`/workflows/${row.childWorkflowId}/edit`)}
-                      >
-                        查看
-                      </button>
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
+            ))}
+          </tbody>
+        </table>
+      )}
+    </div>
+  );
+}
+
+function CollapsibleImportsRow({
+  expanded,
+  parentId,
+  onCollapsed,
+}: {
+  expanded: boolean;
+  parentId: string;
+  onCollapsed: () => void;
+}) {
+  return (
+    <tr className="bg-raised/40">
+      <td colSpan={5} className="p-0">
+        <div
+          className="nested-log-collapse"
+          data-expanded={expanded ? 'true' : 'false'}
+          onTransitionEnd={(e) => {
+            if (e.propertyName === 'grid-template-rows' && !expanded) onCollapsed();
+          }}
+        >
+          <div className="nested-log-collapse-inner">
+            <WorkflowImportsContent parentId={parentId} />
+          </div>
+        </div>
       </td>
     </tr>
   );
@@ -151,6 +174,7 @@ export default function WorkflowsListPage() {
   const [search, setSearch] = useState('');
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [expandedIds, setExpandedIds] = useState<Set<string>>(() => new Set());
+  const [mountedIds, setMountedIds] = useState<Set<string>>(() => new Set());
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -231,10 +255,25 @@ export default function WorkflowsListPage() {
   };
 
   const toggleExpand = (id: string) => {
-    setExpandedIds((prev) => {
+    if (expandedIds.has(id)) {
+      setExpandedIds((prev) => {
+        const next = new Set(prev);
+        next.delete(id);
+        return next;
+      });
+      return;
+    }
+
+    setMountedIds((prev) => new Set(prev).add(id));
+    requestAnimationFrame(() => {
+      setExpandedIds((prev) => new Set(prev).add(id));
+    });
+  };
+
+  const unmountImports = (id: string) => {
+    setMountedIds((prev) => {
       const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
+      next.delete(id);
       return next;
     });
   };
@@ -289,6 +328,7 @@ export default function WorkflowsListPage() {
             <tbody>
               {workflows.map((record) => {
                 const expanded = expandedIds.has(record.id);
+                const mounted = mountedIds.has(record.id);
                 return (
                   <Fragment key={record.id}>
                     <tr className="border-b border-line-soft hover:bg-raised/50">
@@ -297,9 +337,14 @@ export default function WorkflowsListPage() {
                           type="button"
                           className="p-1.5 rounded-ctrl hover:bg-raised text-muted"
                           aria-label={expanded ? '收起子工作流' : '展开子工作流'}
+                          aria-expanded={expanded}
                           onClick={() => toggleExpand(record.id)}
                         >
-                          <FontAwesomeIcon icon={expanded ? faChevronDown : faChevronRight} />
+                          <FontAwesomeIcon
+                            icon={faChevronRight}
+                            className="nested-log-chevron w-3"
+                            data-expanded={expanded ? 'true' : 'false'}
+                          />
                         </button>
                       </td>
                       <td className="px-4 py-3 font-medium">
@@ -359,9 +404,13 @@ export default function WorkflowsListPage() {
                         </div>
                       </td>
                     </tr>
-                    {expanded && (
-                      <WorkflowImportsRow key={record.id} parentId={record.id} colSpan={5} />
-                    )}
+                    {mounted ? (
+                      <CollapsibleImportsRow
+                        expanded={expanded}
+                        parentId={record.id}
+                        onCollapsed={() => unmountImports(record.id)}
+                      />
+                    ) : null}
                   </Fragment>
                 );
               })}
