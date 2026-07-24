@@ -47,6 +47,14 @@ export interface StepView {
 
 export type PluginLogStream = 'stdout' | 'stderr';
 
+export interface LogLineNesting {
+  parentStepId: string;
+  /** 展示用父步骤名，如「引用子工作流」 */
+  parentStepName: string;
+  /** 0-based；UI 展示为「第 N 轮」时 +1 */
+  iteration: number;
+}
+
 export interface LogLine {
   id: string;
   ts: string;
@@ -57,6 +65,8 @@ export interface LogLine {
   level?: string;
   stream?: PluginLogStream;
   message: string;
+  /** 子工作流事件：用于主日志分组折叠，不把 UUID 拼进 message */
+  nesting?: LogLineNesting;
   raw?: unknown;
 }
 
@@ -255,19 +265,23 @@ function applyParentScopedEvent(
   const parent = event.parent!;
   const steps = { ...state.steps };
   const parentStep = steps[parent.stepId];
+  const nesting: LogLineNesting = {
+    parentStepId: parent.stepId,
+    parentStepName: parentStep?.name ?? parent.stepId,
+    iteration: parent.iteration,
+  };
+  const nestedLine: LogLine = { ...logLine, nesting };
+
   if (!parentStep) {
     // 父步骤不在本 run DAG 中：仅保留顶层日志，不新建顶层节点
     return {
       ...state,
-      logs: appendLogLine(state.logs, {
-        ...logLine,
-        message: `[nested ${parent.stepId}#${parent.iteration}] ${logLine.message}`,
-      }),
+      logs: appendLogLine(state.logs, nestedLine),
     };
   }
 
   const nestedLogs = { ...(parentStep.nestedLogs ?? {}) };
-  const bucket = appendLogLine(nestedLogs[parent.iteration] ?? [], logLine);
+  const bucket = appendLogLine(nestedLogs[parent.iteration] ?? [], nestedLine);
   nestedLogs[parent.iteration] = bucket;
 
   const iterations = [...(parentStep.iterations ?? [])];
@@ -285,11 +299,8 @@ function applyParentScopedEvent(
   return {
     ...state,
     steps,
-    // 顶层 logs 也记一条摘要，便于总览，但不改 counts
-    logs: appendLogLine(state.logs, {
-      ...logLine,
-      message: `[nested ${parent.stepId}#${parent.iteration}] ${logLine.message}`,
-    }),
+    // 顶层 logs 也记一条，便于总览分组；不改 counts
+    logs: appendLogLine(state.logs, nestedLine),
     counts: state.counts,
   };
 }
@@ -379,10 +390,7 @@ export function applyRunEvent(state: RunState, event: SerializedWorkflowLifecycl
   ) {
     return {
       ...state,
-      logs: appendLogLine(state.logs, {
-        ...logLine,
-        message: `[nested] ${logLine.message}`,
-      }),
+      logs: appendLogLine(state.logs, logLine),
     };
   }
 

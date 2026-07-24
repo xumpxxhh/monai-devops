@@ -1,8 +1,10 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { toast } from 'sonner';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import {
+  faArrowLeft,
+  faChevronRight,
   faCopy,
   faBan,
   faPause,
@@ -42,12 +44,53 @@ import {
   hydrateRunState,
   runStepsToFlow,
   type DagStepNodeData,
+  type LogLine,
   type RunState,
   type StepView,
 } from './run-state';
 
 type LogFilter = 'all' | 'logs' | 'errors';
 type LayoutMode = 'vertical' | 'horizontal';
+
+type LogSegment =
+  | { type: 'line'; log: LogLine }
+  | {
+      type: 'group';
+      key: string;
+      parentStepName: string;
+      iteration: number;
+      lines: LogLine[];
+    };
+
+function nestGroupKey(parentStepId: string, iteration: number): string {
+  return `${parentStepId}#${iteration}`;
+}
+
+/** 将连续且 nesting 相同的日志合成一组，便于折叠展示 */
+function groupFilteredLogs(logs: LogLine[]): LogSegment[] {
+  const segments: LogSegment[] = [];
+  for (const log of logs) {
+    const nest = log.nesting;
+    if (!nest) {
+      segments.push({ type: 'line', log });
+      continue;
+    }
+    const key = nestGroupKey(nest.parentStepId, nest.iteration);
+    const last = segments.at(-1);
+    if (last?.type === 'group' && last.key === key) {
+      last.lines.push(log);
+    } else {
+      segments.push({
+        type: 'group',
+        key,
+        parentStepName: nest.parentStepName,
+        iteration: nest.iteration,
+        lines: [log],
+      });
+    }
+  }
+  return segments;
+}
 
 const LAYOUT_MODE_STORAGE_KEY = 'run-detail-layout-mode';
 
@@ -75,6 +118,34 @@ function logLevelTextClass(level?: string, stream?: 'stdout' | 'stderr'): string
     default:
       return stream === 'stderr' ? 'text-failed' : 'text-ink';
   }
+}
+
+function renderLogLine(log: LogLine, stepNameById: Record<string, string> | undefined): ReactNode {
+  const messageClass =
+    log.kind === 'error' ? 'text-failed' : logLevelTextClass(log.level, log.stream);
+
+  if (log.kind === 'stream') {
+    return (
+      <pre key={log.id} className={`whitespace-pre-wrap break-words ${messageClass}`}>
+        {log.message}
+      </pre>
+    );
+  }
+
+  return (
+    <div key={log.id} className="log-line">
+      <span className="text-faint">{log.ts}</span>{' '}
+      <span className={log.kind === 'log' ? 'text-running' : 'text-muted'}>
+        [{log.level ?? log.eventType ?? log.kind}]
+      </span>{' '}
+      {log.stepId && (
+        <span className="text-brand">
+          {log.stepName ?? stepNameById?.[log.stepId] ?? log.stepId}
+        </span>
+      )}{' '}
+      <span className={messageClass}>{log.message}</span>
+    </div>
+  );
 }
 
 const ACTIVE_RUN_STATUSES = new Set<RunStatus>(['queued', 'running', 'paused', 'pausing']);
@@ -274,6 +345,8 @@ export default function RunDetailPage() {
     fromEventIndex: number;
   } | null>(null);
   const [layoutMode, setLayoutMode] = useState<LayoutMode>(readLayoutMode);
+  /** 折叠的嵌套日志组；未记录视为展开 */
+  const [collapsedNestGroups, setCollapsedNestGroups] = useState<Record<string, boolean>>({});
   const logEndRef = useRef<HTMLDivElement>(null);
 
   const handleLayoutModeChange = useCallback((mode: LayoutMode) => {
@@ -415,18 +488,35 @@ export default function RunDetailPage() {
     }
   }, [runState?.logs.length, lastLogMessage, autoScroll, logScrollPaused]);
 
-  const filteredLogs = (runState?.logs ?? []).filter((log) => {
-    if (logFilter === 'logs') return log.kind === 'log' || log.kind === 'stream';
+  const filteredLogs = useMemo(() => {
+    const logs = runState?.logs ?? [];
+    if (logFilter === 'logs') {
+      return logs.filter((log) => log.kind === 'log' || log.kind === 'stream');
+    }
     if (logFilter === 'errors') {
-      return (
-        log.kind === 'error' ||
-        log.eventType?.includes('failed') ||
-        (log.kind === 'stream' && log.stream === 'stderr') ||
-        log.level === 'error'
+      return logs.filter(
+        (log) =>
+          log.kind === 'error' ||
+          log.eventType?.includes('failed') ||
+          (log.kind === 'stream' && log.stream === 'stderr') ||
+          log.level === 'error',
       );
     }
-    return true;
-  });
+    return logs;
+  }, [runState?.logs, logFilter]);
+
+  const logSegments = useMemo(() => groupFilteredLogs(filteredLogs), [filteredLogs]);
+
+  const stepNameById = useMemo(() => {
+    if (!runState) return undefined;
+    const map: Record<string, string> = {};
+    for (const s of Object.values(runState.steps)) map[s.id] = s.name;
+    return map;
+  }, [runState]);
+
+  const toggleNestGroup = useCallback((key: string) => {
+    setCollapsedNestGroups((prev) => ({ ...prev, [key]: !prev[key] }));
+  }, []);
 
   const meta = RUN_STATUS_META[recordStatus] ?? RUN_STATUS_META.running;
   const canCancel = CANCELLABLE_STATUSES.has(recordStatus);
@@ -469,27 +559,43 @@ export default function RunDetailPage() {
           </button>
         </div>
       </div>
-      <div className="flex-1 overflow-auto p-4 font-mono text-xs bg-panel min-h-0">
-        {filteredLogs.map((log) => {
-          const messageClass =
-            log.kind === 'error' ? 'text-failed' : logLevelTextClass(log.level, log.stream);
+      <div className="flex-1 overflow-auto p-4 log-panel-body bg-panel min-h-0">
+        {!runState && <div className="text-faint">加载日志…</div>}
+        {logSegments.map((segment) => {
+          if (segment.type === 'line') {
+            return renderLogLine(segment.log, stepNameById);
+          }
 
-          return log.kind === 'stream' ? (
-            <pre key={log.id} className={`whitespace-pre-wrap break-words ${messageClass}`}>
-              {log.message}
-            </pre>
-          ) : (
-            <div key={log.id} className="log-line">
-              <span className="text-faint">{log.ts}</span>{' '}
-              <span className={log.kind === 'log' ? 'text-running' : 'text-muted'}>
-                [{log.level ?? log.eventType ?? log.kind}]
-              </span>{' '}
-              {log.stepId && (
-                <span className="text-brand">
-                  {log.stepName ?? runState?.steps[log.stepId]?.name ?? log.stepId}
+          const expanded = !collapsedNestGroups[segment.key];
+          return (
+            <div
+              key={segment.key + segment.lines[0]?.id}
+              className="my-1 rounded-ctrl bg-[#E3E8F4] border border-line overflow-hidden"
+            >
+              <button
+                type="button"
+                onClick={() => toggleNestGroup(segment.key)}
+                className="w-full flex items-center gap-2 px-2 py-1.5 text-left hover:bg-raised"
+              >
+                <FontAwesomeIcon
+                  icon={faChevronRight}
+                  className="nested-log-chevron text-faint w-3 shrink-0"
+                  data-expanded={expanded ? 'true' : 'false'}
+                />
+                <span className="text-brand font-medium truncate">
+                  {segment.parentStepName} · 第 {segment.iteration + 1} 轮
                 </span>
-              )}{' '}
-              <span className={messageClass}>{log.message}</span>
+                {!expanded && (
+                  <span className="text-faint shrink-0">{segment.lines.length} 条</span>
+                )}
+              </button>
+              <div className="nested-log-collapse" data-expanded={expanded ? 'true' : 'false'}>
+                <div className="nested-log-collapse-inner">
+                  <div className="pl-3 pr-2 pb-2 border-l-2 border-line ml-3 space-y-0.5">
+                    {segment.lines.map((log) => renderLogLine(log, stepNameById))}
+                  </div>
+                </div>
+              </div>
             </div>
           );
         })}
@@ -507,8 +613,12 @@ export default function RunDetailPage() {
       <header className="shrink-0 bg-surface border-b border-line px-6 py-3">
         <div className="flex items-center justify-between mb-2">
           <div className="flex items-center gap-3">
-            <Link to="/runs" className="text-sm text-muted hover:text-ink">
-              ← 运行列表
+            <Link
+              to="/runs"
+              title="运行列表"
+              className="inline-flex items-center justify-center h-8 w-8 text-sm text-muted hover:text-ink hover:bg-raised rounded-ctrl"
+            >
+              <FontAwesomeIcon icon={faArrowLeft} />
             </Link>
             <h1 className="text-lg font-semibold">{runState?.workflowName ?? '运行详情'}</h1>
             <span

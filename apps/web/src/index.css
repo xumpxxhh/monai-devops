@@ -1,5 +1,3 @@
-@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&display=swap');
-
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -185,9 +183,45 @@ samp,
 
 .log-line {
   padding: 2px 0;
+  font-size: 0.75rem;
+  line-height: 1.6;
 }
 .log-line:hover {
   background: rgba(109, 94, 246, 0.05);
+}
+
+/** 日志面板：固定字号/行高，避免等宽字体加载前后布局跳动 */
+.log-panel-body {
+  font-family: var(--mono);
+  font-size: 0.75rem;
+  line-height: 1.6;
+  font-variant-ligatures: none;
+}
+.log-panel-body pre {
+  font-size: inherit;
+  line-height: inherit;
+  font-family: inherit;
+}
+
+.nested-log-collapse {
+  display: grid;
+  transition: grid-template-rows 0.22s ease-out;
+}
+.nested-log-collapse[data-expanded='false'] {
+  grid-template-rows: 0fr;
+}
+.nested-log-collapse[data-expanded='true'] {
+  grid-template-rows: 1fr;
+}
+.nested-log-collapse-inner {
+  min-height: 0;
+  overflow: hidden;
+}
+.nested-log-chevron {
+  transition: transform 0.22s ease-out;
+}
+.nested-log-chevron[data-expanded='true'] {
+  transform: rotate(90deg);
 }
 
 .tab {

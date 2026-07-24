@@ -96,6 +96,14 @@ describe('run-state reducer', () => {
     expect(state.steps['inner-step']).toBeUndefined();
     expect(state.counts.total).toBe(2);
     expect(state.steps['call-child'].nestedLogs?.[0]?.length).toBeGreaterThan(0);
+
+    const nestedLog = state.logs.find((l) => l.nesting?.parentStepId === 'call-child');
+    expect(nestedLog?.nesting).toMatchObject({
+      parentStepId: 'call-child',
+      parentStepName: 'Call',
+      iteration: 0,
+    });
+    expect(nestedLog?.message).not.toContain('[nested');
   });
 
   it('does not create orphan DAG nodes for nested step:queued missing parent', () => {
@@ -117,7 +125,9 @@ describe('run-state reducer', () => {
     expect(state.steps['child-s1']).toBeUndefined();
     expect(state.counts.total).toBe(1);
     expect(state.steps['call-child'].status).toBe('idle');
-    expect(state.logs.some((l) => l.message.includes('[nested]'))).toBe(true);
+    // 无 parent 字段时不强行造 nesting 分组，仅记普通日志
+    expect(state.logs.some((l) => l.message === 'step:queued')).toBe(true);
+    expect(state.logs.every((l) => !l.message.includes('[nested'))).toBe(true);
   });
 
   it('tracks workflow iteration start/finished on parent workflow step', () => {
