@@ -183,10 +183,17 @@ function RunDagPanel({
         const step = runState.steps[node.id];
         if (!step) return node;
 
+        const displayPlugin =
+          step.kind === 'set_state'
+            ? 'set_state'
+            : step.kind === 'workflow'
+              ? 'workflow'
+              : (step.plugin ?? '');
         const current = node.data;
         if (
           current.label === step.name &&
-          current.plugin === step.plugin &&
+          current.plugin === displayPlugin &&
+          current.kind === step.kind &&
           current.status === step.status
         ) {
           return node;
@@ -198,7 +205,8 @@ function RunDagPanel({
           data: {
             ...current,
             label: step.name,
-            plugin: step.plugin,
+            plugin: displayPlugin,
+            kind: step.kind,
             status: step.status,
           },
         };
@@ -626,9 +634,62 @@ export default function RunDetailPage() {
               <span className="font-mono">{drawerStep.id}</span>
             </div>
             <div>
-              <span className="text-muted">插件:</span> {drawerStep.plugin}
+              <span className="text-muted">类型:</span> {drawerStep.kind}
             </div>
+            {drawerStep.plugin && (
+              <div>
+                <span className="text-muted">插件:</span> {drawerStep.plugin}
+              </div>
+            )}
             <StatusBadge status={drawerStep.status} size="md" />
+            {drawerStep.pluginResult != null && (
+              <div>
+                <div className="text-muted mb-1">
+                  {drawerStep.kind === 'set_state' ? 'State 快照' : '结果'}
+                </div>
+                <pre className="bg-panel p-3 rounded-ctrl text-xs overflow-auto max-h-48">
+                  {JSON.stringify(drawerStep.pluginResult, null, 2)}
+                </pre>
+              </div>
+            )}
+            {drawerStep.kind === 'workflow' && (drawerStep.iterations?.length ?? 0) > 0 && (
+              <div>
+                <div className="text-muted mb-2">迭代</div>
+                <ul className="space-y-2">
+                  {drawerStep.iterations!.map((it) => (
+                    <li
+                      key={it.index}
+                      className="rounded-ctrl border border-line px-3 py-2 text-xs space-y-1"
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="font-mono">#{it.index}</span>
+                        <StatusBadge status={it.status} />
+                      </div>
+                      {it.state !== undefined && (
+                        <pre className="bg-panel p-2 rounded-ctrl overflow-auto max-h-24">
+                          {JSON.stringify(it.state, null, 2)}
+                        </pre>
+                      )}
+                      {(drawerStep.nestedLogs?.[it.index]?.length ?? 0) > 0 && (
+                        <div>
+                          <div className="text-muted mb-1">嵌套日志</div>
+                          <ul className="bg-panel rounded-ctrl p-2 space-y-0.5 max-h-40 overflow-auto font-mono">
+                            {drawerStep.nestedLogs![it.index]!.map((line) => (
+                              <li
+                                key={line.id}
+                                className={logLevelTextClass(line.level, line.stream)}
+                              >
+                                {line.message}
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
             {drawerStep.status === 'failed' && (
               <>
                 {drawerStep.failureKind && (
@@ -642,17 +703,14 @@ export default function RunDetailPage() {
                           ? '资源失败'
                           : drawerStep.failureKind === 'internal'
                             ? '内部错误'
-                            : drawerStep.failureKind}
+                            : drawerStep.failureKind === 'subworkflow_failed'
+                              ? '子工作流失败'
+                              : drawerStep.failureKind}
                   </div>
                 )}
                 {drawerStep.error && (
                   <pre className="bg-panel p-3 rounded-ctrl text-xs overflow-auto">
                     {JSON.stringify(drawerStep.error, null, 2)}
-                  </pre>
-                )}
-                {drawerStep.pluginResult != null && (
-                  <pre className="bg-panel p-3 rounded-ctrl text-xs overflow-auto">
-                    {JSON.stringify(drawerStep.pluginResult, null, 2)}
                   </pre>
                 )}
               </>

@@ -4,6 +4,9 @@ export type {
   StepCondition,
   WorkflowRunResult,
   ExecutionResult,
+  StepKindDefinition,
+  WorkflowEventParent,
+  WorkflowIterationChildResultSummary,
 } from '@monai-devops/core-engine';
 
 export interface SerializedError {
@@ -23,7 +26,7 @@ export interface ExecutionResultSerialized {
     code?: string;
   };
   error?: SerializedError;
-  failureKind?: 'plugin' | 'resource' | 'internal' | 'config_resolution';
+  failureKind?: 'plugin' | 'resource' | 'internal' | 'config_resolution' | 'subworkflow_failed';
   skipReason?:
     | 'condition_not_met'
     | 'dependency_failed'
@@ -37,18 +40,33 @@ export interface WorkflowRunResultSerialized {
   status: 'success' | 'failed' | 'cancelled';
   workflowId: string;
   results: ExecutionResultSerialized[];
+  state?: unknown;
 }
+
+export type SerializedWorkflowStep = {
+  id: string;
+  name: string;
+  kind?: 'plugin' | 'set_state' | 'workflow';
+  plugin?: string;
+  config?: Record<string, unknown>;
+  patch?: Record<string, unknown>;
+  workflowRef?: { importId: string };
+  dependsOn?: string[];
+};
 
 export type SerializedWorkflowLifecycleEvent = {
   type: string;
   workflowRunId?: string;
   meta?: { workflowId: string; traceId?: string };
   workflow?: unknown;
-  step?: { id: string; name: string; plugin: string };
+  step?: SerializedWorkflowStep;
   result?: unknown;
   resourceType?: string;
   priority?: number;
   log?: { level?: string; message: string; data?: unknown; stream?: 'stdout' | 'stderr' };
+  parent?: import('@monai-devops/core-engine').WorkflowEventParent;
+  iteration?: number;
+  childResult?: import('@monai-devops/core-engine').WorkflowIterationChildResultSummary;
 };
 
 export type PluginDryRunSseMessage =
@@ -96,6 +114,26 @@ export interface RunRecord {
   result?: WorkflowRunResultSerialized;
   events: SerializedWorkflowLifecycleEvent[];
   cancelled?: 'best-effort' | 'hard';
+  parentRunId?: string;
+  source?: string;
+  metadata?: {
+    stepId?: string;
+    iteration?: number;
+    [key: string]: unknown;
+  };
+}
+
+export type WorkflowImportMode = 'reference' | 'copy';
+
+export interface WorkflowImportRecord {
+  id: string;
+  parentWorkflowId: string;
+  childWorkflowId: string;
+  stepId: string;
+  mode: WorkflowImportMode;
+  createdAt: string;
+  childWorkflowName?: string;
+  childWorkflowUpdatedAt?: string;
 }
 
 export interface PaginatedResponse<T> {

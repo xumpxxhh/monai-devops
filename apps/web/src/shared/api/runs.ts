@@ -15,13 +15,19 @@ export const runsApi = {
   get(runId: string) {
     return apiGet<RunRecord>(`/runs/${runId}`);
   },
-  submit(workflow: WorkflowDraft, options?: { priority?: number; traceId?: string }) {
+  submit(
+    workflow: WorkflowDraft,
+    options?: { priority?: number; traceId?: string; initialState?: unknown },
+  ) {
     return apiPost<{ runId: string; status: string }>('/runs', { workflow, ...options });
   },
   getEvents(runId: string) {
     return apiGet<{ runId: string; events: SerializedWorkflowLifecycleEvent[] }>(
       `/runs/${runId}/events`,
     );
+  },
+  listChildren(runId: string) {
+    return apiGet<{ runId: string; children: RunRecord[] }>(`/runs/${runId}/children`);
   },
   cancel(runId: string, options?: { mode?: 'best-effort' | 'hard' }) {
     return apiPost<{

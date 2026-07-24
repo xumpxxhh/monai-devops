@@ -10,16 +10,16 @@
 
 ### 核心能力
 
-| 视图                 | 路由                                     | 说明                                                                                     |
-| -------------------- | ---------------------------------------- | ---------------------------------------------------------------------------------------- |
-| **概览 Dashboard**   | `/`                                      | 平台健康度快照：进行中运行数、成功率、排队步骤、插件数；10s 自动刷新                     |
-| **工作流列表**       | `/workflows`                             | 搜索、创建、复制、删除、一键运行                                                         |
-| **工作流编排器**     | `/workflows/new` · `/workflows/:id/edit` | 三栏可视化 DAG 编辑（React Flow + dagre 自动布局）、环检测、插件配置表单、保存与触发运行 |
-| **运行列表**         | `/runs`                                  | 按状态 / 关键词筛选，进行中置顶，5s 轮询                                                 |
-| **运行详情** ★       | `/runs/:runId`                           | 实时 DAG 状态视图 + 事件/日志流 + 单步下钻；支持暂停 / 继续 / 取消                       |
-| **插件管理**         | `/plugins`                               | 已注册插件列表 + JSON Schema 配置表单 + 单步试运行（SSE 流式日志）                       |
-| **资源与调度**       | `/resources`                             | 资源池占用 + 按类型调度队列，解释「为什么排队」                                          |
-| **集成测试（遗留）** | `/test`                                  | 旧版 `test-devops` HTTP / WebSocket 冒烟页，保留用于联调                                 |
+| 视图                 | 路由                                     | 说明                                                                                                                           |
+| -------------------- | ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| **概览 Dashboard**   | `/`                                      | 平台健康度快照：进行中运行数、成功率、排队步骤、插件数；10s 自动刷新                                                           |
+| **工作流列表**       | `/workflows`                             | 搜索、创建、复制、删除、一键运行                                                                                               |
+| **工作流编排器**     | `/workflows/new` · `/workflows/:id/edit` | 三栏可视化 DAG；支持 `plugin` / `workflow` / `set_state`；导入子工作流；`stateSchema` 表单+JSON 双入口；环检测复用 core-engine |
+| **运行列表**         | `/runs`                                  | 按状态 / 关键词筛选，进行中置顶，5s 轮询                                                                                       |
+| **运行详情** ★       | `/runs/:runId`                           | 实时 DAG + 事件/日志；嵌套日志与迭代抽屉；支持暂停 / 继续 / 取消                                                               |
+| **插件管理**         | `/plugins`                               | 已注册插件列表 + JSON Schema 配置表单 + 单步试运行（SSE 流式日志）                                                             |
+| **资源与调度**       | `/resources`                             | 资源池占用 + 按类型调度队列，解释「为什么排队」                                                                                |
+| **集成测试（遗留）** | `/test`                                  | 旧版 `test-devops` HTTP / WebSocket 冒烟页，保留用于联调                                                                       |
 
 ### 当前实现特性（重要）
 
@@ -297,23 +297,27 @@ Token 定义于 `tailwind.config.js`，主要语义色：
 
 `WorkflowEditorPage` 为三栏布局：
 
-1. **左栏**：插件列表，拖拽或点击添加到画布
-2. **中栏**：React Flow 画布，支持连线（`dependsOn`）、自动 dagre 布局（LR / TB）、MiniMap
-3. **右栏**：选中步骤的属性编辑（名称、插件、优先级、条件、配置）
+1. **左栏**：插件 + 内置步骤（`GET /plugins` + `GET /step-kinds`），拖拽或点击添加到画布
+2. **中栏**：React Flow 画布，支持连线（`dependsOn`）、自动 dagre 布局（LR / TB）、MiniMap；`workflow` / `set_state` 节点样式区分于插件
+3. **右栏**：选中步骤的属性编辑（按 `kind` 分支；`workflow` 步骤从已导入列表选 `importId`，禁止裸填 `workflowId`）
+
+另有：**导入子工作流**（引用/拷贝）、「子工作流」二级表格（reference 只读查看，copy 可跳转编辑）、工作流级 **stateSchema** 编辑器（表单构建器 + JSON 手填）。
 
 保存前校验：
 
-- 前端 `validateDag`：步骤 id 唯一性、依赖存在性、环检测
-- `validateStepConfig` / `validateAllStepConfigs`：步骤配置字段校验
+- 前端复用 core-engine `validateDag`：步骤 id 唯一性、依赖存在性、环检测
+- `validateStepConfig` / `validateAllStepConfigs`：步骤配置字段校验；无 `stateSchema` 时拦截含 `set_state` 的草稿
 - 可调用后端 `POST /workflows/validate` 做服务端校验
 
 插件配置通过 `PluginConfigFormModal` 打开，基于 `GET /plugins/config-schemas` 预加载 JSON Schema。
 
 每个配置字段支持 **手填 / 引用上游** 二态切换：
 
-- 可引用上游 = 当前步骤的祖先步骤 ∩ 插件声明了 `resultSchema` 的步骤（`listResultSchemas` / `resultSchemaMap`）
+- 可引用上游 = 当前步骤的祖先步骤 ∩（插件声明了 `resultSchema` **或** 内置 kind 固定 schema）
 - 引用模式将字段值整体设为 `{ $ref: { fromStepId, path } }`（不支持字符串内混合插值）
 - 设计时校验对 `ContextRef` 跳过类型检查，仍计为已填；权威校验在保存时由服务端 `validateWorkflowContextReferences` 兜底
+
+运行详情：`run-state` 理解事件 `parent` 与 `workflow:iteration:*`，嵌套日志入父事件流，迭代抽屉展示 `nestedLogs`（不再依赖 `children` API / 独立子 run 页）。
 
 > 节点坐标**未持久化**到 workflow 定义；刷新后由 dagre 重新排布。
 
