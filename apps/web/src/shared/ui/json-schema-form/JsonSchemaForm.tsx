@@ -41,9 +41,8 @@ function renderLiteralField(
       label: String(item),
     }));
     return (
-      <Field key={key} label={showLabel ? label : undefined} htmlFor={fieldId} error={error}>
+      <Field key={key} id={fieldId} label={showLabel ? label : undefined} error={error}>
         <Select
-          id={fieldId}
           value={fieldValue !== undefined ? String(fieldValue) : ''}
           onValueChange={(next) => onChange({ ...value, [key]: next })}
           options={selectOptions}
@@ -55,9 +54,8 @@ function renderLiteralField(
 
   if (prop.type === 'boolean') {
     return (
-      <Field key={key} error={error} className="mb-3">
+      <Field key={key} id={fieldId} error={error} className="mb-3">
         <Checkbox
-          id={fieldId}
           checked={Boolean(fieldValue)}
           onCheckedChange={(checked) => onChange({ ...value, [key]: checked })}
           disabled={disabled}
@@ -69,9 +67,8 @@ function renderLiteralField(
 
   if (prop.type === 'number' || prop.type === 'integer') {
     return (
-      <Field key={key} label={showLabel ? label : undefined} htmlFor={fieldId} error={error}>
+      <Field key={key} id={fieldId} label={showLabel ? label : undefined} error={error}>
         <Input
-          id={fieldId}
           type="number"
           value={fieldValue !== undefined ? String(fieldValue) : ''}
           onChange={(e) => onChange({ ...value, [key]: e.target.value })}
@@ -82,9 +79,8 @@ function renderLiteralField(
   }
 
   return (
-    <Field key={key} label={showLabel ? label : undefined} htmlFor={fieldId} error={error}>
+    <Field key={key} id={fieldId} label={showLabel ? label : undefined} error={error}>
       <Input
-        id={fieldId}
         type={isSensitiveField(key) ? 'password' : 'text'}
         value={fieldValue !== undefined ? String(fieldValue) : ''}
         onChange={(e) => onChange({ ...value, [key]: e.target.value })}

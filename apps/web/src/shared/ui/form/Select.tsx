@@ -1,6 +1,7 @@
 import * as SelectPrimitive from '@radix-ui/react-select';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faChevronDown, faCheck } from '@fortawesome/free-solid-svg-icons';
+import { useFieldId } from './field-context';
 import { mergeClass, selectTriggerClass } from './form-styles';
 
 export interface SelectOption {
@@ -35,10 +36,12 @@ export function Select({
   id,
   'aria-label': ariaLabel,
 }: SelectProps) {
+  const fieldId = useFieldId();
+
   return (
     <SelectPrimitive.Root value={value} onValueChange={onValueChange} disabled={disabled}>
       <SelectPrimitive.Trigger
-        id={id}
+        id={id ?? fieldId}
         aria-label={ariaLabel}
         className={mergeClass(selectTriggerClass, className, triggerClassName)}
       >

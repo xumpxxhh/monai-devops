@@ -1,6 +1,7 @@
 import * as CheckboxPrimitive from '@radix-ui/react-checkbox';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faCheck } from '@fortawesome/free-solid-svg-icons';
+import { useFieldId } from './field-context';
 import { mergeClass } from './form-styles';
 
 export interface CheckboxProps {
@@ -20,9 +21,12 @@ export function Checkbox({
   label,
   className,
 }: CheckboxProps) {
+  const fieldId = useFieldId();
+  const resolvedId = id ?? fieldId;
+
   return (
     <label
-      htmlFor={id}
+      htmlFor={resolvedId}
       className={mergeClass(
         'inline-flex items-center gap-2 text-sm text-muted cursor-pointer select-none',
         disabled && 'cursor-not-allowed opacity-50',
@@ -30,7 +34,7 @@ export function Checkbox({
       )}
     >
       <CheckboxPrimitive.Root
-        id={id}
+        id={resolvedId}
         checked={checked}
         onCheckedChange={(v) => onCheckedChange?.(v === true)}
         disabled={disabled}

@@ -46,18 +46,11 @@ export function StepInspectorPanel({
       <h3 className="text-xs font-medium text-faint uppercase tracking-wider mb-3">步骤属性</h3>
       {selection ? (
         <>
-          <Field label="步骤 ID" htmlFor="step-id">
-            <Input
-              id="step-id"
-              mono
-              readOnly
-              value={selectedStepId ?? ''}
-              placeholder="保存后生成"
-            />
+          <Field label="步骤 ID">
+            <Input mono readOnly value={selectedStepId ?? ''} placeholder="保存后生成" />
           </Field>
-          <Field label="名称" htmlFor="step-name">
+          <Field label="名称">
             <Input
-              id="step-name"
               value={selection.data.label}
               onChange={(e) => onUpdate({ label: e.target.value })}
             />
@@ -68,8 +61,8 @@ export function StepInspectorPanel({
 
           {selection.data.kind === StepKinds.PLUGIN && (
             <>
-              <Field label="插件" htmlFor="step-plugin">
-                <Input id="step-plugin" mono readOnly value={selection.data.plugin ?? ''} />
+              <Field label="插件">
+                <Input mono readOnly value={selection.data.plugin ?? ''} />
               </Field>
               <Field label="配置">
                 <button

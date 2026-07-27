@@ -1,6 +1,5 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Field, Input, Select, Textarea, Checkbox } from '../../shared/ui/form';
-import { TabsBar } from '../../shared/ui/Tabs';
 import type { ConfigReferenceSource } from '../../shared/ui/json-schema-form/types';
 import { isContextRef } from '@monai-devops/core-engine';
 
@@ -401,10 +400,11 @@ export function StateSchemaEditor({
   value: Record<string, unknown> | undefined;
   onChange: (schema: Record<string, unknown> | undefined) => void;
 }) {
-  const [tab, setTab] = useState<'form' | 'json'>('form');
   const [fields, setFields] = useState(() => schemaToFields(value));
   const [jsonText, setJsonText] = useState(() => (value ? JSON.stringify(value, null, 2) : ''));
   const [jsonError, setJsonError] = useState('');
+  const fieldsListRef = useRef<HTMLDivElement>(null);
+  const scrollToBottomOnAddRef = useRef(false);
 
   const applyFields = (next: StateSchemaField[]) => {
     setFields(next);
@@ -414,31 +414,31 @@ export function StateSchemaEditor({
     setJsonError('');
   };
 
+  useEffect(() => {
+    if (!scrollToBottomOnAddRef.current) return;
+    scrollToBottomOnAddRef.current = false;
+    const el = fieldsListRef.current;
+    if (!el || el.scrollHeight <= el.clientHeight) return;
+    el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
+  }, [fields]);
+
+  const schema = fieldsToSchema(fields);
+  const hasValidFields = schema !== undefined;
+
   return (
-    <div className="space-y-3">
-      <TabsBar
-        items={[
-          { value: 'form', label: '表单' },
-          { value: 'json', label: 'JSON' },
-        ]}
-        value={tab}
-        onValueChange={(v) => {
-          const next = v as 'form' | 'json';
-          if (next === 'form' && tab === 'json') {
-            setFields(schemaToFields(value));
-          }
-          if (next === 'json' && tab === 'form') {
-            const schema = fieldsToSchema(fields);
-            setJsonText(schema ? JSON.stringify(schema, null, 2) : '');
-          }
-          setTab(next);
-        }}
-      />
-      {tab === 'form' ? (
-        <div className="space-y-2">
+    <div className={hasValidFields ? 'grid grid-cols-1 gap-3 md:grid-cols-2' : 'space-y-2'}>
+      <div className="flex flex-col min-h-0 max-h-[60vh] space-y-2 py-2">
+        <div className="flex items-start justify-between gap-2">
+          <p className="text-xs font-medium text-muted">字段</p>
+          <p className="text-xs text-faint mt-0.5 text-right">
+            不添加字段 = 本工作流无 stateSchema。
+          </p>
+        </div>
+
+        <div ref={fieldsListRef} className="flex flex-col gap-2 flex-1 overflow-y-auto py-2">
           {fields.map((field, index) => (
             <div key={index} className="rounded-ctrl border border-line p-2 space-y-2">
-              <Field label="字段名">
+              <Field label="字段名" className="mb-0">
                 <Input
                   value={field.name}
                   onChange={(e) => {
@@ -448,7 +448,7 @@ export function StateSchemaEditor({
                   }}
                 />
               </Field>
-              <Field label="类型">
+              <Field label="类型" className="mb-0">
                 <Select
                   value={field.type}
                   onValueChange={(type) => {
@@ -465,64 +465,79 @@ export function StateSchemaEditor({
                   ]}
                 />
               </Field>
-              <Checkbox
-                id={`state-req-${index}`}
-                checked={field.required}
-                label="必填"
-                onCheckedChange={(required) => {
-                  const next = [...fields];
-                  next[index] = { ...field, required };
-                  applyFields(next);
-                }}
-              />
-              <button
-                type="button"
-                className="text-xs text-failed hover:underline"
-                onClick={() => applyFields(fields.filter((_, i) => i !== index))}
-              >
-                删除
-              </button>
+              <div className="flex h-5 items-center justify-between">
+                <Checkbox
+                  id={`state-req-${index}`}
+                  checked={field.required}
+                  label="必填"
+                  className="leading-none"
+                  onCheckedChange={(required) => {
+                    const next = [...fields];
+                    next[index] = { ...field, required };
+                    applyFields(next);
+                  }}
+                />
+                <button
+                  type="button"
+                  className="h-5 px-2 text-xs leading-none text-failed hover:opacity-80"
+                  onClick={() => applyFields(fields.filter((_, i) => i !== index))}
+                >
+                  删除
+                </button>
+              </div>
             </div>
           ))}
-          <button
-            type="button"
-            className="w-full h-8 rounded-ctrl border border-line text-xs hover:bg-raised"
-            onClick={() => applyFields([...fields, { name: '', type: 'string', required: false }])}
-          >
-            添加字段
-          </button>
-          <p className="text-xs text-faint">不添加字段 = 本工作流无 stateSchema。</p>
         </div>
-      ) : (
-        <Field label="JSON Schema" error={jsonError || undefined}>
-          <Textarea
-            rows={10}
-            value={jsonText}
-            placeholder='{ "type": "object", "properties": {} }'
-            onChange={(e) => {
-              const raw = e.target.value;
-              setJsonText(raw);
-              if (!raw.trim()) {
-                setJsonError('');
-                onChange(undefined);
-                setFields([]);
-                return;
-              }
-              try {
-                const parsed = JSON.parse(raw) as Record<string, unknown>;
-                if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
-                  setJsonError('须为 JSON 对象');
+        <button
+          type="button"
+          className="w-full h-8 rounded-ctrl border border-line text-xs hover:bg-raised"
+          onClick={() => {
+            scrollToBottomOnAddRef.current = true;
+            applyFields([...fields, { name: '', type: 'string', required: false }]);
+          }}
+        >
+          添加字段
+        </button>
+      </div>
+
+      {hasValidFields && (
+        <div className="min-h-0 max-h-[60vh] py-2 [overflow-anchor:none]">
+          <Field
+            label="JSON Schema"
+            className="mb-0 h-full flex flex-col"
+            error={jsonError || undefined}
+          >
+            <Textarea
+              rows={12}
+              mono
+              className="min-h-[12rem] resize-none flex-1"
+              value={jsonText}
+              placeholder='{ "type": "object", "properties": {} }'
+              onChange={(e) => {
+                const raw = e.target.value;
+                setJsonText(raw);
+                if (!raw.trim()) {
+                  setJsonError('');
+                  onChange(undefined);
+                  setFields([]);
                   return;
                 }
-                setJsonError('');
-                onChange(parsed);
-                setFields(schemaToFields(parsed));
-              } catch {
-                setJsonError('JSON 无效');
-              }
-            }}
-          />
-        </Field>
+                try {
+                  const parsed = JSON.parse(raw) as Record<string, unknown>;
+                  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+                    setJsonError('须为 JSON 对象');
+                    return;
+                  }
+                  setJsonError('');
+                  onChange(parsed);
+                  setFields(schemaToFields(parsed));
+                } catch {
+                  setJsonError('JSON 无效');
+                }
+              }}
+            />
+          </Field>
+        </div>
       )}
     </div>
   );
