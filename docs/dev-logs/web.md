@@ -1,5 +1,10 @@
 # apps/web 开发日志
 
+## 2026-07-27
+
+- **变更**：新增 CodeMirror 6 代码编辑器基础组件（`CodeEditor` + `language` 注册表），支持 json/plain 语法高亮与 JSON lint，对齐 Field 表单与 Control Room 主题；Test 页附演示区
+- **文件**：`src/shared/ui/code-editor/*`, `src/pages/Test.tsx`, `package.json`
+
 ## 2026-07-24
 
 - **变更**：README 同步可组合编辑器与运行详情嵌套日志能力
