@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Field, Input, Select, Textarea, Checkbox } from '../../shared/ui/form';
+import { CodeEditor } from '../../shared/ui/code-editor';
 import type { ConfigReferenceSource } from '../../shared/ui/json-schema-form/types';
 import { isContextRef } from '@monai-devops/core-engine';
 
@@ -507,14 +508,14 @@ export function StateSchemaEditor({
             className="mb-0 h-full flex flex-col"
             error={jsonError || undefined}
           >
-            <Textarea
-              rows={12}
-              mono
-              className="min-h-[12rem] resize-none flex-1"
+            <CodeEditor
+              language="json"
               value={jsonText}
+              lint={Boolean(jsonText.trim())}
+              minHeight="12rem"
+              className="min-h-[12rem] flex-1"
               placeholder='{ "type": "object", "properties": {} }'
-              onChange={(e) => {
-                const raw = e.target.value;
+              onChange={(raw) => {
                 setJsonText(raw);
                 if (!raw.trim()) {
                   setJsonError('');

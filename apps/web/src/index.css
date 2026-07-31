@@ -181,6 +181,79 @@ samp,
   }
 }
 
+@keyframes overlay-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@keyframes overlay-out {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+[data-state='open'].overlay-in {
+  animation: overlay-in 0.18s ease-out;
+}
+[data-state='closed'].overlay-out {
+  animation: overlay-out 0.18s ease-in forwards;
+}
+
+@keyframes modal-content-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -48%) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1);
+  }
+}
+@keyframes modal-content-out {
+  from {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: translate(-50%, -48%) scale(0.96);
+  }
+}
+[data-state='open'].modal-content-in {
+  animation: modal-content-in 0.2s ease-out;
+}
+[data-state='closed'].modal-content-out {
+  animation: modal-content-out 0.2s ease-in forwards;
+}
+
+@keyframes drawer-content-in {
+  from {
+    transform: translateX(100%);
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+@keyframes drawer-content-out {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(100%);
+  }
+}
+[data-state='open'].drawer-content-in {
+  animation: drawer-content-in 0.22s ease-out;
+}
+[data-state='closed'].drawer-content-out {
+  animation: drawer-content-out 0.22s ease-in forwards;
+}
+
 .log-line {
   padding: 2px 0;
   font-size: 0.75rem;
