@@ -21,7 +21,7 @@ export function PluginConfigFormModal({
   referenceSources,
 }: PluginConfigFormModalProps) {
   const { schema, loading, loadError, formValue, setFormValue, fieldErrors, validate, ready } =
-    usePluginConfigSchema(pluginName, { enabled: open, initialValue: value });
+    usePluginConfigSchema(pluginName, { enabled: open, initialValue: value, referenceSources });
 
   const handleConfirm = () => {
     const result = validate();

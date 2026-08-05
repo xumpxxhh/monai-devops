@@ -134,6 +134,8 @@ export interface WorkflowImportRecord {
   createdAt: string;
   childWorkflowName?: string;
   childWorkflowUpdatedAt?: string;
+  /** 子工作流 definition.stateSchema（有则返回，供父侧配置 inputState） */
+  childStateSchema?: Record<string, unknown>;
 }
 
 export interface PaginatedResponse<T> {
