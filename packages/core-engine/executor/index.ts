@@ -116,12 +116,18 @@ export {
   StepKinds,
 } from './types.js';
 
-export type { ContextRef, ValidateWorkflowContextReferencesOptions } from './context-reference.js';
+export type {
+  ContextRef,
+  ResolveConfigReferencesOptions,
+  ValidateWorkflowContextReferencesOptions,
+} from './context-reference.js';
 export {
+  WORKFLOW_STATE_REF_ID,
   extractContextReferences,
   getAncestorIds,
   getValueByPath,
   isContextRef,
+  isWorkflowStateRef,
   resolveConfigReferences,
   resolveStepResultSchema,
   validateWorkflowContextReferences,
@@ -672,7 +678,7 @@ export function createWorkflowExecutor(options: ExecutorOptions = {}) {
         );
       }
 
-      return await executePluginStep(workflowRunId, step, context, meta, signal, handle);
+      return await executePluginStep(workflowRunId, step, context, meta, signal, handle, runtime);
     } catch (error) {
       if (error instanceof PluginCancelledError) {
         const executionResult = buildSkippedResult(step.id, resolveInFlightAbortSkipReason(handle));
@@ -743,6 +749,7 @@ export function createWorkflowExecutor(options: ExecutorOptions = {}) {
       step.patch,
       context.previousResultsData ?? {},
       step.id,
+      { runState: runState.current },
     );
 
     if (
@@ -844,7 +851,7 @@ export function createWorkflowExecutor(options: ExecutorOptions = {}) {
     const iterations: Array<{ index: number; state?: unknown; success: boolean }> = [];
     let lastSuccess = true;
     let lastState: unknown;
-    let stateIn = resolveInputState(step, context);
+    let stateIn = resolveInputState(step, context, runtime);
 
     let activeChildRunId: string | undefined;
     const unsubscribers: Array<() => void> = [];
@@ -1076,9 +1083,15 @@ export function createWorkflowExecutor(options: ExecutorOptions = {}) {
     return executionResult;
   }
 
-  function resolveInputState(step: WorkflowRefStep, context: ExecutionContext): unknown {
+  function resolveInputState(
+    step: WorkflowRefStep,
+    context: ExecutionContext,
+    runtime: StepRuntime,
+  ): unknown {
     if (step.inputState === undefined) return undefined;
-    return resolveConfigReferences(step.inputState, context.previousResultsData ?? {}, step.id);
+    return resolveConfigReferences(step.inputState, context.previousResultsData ?? {}, step.id, {
+      runState: runtime.runState?.current,
+    });
   }
 
   async function executePluginStep(
@@ -1088,6 +1101,7 @@ export function createWorkflowExecutor(options: ExecutorOptions = {}) {
     meta: WorkflowRunMeta | undefined,
     signal: AbortSignal | undefined,
     handle: RunHandle | undefined,
+    runtime: StepRuntime,
   ): Promise<ExecutionResult> {
     if (!isPluginStep(step)) {
       return finalizeFailure(
@@ -1140,6 +1154,7 @@ export function createWorkflowExecutor(options: ExecutorOptions = {}) {
         step.config,
         context.previousResultsData ?? {},
         step.id,
+        { runState: runtime.runState?.current },
       ) as typeof step.config;
 
       const raced = await racePluginWithInFlightAbort(

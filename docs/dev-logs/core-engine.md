@@ -1,5 +1,10 @@
 # @monai-devops/core-engine 开发日志
 
+## 2026-08-05
+
+- **变更**：新增 `WORKFLOW_STATE_REF_ID` 工作流 state 引用机制 — `resolveConfigReferences` 支持 `runState` 解析、`validateWorkflowContextReferences` 校验 `stateSchema` 声明、`isWorkflowStateRef` 检测哨兵值
+- **文件**：`executor/context-reference.ts`, `executor/index.ts`, `__tests__/context-reference.test.ts`
+
 ## 2026-07-24
 
 - **变更**：工作流可组合化内核（阶段 1-3）：WorkflowStep 判别联合（Plugin/SetState/WorkflowRef）、stateSchema → Zod 强校验、workflow 步骤单次/循环执行、内置步骤清单、子 runId 派生、嵌套校验（引用环/深度/循环嵌循环）、RunHandle pause/resume/cancel 订阅与级联、observer parent 字段 + WORKFLOW_ITERATION 事件
