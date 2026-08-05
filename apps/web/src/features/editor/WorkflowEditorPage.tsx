@@ -4,6 +4,7 @@ import {
   useCallback,
   useEffect,
   useImperativeHandle,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -36,6 +37,7 @@ import {
   isSetStateStep,
   isWorkflowRefStep,
   StepKinds,
+  WORKFLOW_STATE_REF_ID,
   type StepKind,
   type StepKindDefinition,
   type WorkflowDefinition,
@@ -359,6 +361,15 @@ const WorkflowFlow = forwardRef<
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
   const [validationErrors, setValidationErrors] = useState<string[]>([]);
   const topologyKeyRef = useRef('');
+  // Parent setState must not run inside setNodes updaters (those run during render).
+  const pendingSelectionRef = useRef<SelectionSnapshot | null | undefined>(undefined);
+
+  useLayoutEffect(() => {
+    if (pendingSelectionRef.current === undefined) return;
+    const next = pendingSelectionRef.current;
+    pendingSelectionRef.current = undefined;
+    onSelectionSnapshot(next);
+  });
 
   const publishTopology = useCallback(
     (nextNodes: Node<StepNodeData>[], nextEdges: Edge[]) => {
@@ -445,14 +456,11 @@ const WorkflowFlow = forwardRef<
           position: { x: 120 + count * 40, y: 200 },
           data,
         };
-        setNodes((nds) => {
-          const next = [
-            ...nds.map((n) => ({ ...n, selected: false })),
-            { ...newNode, selected: true },
-          ];
-          onSelectionSnapshot({ id: newNode.id, data: newNode.data });
-          return next;
-        });
+        setNodes((nds) => [
+          ...nds.map((n) => ({ ...n, selected: false })),
+          { ...newNode, selected: true },
+        ]);
+        pendingSelectionRef.current = { id: newNode.id, data: newNode.data };
       },
       updateNodeData: (nodeId, patch) => {
         setNodes((nds) => {
@@ -468,7 +476,7 @@ const WorkflowFlow = forwardRef<
           });
           const selected = next.find((n) => n.id === nodeId);
           if (selected?.selected) {
-            onSelectionSnapshot({ id: selected.id, data: selected.data });
+            pendingSelectionRef.current = { id: selected.id, data: selected.data };
           }
           return next;
         });
@@ -477,7 +485,7 @@ const WorkflowFlow = forwardRef<
         setNodes((nds) => {
           const next = nds.map((n) => ({ ...n, selected: n.id === nodeId }));
           const selected = next.find((n) => n.id === nodeId) ?? null;
-          onSelectionSnapshot(selected ? { id: selected.id, data: selected.data } : null);
+          pendingSelectionRef.current = selected ? { id: selected.id, data: selected.data } : null;
           return next;
         });
       },
@@ -679,6 +687,14 @@ export default function WorkflowEditorPage() {
     const currentId = selection.data.stepId ?? selection.data.clientRef ?? selection.id;
     const ancestors = getAncestorIds(currentId, topology.steps);
     const sources: ConfigReferenceSource[] = [];
+    if (stateSchema) {
+      sources.push({
+        stepId: WORKFLOW_STATE_REF_ID,
+        label: '工作流 State',
+        plugin: 'state',
+        resultSchema: stateSchema as JsonObjectSchema,
+      });
+    }
     for (const step of topology.steps) {
       if (!ancestors.has(step.id)) continue;
       const key = resultSchemaKeyForStep(step);
@@ -693,7 +709,7 @@ export default function WorkflowEditorPage() {
       });
     }
     return sources;
-  }, [selection, topology.steps, resultSchemaMap]);
+  }, [selection, topology.steps, resultSchemaMap, stateSchema]);
 
   const updateSelected = (patch: Partial<StepNodeData>) => {
     if (!selection) return;
@@ -811,6 +827,13 @@ export default function WorkflowEditorPage() {
       if (refs.length === 0) continue;
       const ancestors = getAncestorIds(step.id, topology.steps);
       for (const ref of refs) {
+        if (ref.$ref.fromStepId === WORKFLOW_STATE_REF_ID) {
+          if (!stateSchema) {
+            toast.error(`步骤「${step.label}」引用了工作流 State，但未声明 stateSchema`);
+            return false;
+          }
+          continue;
+        }
         if (!ancestors.has(ref.$ref.fromStepId)) {
           toast.error(`步骤「${step.label}」引用了非祖先步骤 ${ref.$ref.fromStepId}`);
           return false;
@@ -984,6 +1007,7 @@ export default function WorkflowEditorPage() {
     id: row.id,
     label: row.childWorkflowName ?? row.childWorkflowId,
     mode: row.mode,
+    childStateSchema: row.childStateSchema,
   }));
   const selectedImport = selection?.data.workflowRef?.importId
     ? importOptions.find((row) => row.id === selection.data.workflowRef?.importId)
@@ -1074,6 +1098,7 @@ export default function WorkflowEditorPage() {
           configModalOpen={configModalOpen}
           onConfigModalOpenChange={setConfigModalOpen}
           referenceSources={selectedReferenceSources}
+          stateSchema={stateSchema}
           onUpdate={updateSelected}
         />
       </div>

@@ -31,14 +31,21 @@ export function StepInspectorPanel({
   configModalOpen,
   onConfigModalOpenChange,
   referenceSources,
+  stateSchema,
   onUpdate,
 }: {
   selection: StepInspectorSelection | null;
   selectedStepId?: string;
-  selectedImport?: { id: string; label: string; mode: string };
+  selectedImport?: {
+    id: string;
+    label: string;
+    mode: string;
+    childStateSchema?: Record<string, unknown>;
+  };
   configModalOpen: boolean;
   onConfigModalOpenChange: (open: boolean) => void;
   referenceSources: ConfigReferenceSource[];
+  stateSchema: Record<string, unknown> | undefined;
   onUpdate: (patch: Partial<StepInspectorSelection['data']>) => void;
 }) {
   return (
@@ -93,6 +100,7 @@ export function StepInspectorPanel({
               patch={selection.data.patch}
               onChange={(patch) => onUpdate({ patch })}
               referenceSources={referenceSources}
+              stateSchema={stateSchema}
             />
           )}
 
@@ -103,6 +111,8 @@ export function StepInspectorPanel({
               importMode={selectedImport?.mode ?? ''}
               inputState={selection.data.inputState}
               loop={selection.data.loop}
+              childStateSchema={selectedImport?.childStateSchema}
+              referenceSources={referenceSources}
               onChange={(patch) => onUpdate(patch)}
             />
           )}
