@@ -279,7 +279,7 @@ Run 的 `events[]` 与 WS 回放共享同一缓冲逻辑：
 - `mode: "reference"`：指向公开源工作流，实时解析最新定义
 - `mode: "copy"`：新建私有 `Workflow`（`ownerWorkflowId` = 父 id，名称带 `__copy__` 后缀）+ 对应 `WorkflowImport`
 
-**GET /workflows/:id/imports** 响应：导入记录列表（含 `importId`、`mode`、`childWorkflowId`、子工作流名称等）。
+**GET /workflows/:id/imports** 响应：导入记录列表（含 `importId`、`mode`、`childWorkflowId`、子工作流名称、可选 `childStateSchema` 等）。
 
 **GET /step-kinds** 响应：内置步骤定义数组（`kind` / `label` / `description` / `configSchema`）。
 

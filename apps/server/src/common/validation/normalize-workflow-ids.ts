@@ -3,6 +3,7 @@ import {
   getStepKind,
   isContextRef,
   StepKinds,
+  WORKFLOW_STATE_REF_ID,
   type WorkflowDefinition,
   type WorkflowStep,
 } from '@monai-devops/core-engine';
@@ -88,6 +89,9 @@ function remapContextReferences(
 ): unknown {
   if (isContextRef(value)) {
     const { fromStepId, path } = value.$ref;
+    if (fromStepId === WORKFLOW_STATE_REF_ID) {
+      return { $ref: { fromStepId: WORKFLOW_STATE_REF_ID, path } };
+    }
     const resolved = refMap.get(fromStepId);
     if (!resolved) {
       throw new WorkflowValidationError(

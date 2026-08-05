@@ -25,11 +25,23 @@ function toWorkflowRecord(row: PrismaWorkflow): WorkflowRecord {
   };
 }
 
+function extractChildStateSchema(definition: unknown): Record<string, unknown> | undefined {
+  if (!definition || typeof definition !== 'object' || Array.isArray(definition)) {
+    return undefined;
+  }
+  const schema = (definition as { stateSchema?: unknown }).stateSchema;
+  if (!schema || typeof schema !== 'object' || Array.isArray(schema)) {
+    return undefined;
+  }
+  return schema as Record<string, unknown>;
+}
+
 function toImportRecord(
   row: PrismaWorkflowImport & {
-    childWorkflow?: Pick<PrismaWorkflow, 'name' | 'updatedAt'>;
+    childWorkflow?: Pick<PrismaWorkflow, 'name' | 'updatedAt' | 'definition'>;
   },
 ): WorkflowImportRecord {
+  const childStateSchema = extractChildStateSchema(row.childWorkflow?.definition);
   return {
     id: row.id,
     parentWorkflowId: row.parentWorkflowId,
@@ -39,6 +51,7 @@ function toImportRecord(
     createdAt: row.createdAt,
     childWorkflowName: row.childWorkflow?.name,
     childWorkflowUpdatedAt: row.childWorkflow?.updatedAt,
+    ...(childStateSchema ? { childStateSchema } : {}),
   };
 }
 
@@ -137,7 +150,7 @@ export class PrismaWorkflowRepository implements WorkflowRepository {
   async listImports(parentWorkflowId: string): Promise<WorkflowImportRecord[]> {
     const rows = await this.prisma.workflowImport.findMany({
       where: { parentWorkflowId },
-      include: { childWorkflow: { select: { name: true, updatedAt: true } } },
+      include: { childWorkflow: { select: { name: true, updatedAt: true, definition: true } } },
       orderBy: { createdAt: 'asc' },
     });
     return rows.map(toImportRecord);
@@ -146,7 +159,7 @@ export class PrismaWorkflowRepository implements WorkflowRepository {
   async findImportById(importId: string): Promise<WorkflowImportRecord | undefined> {
     const row = await this.prisma.workflowImport.findUnique({
       where: { id: importId },
-      include: { childWorkflow: { select: { name: true, updatedAt: true } } },
+      include: { childWorkflow: { select: { name: true, updatedAt: true, definition: true } } },
     });
     return row ? toImportRecord(row) : undefined;
   }
@@ -161,7 +174,7 @@ export class PrismaWorkflowRepository implements WorkflowRepository {
         mode: record.mode,
         createdAt: record.createdAt,
       },
-      include: { childWorkflow: { select: { name: true, updatedAt: true } } },
+      include: { childWorkflow: { select: { name: true, updatedAt: true, definition: true } } },
     });
     return toImportRecord(row);
   }

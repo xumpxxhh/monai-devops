@@ -1,4 +1,4 @@
-import { isPluginStep } from '@monai-devops/core-engine';
+import { isPluginStep, WORKFLOW_STATE_REF_ID } from '@monai-devops/core-engine';
 import { normalizeWorkflowIds } from './normalize-workflow-ids.js';
 
 describe('normalizeWorkflowIds', () => {
@@ -168,6 +168,35 @@ describe('normalizeWorkflowIds', () => {
     if (isPluginStep(stepB)) {
       expect(stepB.config).toEqual({
         type: { $ref: { fromStepId: stepA.id, path: ['type'] } },
+      });
+    }
+  });
+
+  it('preserves WORKFLOW_STATE_REF_ID ContextRef without remapping', () => {
+    const result = normalizeWorkflowIds({
+      name: 'StateRef',
+      stateSchema: {
+        type: 'object',
+        properties: { count: { type: 'number' } },
+        additionalProperties: false,
+      },
+      steps: [
+        {
+          clientRef: 'reader',
+          name: 'Reader',
+          plugin: 'test-plugin',
+          config: {
+            n: { $ref: { fromStepId: WORKFLOW_STATE_REF_ID, path: ['count'] } },
+          },
+        },
+      ],
+    });
+
+    const reader = result.steps.find((s) => s.name === 'Reader')!;
+    expect(isPluginStep(reader)).toBe(true);
+    if (isPluginStep(reader)) {
+      expect(reader.config).toEqual({
+        n: { $ref: { fromStepId: WORKFLOW_STATE_REF_ID, path: ['count'] } },
       });
     }
   });

@@ -1,5 +1,10 @@
 # apps/server 开发日志
 
+## 2026-08-05
+
+- **变更**：`WorkflowImportRecord` 新增 `childStateSchema` 透传子工作流 stateSchema；`normalize-workflow-ids` 保留 `WORKFLOW_STATE_REF_ID` 不重映射
+- **文件**：`workflows/prisma-workflow.repository.ts`, `workflows/workflows.repository.ts`, `common/validation/normalize-workflow-ids.ts`, `common/validation/normalize-workflow-ids.spec.ts`
+
 ## 2026-07-24
 
 - **变更**：工作流可组合化服务端（阶段 4）：Prisma 新增 WorkflowImport / ownerWorkflowId / parentRunId、resolveWorkflow(importId) 两跳查库注入、POST/GET /imports（copy 建私有 Workflow）、GET /step-kinds、initialState Zod 强校验、validate 复用 core-engine 并接入新校验、normalize-workflow-ids 适配 importId、DELETE 应用层预检 409

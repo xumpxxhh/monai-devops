@@ -21,6 +21,8 @@ export interface WorkflowImportRecord {
   createdAt: Date;
   childWorkflowName?: string;
   childWorkflowUpdatedAt?: Date;
+  /** 子工作流 definition.stateSchema（有则返回，供父侧配置 inputState） */
+  childStateSchema?: Record<string, unknown>;
 }
 
 export interface WorkflowListFilter {
