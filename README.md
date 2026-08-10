@@ -1,64 +1,91 @@
 # monai-devops
 
-MONAI DevOps 是一个基于 **插件化工作流编排** 的 DevOps 平台。内核负责 DAG 执行、任务调度、资源池管理与可观测性；业务逻辑以插件形式扩展，通过 NestJS 服务端与 React 前端提供 HTTP / WebSocket 集成与调试界面。
+插件化工作流编排平台：用可视化 DAG 编排步骤、按资源槽位调度执行，并通过 HTTP / WebSocket 实时观察运行过程。
 
-## 特性
-
-- **DAG 工作流**：基于 `dependsOn` 的有向无环图，支持并行步骤、条件跳过、failFast
-- **插件体系**：契约由 `@monai-devops/plugin-sdk` 定义，内核 `@monai-devops/core-engine` 只依赖 SDK、不反向耦合
-- **资源调度**：按 `resourceType` 维护独立队列，资源不足时挂起等待而非立即失败
-- **可观测性**：`WorkflowObserver` 推送 `workflow:*`、`step:*`、`plugin:log` 等结构化生命周期事件
-- **Monorepo**：pnpm workspace + Turborepo，packages / apps / plugins 分层清晰
+业务能力以独立插件包实现；编排内核与插件契约分离；NestJS 服务负责持久化与 API；React 控制台负责设计与运维。
 
 ## 架构
 
-```mermaid
-flowchart TB
-  subgraph apps [应用层]
-    WEB[apps/web<br/>React + Vite]
-    SRV[apps/server<br/>NestJS]
-  end
-
-  subgraph packages [核心包]
-    CE["@monai-devops/core-engine"]
-    SDK["@monai-devops/plugin-sdk"]
-  end
-
-  subgraph plugins [插件]
-    TP[test-plugin]
-  end
-
-  WEB -->|HTTP / WebSocket| SRV
-  SRV --> CE
-  CE --> SDK
-  TP --> SDK
-  SRV --> TP
-  CE -->|pluginExecutor| TP
+```
+┌─────────────────────────────────────────────────────────────┐
+│  apps/web              控制台：编辑器 / 运行详情 / 插件试运行 │
+└───────────────────────────┬─────────────────────────────────┘
+                            │ REST · SSE · WebSocket
+┌───────────────────────────▼─────────────────────────────────┐
+│  apps/server           NestJS：工作流 / Run / 插件 / 资源 API │
+│                        Prisma + PostgreSQL                   │
+└───────────────────────────┬─────────────────────────────────┘
+                            │ createEngine
+┌───────────────────────────▼─────────────────────────────────┐
+│  packages/core-engine  DAG 调度 · 资源池 · Run 控制 · 事件   │
+└───────────────────────────▼─────────────────────────────────┐
+│  packages/plugin-sdk   createPlugin · config/result schema · 取消 │
+└───────────────────────────▼─────────────────────────────────┐
+│  plugins/*             业务插件（只依赖 plugin-sdk）          │
+└─────────────────────────────────────────────────────────────┘
 ```
 
-**依赖方向**：`apps/*` → `core-engine` → `plugin-sdk`；插件实现只需依赖 SDK。
+**依赖方向（勿逆向）：**
+
+| 包 | 可依赖 |
+|---|---|
+| `plugins/*` | `plugin-sdk`（及自身业务依赖） |
+| `core-engine` | `plugin-sdk` |
+| `apps/server` | `core-engine` + 已注册插件 |
+| `apps/web` | `core-engine`（类型与纯函数；执行走 server） |
 
 ## 仓库结构
 
 ```
 monai-devops/
 ├── apps/
-│   ├── server/          # NestJS 后端：工作流 HTTP / WebSocket API
-│   └── web/             # React 前端：集成测试与实时日志页面
+│   ├── server/          # NestJS API + WebSocket + Prisma
+│   └── web/             # React + Vite 控制台
 ├── packages/
-│   ├── core-engine/     # 工作流编排内核（详见 packages/core-engine/README.md）
+│   ├── core-engine/     # 工作流编排内核
 │   └── plugin-sdk/      # 插件契约与辅助工具
-├── plugins/
-│   └── test-plugin/     # 示例插件（单元 / 集成 / E2E 测试模拟）
-├── docs/plans/          # 设计规划文档
-├── pnpm-workspace.yaml
-└── turbo.json
+├── plugins/             # 工作区插件包
+├── docs/                # 设计稿、计划、开发日志、接口清单
+├── scripts/             # create-plugin / sync-plugin-registry
+├── docker/              # Postgres 初始化（含测试库）
+└── docker-compose.yml
 ```
+
+### 包文档
+
+| 路径 | 说明 |
+|---|---|
+| [apps/server/README.md](./apps/server/README.md) | 后端启动、环境变量、API / WS、数据模型 |
+| [apps/web/README.md](./apps/web/README.md) | 前端路由、编辑器、实时订阅、环境变量 |
+| [packages/core-engine/README.md](./packages/core-engine/README.md) | 引擎：步骤形态、DAG、资源、取消/暂停、嵌套工作流 |
+| [packages/plugin-sdk/README.md](./packages/plugin-sdk/README.md) | 插件契约、`createPlugin`、协作取消、日志 |
+| [plugins/README.md](./plugins/README.md) | 插件开发指南（脚手架、注册、调试） |
+| [docs/dev-logs/api-list.md](./docs/dev-logs/api-list.md) | 服务端接口清单（非 changelog） |
+
+### 当前内置插件
+
+由 `apps/server/plugins.config.json` 启用，构建前经 `pnpm sync:plugins` 写入注册表：
+
+| 包名 | 用途 |
+|---|---|
+| `test-plugin` | 可中断的示例测试步骤 |
+| `print-plugin` | 打印 / 日志输出 |
+| `muti-result-plugin` | 多层嵌套结果（便于 `$ref` 演示） |
+| `model-call-plugin` | 大模型调用 |
+| `embedding-plugin` | Embedding 调用 |
+
+部分插件依赖外部环境变量（如 `OPENAI_API_KEY`、`EMBEDDING_API_KEY`）；Turbo 已配置透传。
+
+---
 
 ## 环境要求
 
-- **Node.js** ≥ 20
-- **pnpm** 10.x（见根目录 `packageManager` 字段）
+- **Node.js** `>= 20`
+- **pnpm** `10.18.2`（见 `packageManager`）
+- **Docker**（可选，用于本地 PostgreSQL）
+- **PostgreSQL 16**（或使用下方 compose）
+
+---
 
 ## 快速开始
 
@@ -68,166 +95,125 @@ monai-devops/
 pnpm install
 ```
 
-安装后会通过 `prepare` 自动启用 Git `pre-commit` hook：提交前对暂存文件跑 ESLint 与 Prettier 检查（不自动修复）。检查失败时请先本地修好再提交，可用 `pnpm lint:fix` / `pnpm format`。
-
-### 2. 配置环境变量
-
-**服务端**（在 `apps/server/` 下创建 `.env` 或 `.env.local`）：
-
-| 变量                | 必填 | 说明                  | 示例            |
-| ------------------- | ---- | --------------------- | --------------- |
-| `GLOBAL_API_PREFIX` | 是   | 全局 API 前缀         | `api/v1/devops` |
-| `PORT`              | 否   | 监听端口，默认 `3000` | `3000`          |
-
-**前端**（在 `apps/web/` 下创建 `.env` 或 `.env.local`，变量前缀为 `DEVOPS_`）：
-
-| 变量                  | 必填               | 说明                            | 示例                                  |
-| --------------------- | ------------------ | ------------------------------- | ------------------------------------- |
-| `DEVOPS_API_BASE_URL` | WebSocket 测试必填 | 后端 API 基地址（含前缀）       | `http://localhost:3000/api/v1/devops` |
-| `DEVOPS_BASE_PATH`    | 否                 | React Router basename，默认 `/` | `/`                                   |
-
-### 3. 启动开发环境
+### 2. 启动数据库
 
 ```bash
-# 同时启动 server + web（需先 build 依赖包）
+pnpm db:up
+```
+
+默认：
+
+- 用户 / 密码：`monai` / `monai`
+- 开发库：`monai_devops`
+- 测试库：`monai_devops_test`（首次初始化卷时由 `docker/postgres/init-test-db.sql` 创建）
+
+### 3. 配置并迁移服务端
+
+```bash
+cd apps/server
+cp .env.example .env
+# 建议把 GLOBAL_API_PREFIX 改成与前端一致：api/v1/devops
+# 或直接用测试环境启动（见下）
+
+pnpm db:generate
+pnpm db:migrate:dev
+```
+
+前端开发默认请求 `http://localhost:3000/api/v1/devops`（见 `apps/web/.env.development`）。  
+服务端 `.env.example` 模板前缀为 `api`，**联调前请对齐前缀**。推荐两种方式之一：
+
+- 改 `apps/server/.env`：`GLOBAL_API_PREFIX=api/v1/devops`
+- 或服务端用测试 env：`pnpm --filter server db:migrate:test` 后 `pnpm dev:server:test`（读 `.env.test`，前缀已是 `api/v1/devops`）
+
+### 4. 启动开发进程
+
+```bash
+# 仓库根：分别启动
+pnpm dev:server          # 或 pnpm dev:server:test（对齐 web 默认 API 前缀）
+pnpm dev:web
+
+# 也可一次拉起 workspace 内所有 dev（会先 ^build）
 pnpm dev
-
-# 或分别启动
-pnpm dev:server   # NestJS，默认 http://localhost:3000
-pnpm dev:web      # Vite，默认 http://localhost:5173
 ```
 
-### 4. 验证集成
+- Web：Vite，默认 `http://127.0.0.1:5173`
+- Server：默认 `http://localhost:3000/{GLOBAL_API_PREFIX}`
+- 健康检查：`GET /{prefix}/healthz`
 
-- **HTTP**：`GET http://localhost:3000/api/v1/devops/test-devops`（路径中的前缀与 `GLOBAL_API_PREFIX` 一致）
-- **前端**：访问 `/test` 页面，运行「Core Engine 集成测试」或 WebSocket 实时日志测试
-- **WebSocket**：连接 `ws://localhost:3000/api/v1/devops/test-devops/ws`，发送 `{ "type": "run", "workflow": { ... } }`
+### 5. 打开控制台
 
-## 核心包
+浏览器访问 Web 地址 → 侧栏进入「工作流」新建 DAG，或在「插件」页试运行。
 
-### @monai-devops/core-engine
+---
 
-工作流编排内核，通过 `createEngine()` 串联插件管理、DAG 执行器、任务调度器与资源池。
+## 常用脚本（仓库根）
 
-```ts
-import { createEngine, WorkflowContextKeys } from '@monai-devops/core-engine';
-import { createPlugin, getContext } from '@monai-devops/plugin-sdk';
+| 脚本 | 作用 |
+|---|---|
+| `pnpm build` | Turbo 构建全部包 |
+| `pnpm dev` | 全部包 `dev`（依赖上游先 build） |
+| `pnpm dev:server` / `dev:web` | 仅后端 / 仅前端 |
+| `pnpm dev:server:test` / `dev:test` | 使用各包 `dev:test`（server 强制 `.env.test`） |
+| `pnpm test` | 全仓测试（会先 `^build`） |
+| `pnpm lint` / `lint:fix` | ESLint |
+| `pnpm format` / `format:check` | Prettier |
+| `pnpm check-types` | 类型检查 |
+| `pnpm create:plugin <name>` | 脚手架新建插件并写入配置 |
+| `pnpm sync:plugins` | 根据 `plugins.config.json` 生成 `plugin-registry.ts` |
+| `pnpm db:up` / `db:down` | Docker Compose 启停 Postgres |
 
-const echoPlugin = createPlugin({
-  name: 'echo',
-  version: '1.0.0',
-  execute: async (config, ctx) => {
-    const stepId = getContext<string>(ctx, WorkflowContextKeys.stepId);
-    return { success: true, data: { stepId, value: config.value } };
-  },
-});
+包内还有各自的 `db:migrate*`、`test:e2e` 等，见对应 README。
 
-const engine = createEngine({ plugins: [echoPlugin], maxParallelSteps: 2 });
+---
 
-const run = await engine.runWorkflow({
-  id: 'demo',
-  name: 'Demo Pipeline',
-  steps: [
-    { id: 'a', name: 'A', plugin: 'echo', config: { value: 1 } },
-    { id: 'b', name: 'B', plugin: 'echo', config: { value: 2 }, dependsOn: ['a'] },
-  ],
-});
+## 核心能力一览
 
-engine.destroy();
-```
+| 能力 | 说明 |
+|---|---|
+| **DAG 工作流** | `dependsOn` 拓扑并行；条件跳过；failFast |
+| **步骤形态** | `plugin`（默认）、`set_state`、`workflow`（引用子工作流，可选 loop） |
+| **Context 引用** | 配置中 `$ref` 引用上游 `data` 或 run `state` |
+| **资源调度** | 按 `resourceType` 抢槽；步骤级等待队列 + workflow 级任务调度器 |
+| **Run 控制** | cancel（best-effort / hard）、pause / resume；嵌套级联 |
+| **可观测性** | 生命周期事件落库 + WS 推流；插件日志 SSE/WS |
+| **可组合工作流** | 导入 `reference` / `copy`；嵌套深度与「循环嵌循环」约束 |
 
-完整 API、错误模型、可观测性事件说明见 [packages/core-engine/README.md](./packages/core-engine/README.md)。
+---
 
-### @monai-devops/plugin-sdk
+## 开发约定（摘要）
 
-插件开发者只需依赖此包：
+- **插件失败用 `PluginResult`，不要靠 throw 表达业务失败**；取消用 `AbortSignal` + `PluginCancelledError`。
+- **新增插件**：`pnpm create:plugin` → 实现 → `pnpm sync:plugins` → 重启 server。详情见 [plugins/README.md](./plugins/README.md)。
+- **提交前**：仓库使用 husky + lint-staged；涉及包改动时按 `.cursor/rules/dev-logs.mdc` 追加 `docs/dev-logs/*.md`（提交代码时）。
+- **接口清单**：`docs/dev-logs/api-list.md` 是 API 目录，不是 changelog。
+- **无内建认证**：当前 HTTP/WS 开放，生产需自行加网关或守卫。
 
-| 导出                       | 用途                                                                           |
-| -------------------------- | ------------------------------------------------------------------------------ |
-| `createPlugin`             | 创建插件定义，通过 `configSchema`（Zod）声明 config 结构，可选编排生命周期钩子 |
-| `z` / `formatZodError`     | Zod 与校验错误格式化（从 SDK re-export）                                       |
-| `getConfig` / `getContext` | 读取步骤配置与运行时上下文（无 schema 时的向后兼容）                           |
-| `getLogger`                | 获取步骤级日志器（经 observer 发出 `plugin:log` 事件）                         |
-| `PluginFailureCodes`       | 插件失败错误码常量（含 `PLUGIN_CONFIG_INVALID`）                               |
+---
 
-插件层约定：**业务失败返回 `{ success: false }`，不 throw**。
+## 文档与计划
 
-## 编写插件
+| 目录 | 内容 |
+|---|---|
+| `docs/dev-logs/` | 各包开发日志 + `api-list.md` |
+| `docs/plans/` | 引擎 / server / web / 可组合工作流等设计计划 |
+| `docs/design/` | 控制台等设计说明 |
+| `docs/prototype/` | HTML 原型（如有） |
+| `.claude/skills/` | 提交规范、原型等 Agent skill |
 
-在 `plugins/` 下新建包，依赖 `@monai-devops/plugin-sdk`，参考 `plugins/test-plugin`：
+---
 
-```ts
-import { createPlugin, getLogger, z } from '@monai-devops/plugin-sdk';
+## 技术栈摘要
 
-const configSchema = z.object({
-  type: z.enum(['unit', 'integration', 'e2e']),
-});
+| 层 | 技术 |
+|---|---|
+| Monorepo | pnpm workspace + Turbo |
+| 内核 | TypeScript ESM、Zod（经 plugin-sdk） |
+| 后端 | NestJS 11、Prisma 6、PostgreSQL、`ws` |
+| 前端 | React 19、Vite 8、React Flow、Tailwind、Radix |
+| 质量 | ESLint、Prettier、Jest（server）、Vitest（web）、Node test（packages） |
 
-export const myPlugin = createPlugin({
-  name: 'my-plugin',
-  version: '1.0.0',
-  configSchema,
-  execute: async (config, context) => {
-    const log = getLogger(context);
-    log.info('开始执行', { type: config.type });
-    return { success: true, message: '完成' };
-  },
-});
-```
+---
 
-在服务端或脚本中通过 `createEngine({ plugins: [myPlugin] })` 注册即可。
+## License
 
-## 服务端 API（test-devops）
-
-当前 `apps/server` 提供用于验证 core-engine 闭环的测试模块：
-
-| 方式      | 路径                                  | 说明                                                                         |
-| --------- | ------------------------------------- | ---------------------------------------------------------------------------- |
-| HTTP GET  | `/{GLOBAL_API_PREFIX}/test-devops`    | 运行内置集成工作流，一次性返回结果                                           |
-| WebSocket | `/{GLOBAL_API_PREFIX}/test-devops/ws` | 接收 `{ type: "run", workflow: WorkflowDefinition }`，实时推送事件与最终结果 |
-
-WebSocket 出站消息类型：
-
-- `{ type: "event", event: ... }` — 工作流生命周期事件（含 `plugin:log`）
-- `{ type: "done", result: ... }` — 执行完成
-- `{ type: "error", message: ... }` — 错误
-
-## 常用命令
-
-在仓库根目录执行：
-
-| 命令                                | 说明                       |
-| ----------------------------------- | -------------------------- |
-| `pnpm build`                        | 构建全部包与应用           |
-| `pnpm dev`                          | 开发模式（server + web）   |
-| `pnpm dev:server`                   | 仅启动 NestJS              |
-| `pnpm dev:web`                      | 仅启动 Vite                |
-| `pnpm test`                         | 运行各包测试（turbo 编排） |
-| `pnpm check-types`                  | 全仓库 TypeScript 类型检查 |
-| `pnpm lint` / `pnpm lint:fix`       | ESLint                     |
-| `pnpm format` / `pnpm format:check` | Prettier                   |
-
-单包示例：
-
-```bash
-pnpm --filter @monai-devops/core-engine test
-pnpm --filter server test:e2e
-```
-
-## 技术栈
-
-| 层级          | 技术                                        |
-| ------------- | ------------------------------------------- |
-| 包管理 / 构建 | pnpm workspace、Turborepo                   |
-| 内核          | TypeScript（ESM）、自研 DAG 执行器          |
-| 后端          | NestJS 11、WebSocket（ws）                  |
-| 前端          | React 19、Vite 8、React Router 7            |
-| 质量          | ESLint 9、Prettier、Jest / Node test runner |
-
-## 后续规划
-
-- 完善生产级 HTTP API 与工作流持久化
-- 表达式级步骤 `condition`（当前为结构化条件）
-- 步骤级 `AbortSignal` 取消进行中的插件执行
-
-更多设计细节见 `docs/plans/`。
+根 `package.json` 为 private monorepo。各可发布包（如 `core-engine` / `plugin-sdk`）见各自 `package.json` 的 `license` 字段。

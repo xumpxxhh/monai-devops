@@ -35,3 +35,6 @@ plugins/*/src/*.js
 plugins/*/src/*.js.map
 plugins/*/src/*.d.ts
 plugins/*/*.tsbuildinfo
+
+# 
+refers/*
