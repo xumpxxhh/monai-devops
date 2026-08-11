@@ -27,12 +27,12 @@
 
 **依赖方向（勿逆向）：**
 
-| 包 | 可依赖 |
-|---|---|
-| `plugins/*` | `plugin-sdk`（及自身业务依赖） |
-| `core-engine` | `plugin-sdk` |
-| `apps/server` | `core-engine` + 已注册插件 |
-| `apps/web` | `core-engine`（类型与纯函数；执行走 server） |
+| 包            | 可依赖                                       |
+| ------------- | -------------------------------------------- |
+| `plugins/*`   | `plugin-sdk`（及自身业务依赖）               |
+| `core-engine` | `plugin-sdk`                                 |
+| `apps/server` | `core-engine` + 已注册插件                   |
+| `apps/web`    | `core-engine`（类型与纯函数；执行走 server） |
 
 ## 仓库结构
 
@@ -47,32 +47,32 @@ monai-devops/
 ├── plugins/             # 工作区插件包
 ├── docs/                # 设计稿、计划、开发日志、接口清单
 ├── scripts/             # create-plugin / sync-plugin-registry
-├── docker/              # Postgres 初始化（含测试库）
-└── docker-compose.yml
+├── docker/postgres/     # 公共 Postgres 建库脚本
+└── docs/ops/            # 运维说明（含 postgres-shared.md）
 ```
 
 ### 包文档
 
-| 路径 | 说明 |
-|---|---|
-| [apps/server/README.md](./apps/server/README.md) | 后端启动、环境变量、API / WS、数据模型 |
-| [apps/web/README.md](./apps/web/README.md) | 前端路由、编辑器、实时订阅、环境变量 |
+| 路径                                                               | 说明                                             |
+| ------------------------------------------------------------------ | ------------------------------------------------ |
+| [apps/server/README.md](./apps/server/README.md)                   | 后端启动、环境变量、API / WS、数据模型           |
+| [apps/web/README.md](./apps/web/README.md)                         | 前端路由、编辑器、实时订阅、环境变量             |
 | [packages/core-engine/README.md](./packages/core-engine/README.md) | 引擎：步骤形态、DAG、资源、取消/暂停、嵌套工作流 |
-| [packages/plugin-sdk/README.md](./packages/plugin-sdk/README.md) | 插件契约、`createPlugin`、协作取消、日志 |
-| [plugins/README.md](./plugins/README.md) | 插件开发指南（脚手架、注册、调试） |
-| [docs/dev-logs/api-list.md](./docs/dev-logs/api-list.md) | 服务端接口清单（非 changelog） |
+| [packages/plugin-sdk/README.md](./packages/plugin-sdk/README.md)   | 插件契约、`createPlugin`、协作取消、日志         |
+| [plugins/README.md](./plugins/README.md)                           | 插件开发指南（脚手架、注册、调试）               |
+| [docs/dev-logs/api-list.md](./docs/dev-logs/api-list.md)           | 服务端接口清单（非 changelog）                   |
 
 ### 当前内置插件
 
 由 `apps/server/plugins.config.json` 启用，构建前经 `pnpm sync:plugins` 写入注册表：
 
-| 包名 | 用途 |
-|---|---|
-| `test-plugin` | 可中断的示例测试步骤 |
-| `print-plugin` | 打印 / 日志输出 |
+| 包名                 | 用途                             |
+| -------------------- | -------------------------------- |
+| `test-plugin`        | 可中断的示例测试步骤             |
+| `print-plugin`       | 打印 / 日志输出                  |
 | `muti-result-plugin` | 多层嵌套结果（便于 `$ref` 演示） |
-| `model-call-plugin` | 大模型调用 |
-| `embedding-plugin` | Embedding 调用 |
+| `model-call-plugin`  | 大模型调用                       |
+| `embedding-plugin`   | Embedding 调用                   |
 
 部分插件依赖外部环境变量（如 `OPENAI_API_KEY`、`EMBEDDING_API_KEY`）；Turbo 已配置透传。
 
@@ -82,8 +82,7 @@ monai-devops/
 
 - **Node.js** `>= 20`
 - **pnpm** `10.18.2`（见 `packageManager`）
-- **Docker**（可选，用于本地 PostgreSQL）
-- **PostgreSQL 16**（或使用下方 compose）
+- **团队公共 PostgreSQL**（库 `monai_devops` / `monai_devops_test`，见 [docs/ops/postgres-shared.md](./docs/ops/postgres-shared.md)）
 
 ---
 
@@ -95,17 +94,13 @@ monai-devops/
 pnpm install
 ```
 
-### 2. 启动数据库
+### 2. 准备数据库
 
-```bash
-pnpm db:up
-```
+团队**共享**公共 Postgres，库名固定为 `monai_devops`（开发）与 `monai_devops_test`（测试）。
 
-默认：
-
-- 用户 / 密码：`monai` / `monai`
-- 开发库：`monai_devops`
-- 测试库：`monai_devops_test`（首次初始化卷时由 `docker/postgres/init-test-db.sql` 创建）
+1. 在公共实例上建库（若尚未创建）：见 [docs/ops/postgres-shared.md](./docs/ops/postgres-shared.md)
+2. 从本项目旧 compose 迁数据（若需要）：同上文档「从本项目旧 compose 卷迁移数据」
+3. 在 `apps/server` 配置 `DATABASE_URL`（`.env.example` / `.env.test`；host 按公共实例修改）
 
 ### 3. 配置并迁移服务端
 
@@ -148,19 +143,18 @@ pnpm dev
 
 ## 常用脚本（仓库根）
 
-| 脚本 | 作用 |
-|---|---|
-| `pnpm build` | Turbo 构建全部包 |
-| `pnpm dev` | 全部包 `dev`（依赖上游先 build） |
-| `pnpm dev:server` / `dev:web` | 仅后端 / 仅前端 |
-| `pnpm dev:server:test` / `dev:test` | 使用各包 `dev:test`（server 强制 `.env.test`） |
-| `pnpm test` | 全仓测试（会先 `^build`） |
-| `pnpm lint` / `lint:fix` | ESLint |
-| `pnpm format` / `format:check` | Prettier |
-| `pnpm check-types` | 类型检查 |
-| `pnpm create:plugin <name>` | 脚手架新建插件并写入配置 |
-| `pnpm sync:plugins` | 根据 `plugins.config.json` 生成 `plugin-registry.ts` |
-| `pnpm db:up` / `db:down` | Docker Compose 启停 Postgres |
+| 脚本                                | 作用                                                 |
+| ----------------------------------- | ---------------------------------------------------- |
+| `pnpm build`                        | Turbo 构建全部包                                     |
+| `pnpm dev`                          | 全部包 `dev`（依赖上游先 build）                     |
+| `pnpm dev:server` / `dev:web`       | 仅后端 / 仅前端                                      |
+| `pnpm dev:server:test` / `dev:test` | 使用各包 `dev:test`（server 强制 `.env.test`）       |
+| `pnpm test`                         | 全仓测试（会先 `^build`）                            |
+| `pnpm lint` / `lint:fix`            | ESLint                                               |
+| `pnpm format` / `format:check`      | Prettier                                             |
+| `pnpm check-types`                  | 类型检查                                             |
+| `pnpm create:plugin <name>`         | 脚手架新建插件并写入配置                             |
+| `pnpm sync:plugins`                 | 根据 `plugins.config.json` 生成 `plugin-registry.ts` |
 
 包内还有各自的 `db:migrate*`、`test:e2e` 等，见对应 README。
 
@@ -168,15 +162,15 @@ pnpm dev
 
 ## 核心能力一览
 
-| 能力 | 说明 |
-|---|---|
-| **DAG 工作流** | `dependsOn` 拓扑并行；条件跳过；failFast |
-| **步骤形态** | `plugin`（默认）、`set_state`、`workflow`（引用子工作流，可选 loop） |
-| **Context 引用** | 配置中 `$ref` 引用上游 `data` 或 run `state` |
-| **资源调度** | 按 `resourceType` 抢槽；步骤级等待队列 + workflow 级任务调度器 |
-| **Run 控制** | cancel（best-effort / hard）、pause / resume；嵌套级联 |
-| **可观测性** | 生命周期事件落库 + WS 推流；插件日志 SSE/WS |
-| **可组合工作流** | 导入 `reference` / `copy`；嵌套深度与「循环嵌循环」约束 |
+| 能力             | 说明                                                                 |
+| ---------------- | -------------------------------------------------------------------- |
+| **DAG 工作流**   | `dependsOn` 拓扑并行；条件跳过；failFast                             |
+| **步骤形态**     | `plugin`（默认）、`set_state`、`workflow`（引用子工作流，可选 loop） |
+| **Context 引用** | 配置中 `$ref` 引用上游 `data` 或 run `state`                         |
+| **资源调度**     | 按 `resourceType` 抢槽；步骤级等待队列 + workflow 级任务调度器       |
+| **Run 控制**     | cancel（best-effort / hard）、pause / resume；嵌套级联               |
+| **可观测性**     | 生命周期事件落库 + WS 推流；插件日志 SSE/WS                          |
+| **可组合工作流** | 导入 `reference` / `copy`；嵌套深度与「循环嵌循环」约束              |
 
 ---
 
@@ -192,25 +186,25 @@ pnpm dev
 
 ## 文档与计划
 
-| 目录 | 内容 |
-|---|---|
-| `docs/dev-logs/` | 各包开发日志 + `api-list.md` |
-| `docs/plans/` | 引擎 / server / web / 可组合工作流等设计计划 |
-| `docs/design/` | 控制台等设计说明 |
-| `docs/prototype/` | HTML 原型（如有） |
-| `.claude/skills/` | 提交规范、原型等 Agent skill |
+| 目录              | 内容                                         |
+| ----------------- | -------------------------------------------- |
+| `docs/dev-logs/`  | 各包开发日志 + `api-list.md`                 |
+| `docs/plans/`     | 引擎 / server / web / 可组合工作流等设计计划 |
+| `docs/design/`    | 控制台等设计说明                             |
+| `docs/prototype/` | HTML 原型（如有）                            |
+| `.claude/skills/` | 提交规范、原型等 Agent skill                 |
 
 ---
 
 ## 技术栈摘要
 
-| 层 | 技术 |
-|---|---|
-| Monorepo | pnpm workspace + Turbo |
-| 内核 | TypeScript ESM、Zod（经 plugin-sdk） |
-| 后端 | NestJS 11、Prisma 6、PostgreSQL、`ws` |
-| 前端 | React 19、Vite 8、React Flow、Tailwind、Radix |
-| 质量 | ESLint、Prettier、Jest（server）、Vitest（web）、Node test（packages） |
+| 层       | 技术                                                                   |
+| -------- | ---------------------------------------------------------------------- |
+| Monorepo | pnpm workspace + Turbo                                                 |
+| 内核     | TypeScript ESM、Zod（经 plugin-sdk）                                   |
+| 后端     | NestJS 11、Prisma 6、PostgreSQL、`ws`                                  |
+| 前端     | React 19、Vite 8、React Flow、Tailwind、Radix                          |
+| 质量     | ESLint、Prettier、Jest（server）、Vitest（web）、Node test（packages） |
 
 ---
 

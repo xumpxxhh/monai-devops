@@ -43,7 +43,7 @@
 - `PrismaRunRepository`、`PrismaWorkflowRepository`
 - 事件合并/裁剪逻辑抽取为共享纯函数
 - DI 切换（`RUN_STORAGE_DRIVER`），生产环境 fail-fast
-- 本地 `docker-compose.yml` 供开发/测试
+- 本地使用**团队公共 PostgreSQL**（`monai_devops` / `monai_devops_test`；见 `docs/ops/postgres-shared.md`）
 - 单元测试 + Prisma 集成测试
 
 ### 2.2 不在本次范围
@@ -283,7 +283,8 @@ CREATE INDEX run_events_payload_gin ON run_events USING GIN (payload);
 | `apps/server/prisma/migrations/`           | `prisma migrate dev` 生成                                                               |
 | `apps/server/src/prisma/prisma.service.ts` | `OnModuleInit` 连接 / `OnModuleDestroy` 断开                                            |
 | `apps/server/src/prisma/prisma.module.ts`  | `@Global()` 导出 `PrismaService`                                                        |
-| `docker-compose.yml`（仓库根目录）         | PostgreSQL 16，端口 5432                                                                |
+| `docker/postgres/init-databases.sql`       | 公共 Postgres 建 dev/test 库                                                          |
+| `docs/ops/postgres-shared.md`              | 建库、从旧 compose 迁数据、共享协作说明                                               |
 | `apps/server/.env.example`                 | `DATABASE_URL=postgresql://...`                                                         |
 | `apps/server/package.json`                 | 依赖 `@prisma/client`；dev 依赖 `prisma`；脚本 `db:generate`、`db:migrate`、`db:studio` |
 
@@ -340,7 +341,7 @@ createdBy?: bigint;
 | ---------------------------------- | -------------------------------------- |
 | `run-event-merge.spec.ts`          | 合并/裁剪纯函数                        |
 | `in-memory-run.repository.spec.ts` | 保留，验证接口行为基准                 |
-| `prisma-run.repository.spec.ts`    | 集成测试，依赖 docker-compose Postgres |
+| `prisma-run.repository.spec.ts`    | 集成测试，依赖公共 Postgres（`.env.test` → `monai_devops_test`） |
 
 ---
 
@@ -358,7 +359,7 @@ createdBy?: bigint;
 
 | ID                    | 任务                                                                                         | 状态 |
 | --------------------- | -------------------------------------------------------------------------------------------- | ---- |
-| infra                 | Prisma + PostgreSQL 基础设施（schema、PrismaModule、docker-compose、env、package.json 脚本） | done |
+| infra                 | Prisma + PostgreSQL 基础设施（schema、PrismaModule、建库脚本、postgres-shared 文档、env） | done |
 | shared-merge-fn       | 抽取 `run-event-merge.ts`，内存与 Prisma 实现共用                                            | done |
 | domain-types          | `RunRecord`/`WorkflowRecord` 增加 `createdBy` 字段，调用方写入身份 ID                        | done |
 | runs-schema           | 生成 `runs` / `run_events` migration（含 GIN 索引）                                          | done |

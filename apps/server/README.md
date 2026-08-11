@@ -6,13 +6,13 @@ NestJS HTTP / WebSocket 服务：把 `@monai-devops/core-engine` 接到 PostgreS
 
 ## 职责边界
 
-| 层 | 职责 |
-|---|---|
-| **HTTP / WS** | 校验入参、鉴权占位（当前无登录）、返回序列化 DTO |
-| **RunManager** | 受理 Run、落库、订阅引擎事件、推流、取消/暂停/恢复 |
-| **WorkflowsService** | 工作流持久化、导入（reference/copy）、触发运行、校验 |
-| **EngineService** | 进程内唯一 `createEngine` 实例；插件注册、资源池、观察者扇出 |
-| **Prisma** | `Workflow` / `WorkflowImport` / `Run` / `RunEvent` |
+| 层                   | 职责                                                         |
+| -------------------- | ------------------------------------------------------------ |
+| **HTTP / WS**        | 校验入参、鉴权占位（当前无登录）、返回序列化 DTO             |
+| **RunManager**       | 受理 Run、落库、订阅引擎事件、推流、取消/暂停/恢复           |
+| **WorkflowsService** | 工作流持久化、导入（reference/copy）、触发运行、校验         |
+| **EngineService**    | 进程内唯一 `createEngine` 实例；插件注册、资源池、观察者扇出 |
+| **Prisma**           | `Workflow` / `WorkflowImport` / `Run` / `RunEvent`           |
 
 引擎负责 DAG 执行与资源调度；server **不重写编排逻辑**，只做：校验 → 落表 → 调引擎 → 事件持久化与推流。
 
@@ -30,7 +30,7 @@ NestJS HTTP / WebSocket 服务：把 `@monai-devops/core-engine` 接到 PostgreS
 ### 前置
 
 1. Node.js `>= 20`，仓库根目录已 `pnpm install`
-2. PostgreSQL 可用（本地可用仓库根目录 docker compose，默认用户/库见 `.env.example`）
+2. **团队公共 PostgreSQL** 可用，库名 `monai_devops` / `monai_devops_test`；在 `.env` / `.env.test` 配置 `DATABASE_URL`（见 [docs/ops/postgres-shared.md](../../docs/ops/postgres-shared.md)）
 3. 在 `apps/server` 复制环境文件：
 
 ```bash
@@ -48,11 +48,13 @@ pnpm db:migrate:dev    # 开发库迁移
 # 或 pnpm db:migrate   # deploy（CI / 固定环境）
 ```
 
-测试库（`*.env.test` → `monai_devops_test`）：
+测试库（`.env.test` → `monai_devops_test`）：
 
 ```bash
 pnpm db:migrate:test
 ```
+
+开发库与测试库均为**团队共享**实例；`migrate dev` 与并行跑 e2e 前请与同事协调，详见 [docs/ops/postgres-shared.md](../../docs/ops/postgres-shared.md)。
 
 ### 启动
 
@@ -137,18 +139,18 @@ pnpm sync:plugins
 
 ## 环境变量
 
-| 变量 | 必填 | 默认 | 说明 |
-|---|---|---|---|
-| `GLOBAL_API_PREFIX` | ✅ | — | HTTP/WS 全局前缀（如 `api` 或 `api/v1/devops`） |
-| `DATABASE_URL` | ✅（非 test） | — | PostgreSQL 连接串 |
-| `APP_ENV` | | `local-dev` | `local-dev` \| `online-dev` \| `local-test` \| `online-test` \| `production` |
-| `PORT` | | `3000` | 监听端口 |
-| `MAX_PARALLEL_STEPS` | | `2` | 单个 workflow 内默认并行步骤上限 |
-| `RESOURCE_POOL_SIZE` | | `5` | 引擎 `default` 资源池槽位数 |
-| `MAX_NESTING_DEPTH` | | `3` | 子工作流嵌套深度上限 |
-| `MAX_ACTIVE_RUNS` | | `50` | 活跃 Run 上限（queued/running/pausing/paused）；超出 `429` |
-| `RUN_HISTORY_LIMIT` | | `500` | 单 Run 事件条数上限（超限优先裁剪 `plugin:log`） |
-| `MONAI_ENV_FILE` | | — | 指定 env 文件并 **覆盖** 其中键（`dev:test` 使用） |
+| 变量                 | 必填          | 默认        | 说明                                                                         |
+| -------------------- | ------------- | ----------- | ---------------------------------------------------------------------------- |
+| `GLOBAL_API_PREFIX`  | ✅            | —           | HTTP/WS 全局前缀（如 `api` 或 `api/v1/devops`）                              |
+| `DATABASE_URL`       | ✅（非 test） | —           | PostgreSQL 连接串                                                            |
+| `APP_ENV`            |               | `local-dev` | `local-dev` \| `online-dev` \| `local-test` \| `online-test` \| `production` |
+| `PORT`               |               | `3000`      | 监听端口                                                                     |
+| `MAX_PARALLEL_STEPS` |               | `2`         | 单个 workflow 内默认并行步骤上限                                             |
+| `RESOURCE_POOL_SIZE` |               | `5`         | 引擎 `default` 资源池槽位数                                                  |
+| `MAX_NESTING_DEPTH`  |               | `3`         | 子工作流嵌套深度上限                                                         |
+| `MAX_ACTIVE_RUNS`    |               | `50`        | 活跃 Run 上限（queued/running/pausing/paused）；超出 `429`                   |
+| `RUN_HISTORY_LIMIT`  |               | `500`       | 单 Run 事件条数上限（超限优先裁剪 `plugin:log`）                             |
+| `MONAI_ENV_FILE`     |               | —           | 指定 env 文件并 **覆盖** 其中键（`dev:test` 使用）                           |
 
 加载顺序（`preload-env`）：
 
@@ -161,12 +163,12 @@ pnpm sync:plugins
 
 ## 数据模型（Prisma）
 
-| 表 | 作用 |
-|---|---|
-| `workflows` | 工作流定义 JSON；`owner_workflow_id` 非空表示 **私有拷贝**（不进公开列表） |
+| 表                 | 作用                                                                             |
+| ------------------ | -------------------------------------------------------------------------------- |
+| `workflows`        | 工作流定义 JSON；`owner_workflow_id` 非空表示 **私有拷贝**（不进公开列表）       |
 | `workflow_imports` | 父工作流导入子工作流：`mode` = `reference` \| `copy`，`id` 即步骤里的 `importId` |
-| `runs` | 一次顶层执行：快照、状态、计数、结果、可选 `parent_run_id` |
-| `run_events` | 事件流（`run_id` + `event_index` 唯一） |
+| `runs`             | 一次顶层执行：快照、状态、计数、结果、可选 `parent_run_id`                       |
+| `run_events`       | 事件流（`run_id` + `event_index` 唯一）                                          |
 
 Run 状态：`queued` → `running` / `pausing` / `paused` → `finished` \| `failed` \| `cancelled`；校验失败可为 `rejected`。进行中的 Run 不可删除。
 
@@ -178,28 +180,28 @@ Run 状态：`queued` → `running` / `pausing` / `paused` → `finished` \| `fa
 
 ### 系统 / 健康
 
-| 方法 | 路径 | 说明 |
-|---|---|---|
-| `GET` | `/` | 占位 hello |
-| `GET` | `/healthz` | `{ status, engineReady }` |
-| `GET` | `/system/info` | `{ appEnv, appEnvLabel }` |
+| 方法  | 路径              | 说明                                 |
+| ----- | ----------------- | ------------------------------------ |
+| `GET` | `/`               | 占位 hello                           |
+| `GET` | `/healthz`        | `{ status, engineReady }`            |
+| `GET` | `/system/info`    | `{ appEnv, appEnvLabel }`            |
 | `GET` | `/stats/overview` | 活跃/成功/失败 Run、插件数、资源队列 |
-| `GET` | `/test-devops` | 内置集成探测 |
+| `GET` | `/test-devops`    | 内置集成探测                         |
 
 ### 工作流
 
-| 方法 | 路径 | 说明 |
-|---|---|---|
-| `GET` | `/step-kinds` | 内置步骤形态（`set_state` / `workflow` 等） |
-| `GET` | `/workflows` | 列表（默认仅公开；`search` / 分页） |
-| `POST` | `/workflows` | 创建（自动补全缺失 id） |
-| `POST` | `/workflows/validate` | 只校验不落库 |
-| `GET` | `/workflows/:id` | 详情 |
-| `PUT` | `/workflows/:id` | 更新（同步 import 的 `stepId`） |
-| `DELETE` | `/workflows/:id` | 删除；仍被引用则 `409 WORKFLOW_STILL_REFERENCED` |
-| `POST` | `/workflows/:id/run` | 用已存定义触发 Run |
-| `GET` | `/workflows/:id/imports` | 导入列表 |
-| `POST` | `/workflows/:id/imports` | 创建导入：`{ childWorkflowId, mode, stepId? }` |
+| 方法     | 路径                     | 说明                                             |
+| -------- | ------------------------ | ------------------------------------------------ |
+| `GET`    | `/step-kinds`            | 内置步骤形态（`set_state` / `workflow` 等）      |
+| `GET`    | `/workflows`             | 列表（默认仅公开；`search` / 分页）              |
+| `POST`   | `/workflows`             | 创建（自动补全缺失 id）                          |
+| `POST`   | `/workflows/validate`    | 只校验不落库                                     |
+| `GET`    | `/workflows/:id`         | 详情                                             |
+| `PUT`    | `/workflows/:id`         | 更新（同步 import 的 `stepId`）                  |
+| `DELETE` | `/workflows/:id`         | 删除；仍被引用则 `409 WORKFLOW_STILL_REFERENCED` |
+| `POST`   | `/workflows/:id/run`     | 用已存定义触发 Run                               |
+| `GET`    | `/workflows/:id/imports` | 导入列表                                         |
+| `POST`   | `/workflows/:id/imports` | 创建导入：`{ childWorkflowId, mode, stepId? }`   |
 
 导入规则摘要：
 
@@ -211,17 +213,17 @@ Run 状态：`queued` → `running` / `pausing` / `paused` → `finished` \| `fa
 
 ### Run
 
-| 方法 | 路径 | 说明 |
-|---|---|---|
-| `GET` | `/runs` | 列表（`status` / `workflowId` / `search` / 分页） |
-| `POST` | `/runs` | body 带完整 `workflow` 草稿直接受理 |
-| `GET` | `/runs/:runId` | 详情（合并引擎侧 live 控制态） |
-| `GET` | `/runs/:runId/events` | 已持久化事件 |
-| `GET` | `/runs/:runId/children` | 兼容接口，恒 `{ children: [] }` |
-| `POST` | `/runs/:runId/cancel` | `{ mode?: 'best-effort' \| 'hard' }` |
-| `POST` | `/runs/:runId/pause` | `{ waitInFlight?, abortInFlight? }` |
-| `POST` | `/runs/:runId/resume` | 恢复 |
-| `DELETE` | `/runs/:runId` | 仅终态可删 |
+| 方法     | 路径                    | 说明                                              |
+| -------- | ----------------------- | ------------------------------------------------- |
+| `GET`    | `/runs`                 | 列表（`status` / `workflowId` / `search` / 分页） |
+| `POST`   | `/runs`                 | body 带完整 `workflow` 草稿直接受理               |
+| `GET`    | `/runs/:runId`          | 详情（合并引擎侧 live 控制态）                    |
+| `GET`    | `/runs/:runId/events`   | 已持久化事件                                      |
+| `GET`    | `/runs/:runId/children` | 兼容接口，恒 `{ children: [] }`                   |
+| `POST`   | `/runs/:runId/cancel`   | `{ mode?: 'best-effort' \| 'hard' }`              |
+| `POST`   | `/runs/:runId/pause`    | `{ waitInFlight?, abortInFlight? }`               |
+| `POST`   | `/runs/:runId/resume`   | 恢复                                              |
+| `DELETE` | `/runs/:runId`          | 仅终态可删                                        |
 
 `POST /runs` / `POST /workflows/:id/run` 可选字段：`priority`、`traceId`、`initialState` 等。活跃数达 `MAX_ACTIVE_RUNS` 时返回 `429` + `MAX_ACTIVE_RUNS_EXCEEDED`。
 
@@ -229,23 +231,23 @@ Run 状态：`queued` → `running` / `pausing` / `paused` → `finished` \| `fa
 
 ### 插件
 
-| 方法 | 路径 | 说明 |
-|---|---|---|
-| `GET` | `/plugins` | 已注册插件摘要 |
-| `GET` | `/plugins/config-schemas` | 全部 config JSON Schema |
-| `GET` | `/plugins/result-schemas` | 全部 result JSON Schema |
-| `GET` | `/plugins/:name` | 单个插件 |
-| `GET` | `/plugins/:name/config-schema` | |
-| `GET` | `/plugins/:name/result-schema` | |
-| `POST` | `/plugins/:name/dry-run` | **SSE**：试运行单插件（config 中禁止 `$ref`） |
+| 方法   | 路径                           | 说明                                          |
+| ------ | ------------------------------ | --------------------------------------------- |
+| `GET`  | `/plugins`                     | 已注册插件摘要                                |
+| `GET`  | `/plugins/config-schemas`      | 全部 config JSON Schema                       |
+| `GET`  | `/plugins/result-schemas`      | 全部 result JSON Schema                       |
+| `GET`  | `/plugins/:name`               | 单个插件                                      |
+| `GET`  | `/plugins/:name/config-schema` |                                               |
+| `GET`  | `/plugins/:name/result-schema` |                                               |
+| `POST` | `/plugins/:name/dry-run`       | **SSE**：试运行单插件（config 中禁止 `$ref`） |
 
 SSE 消息形态：`{ type: 'log', event }` / `{ type: 'done', result }` / `{ type: 'error', message }`。
 
 ### 资源
 
-| 方法 | 路径 | 说明 |
-|---|---|---|
-| `GET` | `/resources` | 当前资源槽位列表 |
+| 方法  | 路径               | 说明                   |
+| ----- | ------------------ | ---------------------- |
+| `GET` | `/resources`       | 当前资源槽位列表       |
 | `GET` | `/resources/queue` | 按 type 的等待队列状态 |
 
 ---
@@ -303,19 +305,19 @@ SSE 消息形态：`{ type: 'log', event }` / `{ type: 'done', result }` / `{ ty
 
 ## 脚本
 
-| 脚本 | 作用 |
-|---|---|
-| `pnpm dev` | `nest start --watch` |
-| `pnpm dev:test` | 使用 `.env.test` 启动 |
-| `pnpm build` | 先 sync 插件注册表，再 `nest build` |
-| `pnpm start:prod` | `node dist/src/main` |
-| `pnpm test` / `test:e2e` | Jest 单元 / e2e |
-| `pnpm check-types` | `tsc --noEmit` |
-| `pnpm lint` / `format` | ESLint / Prettier |
-| `pnpm db:generate` | Prisma Client |
-| `pnpm db:migrate` / `db:migrate:dev` | 迁移 |
-| `pnpm db:migrate:test` | 测试库迁移 |
-| `pnpm db:studio` | Prisma Studio |
+| 脚本                                 | 作用                                |
+| ------------------------------------ | ----------------------------------- |
+| `pnpm dev`                           | `nest start --watch`                |
+| `pnpm dev:test`                      | 使用 `.env.test` 启动               |
+| `pnpm build`                         | 先 sync 插件注册表，再 `nest build` |
+| `pnpm start:prod`                    | `node dist/src/main`                |
+| `pnpm test` / `test:e2e`             | Jest 单元 / e2e                     |
+| `pnpm check-types`                   | `tsc --noEmit`                      |
+| `pnpm lint` / `format`               | ESLint / Prettier                   |
+| `pnpm db:generate`                   | Prisma Client                       |
+| `pnpm db:migrate` / `db:migrate:dev` | 迁移                                |
+| `pnpm db:migrate:test`               | 测试库迁移                          |
+| `pnpm db:studio`                     | Prisma Studio                       |
 
 ---
 

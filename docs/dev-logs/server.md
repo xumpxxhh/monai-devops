@@ -1,5 +1,10 @@
 # apps/server 开发日志
 
+## 2026-08-10
+
+- **变更**：数据库改为团队公共 Postgres（共享 `monai_devops` / `monai_devops_test`）；移除仓库 compose，补充迁数据与协作说明
+- **文件**：`apps/server/.env.example`, `apps/server/.env.test`, `apps/server/README.md`, `docs/ops/postgres-shared.md`, `docker/postgres/init-databases.sql`
+
 ## 2026-08-05
 
 - **变更**：`WorkflowImportRecord` 新增 `childStateSchema` 透传子工作流 stateSchema；`normalize-workflow-ids` 保留 `WORKFLOW_STATE_REF_ID` 不重映射
