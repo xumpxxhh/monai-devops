@@ -62,8 +62,8 @@ function createPackageJson(pluginName) {
       'check-types': 'tsc --noEmit',
       lint: 'eslint .',
       'lint:fix': 'eslint . --fix',
-      format: 'prettier --write .',
-      'format:check': 'prettier --check .',
+      format: 'prettier --write . --ignore-path ../../.prettierignore',
+      'format:check': 'prettier --check . --ignore-path ../../.prettierignore',
     },
     dependencies: {
       '@monai-devops/plugin-sdk': 'workspace:*',

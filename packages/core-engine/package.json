@@ -22,8 +22,8 @@
     "check-types": "tsc --noEmit -p tsconfig.build.json",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
-    "format": "prettier --write .",
-    "format:check": "prettier --check .",
+    "format": "prettier --write . --ignore-path ../../.prettierignore",
+    "format:check": "prettier --check . --ignore-path ../../.prettierignore",
     "test": "node scripts/run-tests.mjs"
   },
   "dependencies": {

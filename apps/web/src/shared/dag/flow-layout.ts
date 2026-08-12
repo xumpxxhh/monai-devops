@@ -21,9 +21,9 @@ export const directedEdgeOptions = {
     type: MarkerType.Arrow,
     width: 16,
     height: 16,
-    color: '#98A2B4',
+    color: 'var(--faint)',
   },
-  style: { stroke: '#98A2B4', strokeWidth: 1.5 },
+  style: { stroke: 'var(--faint)', strokeWidth: 1.5 },
 };
 
 /** 基于 dagre 的分层算法，按依赖方向自动排布节点，避免手工网格布局导致的连线交叉 */

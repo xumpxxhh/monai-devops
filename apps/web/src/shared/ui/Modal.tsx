@@ -25,9 +25,9 @@ export function Modal({
   return (
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
       <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 bg-ink/30 backdrop-blur-sm z-50" />
+        <Dialog.Overlay className="fixed inset-0 bg-ink/30 backdrop-blur-sm z-50 overlay-in overlay-out" />
         <Dialog.Content
-          className={`fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-50 w-full bg-surface rounded-card shadow-pop border border-line p-6 ${contentClassName ?? 'max-w-md'}`}
+          className={`fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-50 w-full bg-surface rounded-card shadow-pop border border-line p-6 modal-content-in modal-content-out ${contentClassName ?? 'max-w-md'}`}
           onPointerDownOutside={(e) => {
             if (shouldPreventDismiss(e.target)) e.preventDefault();
           }}

@@ -1,6 +1,13 @@
-import { Field, Input, Select, Cascader, Checkbox } from '../form';
-import type { ConfigReferenceSource, JsonObjectSchema } from './types';
-import { humanizeFieldLabel, isSensitiveField } from './schema-utils';
+import { useEffect, useState } from 'react';
+import { Field, Input, Select, Cascader, Switch } from '../form';
+import { CodeEditor } from '../code-editor';
+import type { ConfigReferenceSource, JsonObjectSchema, JsonSchemaProperty } from './types';
+import {
+  humanizeFieldLabel,
+  isSensitiveField,
+  literalFallbackForProp,
+  validateContextRefType,
+} from './schema-utils';
 import {
   RESULT_ROOT_VALUE,
   buildResultFieldTree,
@@ -8,6 +15,7 @@ import {
   formatContextRefLabel,
   isContextRef,
   pathToCascaderValue,
+  schemaBasicTypeLabel,
 } from './context-ref';
 
 interface JsonSchemaFormProps {
@@ -20,9 +28,91 @@ interface JsonSchemaFormProps {
   referenceSources?: ConfigReferenceSource[];
 }
 
+function JsonStructuredLiteralField({
+  fieldId,
+  label,
+  error,
+  showLabel,
+  expectArray,
+  fieldValue,
+  onCommit,
+  disabled,
+}: {
+  fieldId: string;
+  label: string;
+  error?: string;
+  showLabel: boolean;
+  expectArray: boolean;
+  fieldValue: unknown;
+  onCommit: (parsed: unknown) => void;
+  disabled?: boolean;
+}) {
+  const serialize = (v: unknown) => {
+    const fallback = expectArray ? [] : {};
+    try {
+      return JSON.stringify(v ?? fallback, null, 2);
+    } catch {
+      return JSON.stringify(fallback, null, 2);
+    }
+  };
+
+  const [text, setText] = useState(() => serialize(fieldValue));
+  const [localError, setLocalError] = useState('');
+
+  useEffect(() => {
+    /* eslint-disable react-hooks/set-state-in-effect -- 外部 value 变化时重置编辑草稿（切换手填/引用） */
+    setText(serialize(fieldValue));
+    setLocalError('');
+    /* eslint-enable react-hooks/set-state-in-effect */
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- 刻意不依赖 serialize
+  }, [fieldValue]);
+
+  return (
+    <Field
+      id={fieldId}
+      label={showLabel ? label : undefined}
+      error={error || localError || undefined}
+    >
+      <CodeEditor
+        language="json"
+        value={text}
+        lint={Boolean(text.trim())}
+        minHeight="6rem"
+        disabled={disabled}
+        placeholder={expectArray ? '[]' : '{}'}
+        onChange={(raw) => {
+          setText(raw);
+          if (!raw.trim()) {
+            setLocalError(expectArray ? '须为 JSON 数组' : '须为 JSON 对象');
+            return;
+          }
+          try {
+            const parsed = JSON.parse(raw) as unknown;
+            if (expectArray && !Array.isArray(parsed)) {
+              setLocalError('须为 JSON 数组');
+              return;
+            }
+            if (
+              !expectArray &&
+              (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed))
+            ) {
+              setLocalError('须为 JSON 对象');
+              return;
+            }
+            setLocalError('');
+            onCommit(parsed);
+          } catch {
+            setLocalError('JSON 无效');
+          }
+        }}
+      />
+    </Field>
+  );
+}
+
 function renderLiteralField(
   key: string,
-  prop: NonNullable<JsonObjectSchema['properties']>[string],
+  prop: JsonSchemaProperty,
   value: Record<string, unknown>,
   errors: Record<string, string>,
   onChange: (value: Record<string, unknown>) => void,
@@ -41,11 +131,13 @@ function renderLiteralField(
       label: String(item),
     }));
     return (
-      <Field key={key} label={showLabel ? label : undefined} htmlFor={fieldId} error={error}>
+      <Field key={key} id={fieldId} label={showLabel ? label : undefined} error={error}>
         <Select
-          id={fieldId}
           value={fieldValue !== undefined ? String(fieldValue) : ''}
-          onValueChange={(next) => onChange({ ...value, [key]: next })}
+          onValueChange={(next) => {
+            const matched = prop.enum!.find((item) => String(item) === next);
+            onChange({ ...value, [key]: matched ?? next });
+          }}
           options={selectOptions}
           disabled={disabled}
         />
@@ -55,13 +147,12 @@ function renderLiteralField(
 
   if (prop.type === 'boolean') {
     return (
-      <Field key={key} error={error} className="mb-3">
-        <Checkbox
-          id={fieldId}
+      <Field key={key} id={fieldId} error={error} className="mb-3">
+        <Switch
           checked={Boolean(fieldValue)}
           onCheckedChange={(checked) => onChange({ ...value, [key]: checked })}
           disabled={disabled}
-          label={label}
+          label={showLabel ? label : undefined}
         />
       </Field>
     );
@@ -69,22 +160,49 @@ function renderLiteralField(
 
   if (prop.type === 'number' || prop.type === 'integer') {
     return (
-      <Field key={key} label={showLabel ? label : undefined} htmlFor={fieldId} error={error}>
+      <Field key={key} id={fieldId} label={showLabel ? label : undefined} error={error}>
         <Input
-          id={fieldId}
           type="number"
-          value={fieldValue !== undefined ? String(fieldValue) : ''}
-          onChange={(e) => onChange({ ...value, [key]: e.target.value })}
+          value={fieldValue !== undefined && fieldValue !== null ? String(fieldValue) : ''}
+          onChange={(e) => {
+            const raw = e.target.value;
+            if (raw === '') {
+              onChange({ ...value, [key]: '' });
+              return;
+            }
+            // 保留输入中间态（如 "-" / "1."）；完整可解析数字写入 number
+            if (/^-?\d*\.$/.test(raw) || raw === '-' || raw === '+') {
+              onChange({ ...value, [key]: raw });
+              return;
+            }
+            const n = Number(raw);
+            onChange({ ...value, [key]: Number.isFinite(n) ? n : raw });
+          }}
           disabled={disabled}
         />
       </Field>
     );
   }
 
+  if (prop.type === 'object' || prop.type === 'array') {
+    return (
+      <JsonStructuredLiteralField
+        key={key}
+        fieldId={fieldId}
+        label={label}
+        error={error}
+        showLabel={showLabel}
+        expectArray={prop.type === 'array'}
+        fieldValue={fieldValue}
+        disabled={disabled}
+        onCommit={(parsed) => onChange({ ...value, [key]: parsed })}
+      />
+    );
+  }
+
   return (
-    <Field key={key} label={showLabel ? label : undefined} htmlFor={fieldId} error={error}>
+    <Field key={key} id={fieldId} label={showLabel ? label : undefined} error={error}>
       <Input
-        id={fieldId}
         type={isSensitiveField(key) ? 'password' : 'text'}
         value={fieldValue !== undefined ? String(fieldValue) : ''}
         onChange={(e) => onChange({ ...value, [key]: e.target.value })}
@@ -132,6 +250,7 @@ function FieldModeToggle({
 
 function ReferenceFieldEditor({
   fieldKey,
+  expectedProp,
   value,
   sources,
   error,
@@ -139,6 +258,7 @@ function ReferenceFieldEditor({
   disabled,
 }: {
   fieldKey: string;
+  expectedProp: JsonSchemaProperty;
   value: Record<string, unknown>;
   sources: ConfigReferenceSource[];
   error?: string;
@@ -152,6 +272,10 @@ function ReferenceFieldEditor({
   const pathTree = selectedSource
     ? buildResultFieldTree(selectedSource.resultSchema)
     : [{ value: RESULT_ROOT_VALUE, label: '整个结果' }];
+
+  const typeError =
+    ref && sources.length > 0 ? validateContextRefType(expectedProp, ref, sources) : undefined;
+  const displayError = error || typeError;
 
   return (
     <div className="space-y-2">
@@ -190,11 +314,14 @@ function ReferenceFieldEditor({
       {ref && (
         <p className="text-xs text-muted">
           {formatContextRefLabel(ref, sources.find((s) => s.stepId === ref.$ref.fromStepId)?.label)}
+          <span className="text-faint"> · 期望 {schemaBasicTypeLabel(expectedProp)}</span>
         </p>
       )}
-      {error && <p className="text-xs text-failed">{error}</p>}
+      {displayError && <p className="text-xs text-failed">{displayError}</p>}
       {sources.length === 0 && (
-        <p className="text-xs text-faint">暂无可引用上游（需依赖声明了 resultSchema 的祖先步骤）</p>
+        <p className="text-xs text-faint">
+          暂无可引用源（需声明 State Schema，或依赖声明了 resultSchema 的祖先步骤）
+        </p>
       )}
     </div>
   );
@@ -202,7 +329,7 @@ function ReferenceFieldEditor({
 
 function renderField(
   key: string,
-  prop: NonNullable<JsonObjectSchema['properties']>[string],
+  prop: JsonSchemaProperty,
   value: Record<string, unknown>,
   errors: Record<string, string>,
   onChange: (value: Record<string, unknown>) => void,
@@ -210,6 +337,7 @@ function renderField(
   referenceSources: ConfigReferenceSource[] | undefined,
 ) {
   const label = humanizeFieldLabel(key, prop.description);
+  const typeLabel = schemaBasicTypeLabel(prop);
   const error = errors[key];
   const fieldValue = value[key];
   const sources = referenceSources ?? [];
@@ -219,6 +347,7 @@ function renderField(
   const body = isRef ? (
     <ReferenceFieldEditor
       fieldKey={key}
+      expectedProp={prop}
       value={value}
       sources={sources}
       error={error}
@@ -227,43 +356,37 @@ function renderField(
     />
   ) : (
     renderLiteralField(key, prop, value, errors, onChange, disabled, {
-      hideOuterLabel: canReference,
+      hideOuterLabel: true,
     })
   );
-
-  if (!canReference) {
-    return body;
-  }
-
   return (
     <div key={key} className="mb-3 space-y-1.5">
       <div className="flex items-center justify-between gap-2">
-        <span className="text-sm font-medium text-fg">{label}</span>
-        <FieldModeToggle
-          isRef={isRef}
-          disabled={disabled}
-          onToggle={(mode) => {
-            if (mode === 'ref') {
-              const first = sources[0];
-              onChange({
-                ...value,
-                [key]: { $ref: { fromStepId: first.stepId, path: [] } },
-              });
-              return;
-            }
-            const fallback =
-              prop.default !== undefined
-                ? prop.default
-                : prop.enum?.[0] !== undefined
-                  ? prop.enum[0]
-                  : prop.type === 'boolean'
-                    ? false
-                    : '';
-            onChange({ ...value, [key]: fallback });
-          }}
-        />
+        <div className="flex items-center gap-2 min-w-0">
+          <span className="text-sm font-medium text-fg truncate">{label}</span>
+          <span className="shrink-0 text-[10px] tracking-wide text-faint font-mono">
+            {typeLabel}
+          </span>
+        </div>
+        {canReference && (
+          <FieldModeToggle
+            isRef={isRef}
+            disabled={disabled}
+            onToggle={(mode) => {
+              if (mode === 'ref') {
+                const first = sources[0];
+                onChange({
+                  ...value,
+                  [key]: { $ref: { fromStepId: first.stepId, path: [] } },
+                });
+                return;
+              }
+              onChange({ ...value, [key]: literalFallbackForProp(prop) });
+            }}
+          />
+        )}
       </div>
-      {isRef ? body : <div className="[&>*]:mb-0">{body}</div>}
+      {isRef ? body : prop.type === 'boolean' ? body : <div className="[&>*]:mb-0">{body}</div>}
     </div>
   );
 }

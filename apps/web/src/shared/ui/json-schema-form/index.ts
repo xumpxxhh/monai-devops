@@ -13,3 +13,10 @@ export {
   schemaBasicTypeLabel,
 } from './context-ref';
 export type { ResultFieldOption, ResultFieldTreeNode } from './context-ref';
+export {
+  areJsonTypesCompatible,
+  resolveSchemaAtPath,
+  validateAgainstSchema,
+  validateContextRefType,
+  literalFallbackForProp,
+} from './schema-utils';

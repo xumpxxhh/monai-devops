@@ -11,6 +11,8 @@ const LIFECYCLE_EVENT_TYPES = new Set([
   'workflow:cancelled',
   'workflow:paused',
   'workflow:resumed',
+  'workflow:iteration:start',
+  'workflow:iteration:finished',
   'step:queued',
   'step:start',
   'step:finished',

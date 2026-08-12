@@ -15,6 +15,13 @@ export function isActiveRunStatus(status: RunStatus): boolean {
   return ACTIVE_RUN_STATUSES.includes(status);
 }
 
+function asMetadata(value: unknown): Record<string, unknown> {
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    return value as Record<string, unknown>;
+  }
+  return {};
+}
+
 export function toRunRecord(run: Run, events: RunEvent[]): RunRecord {
   return {
     runId: run.runId,
@@ -35,6 +42,9 @@ export function toRunRecord(run: Run, events: RunEvent[]): RunRecord {
     events: events.map((event) => event.payload as SerializedWorkflowLifecycleEvent),
     cancelled: (run.cancelled as RunRecord['cancelled']) ?? undefined,
     createdBy: run.createdBy ?? undefined,
+    source: run.source ?? undefined,
+    metadata: asMetadata(run.metadata),
+    parentRunId: run.parentRunId ?? undefined,
   };
 }
 
@@ -54,8 +64,9 @@ export function toRunCreateData(record: RunRecord): Prisma.RunCreateInput {
     ...(record.result ? { result: toInputJson(record.result) } : {}),
     cancelled: record.cancelled ?? null,
     createdBy: record.createdBy ?? null,
-    source: 'api',
-    metadata: {},
+    source: record.source ?? 'api',
+    metadata: toInputJson(record.metadata ?? {}),
+    parentRunId: record.parentRunId ?? null,
     createdAt: record.createdAt,
     startedAt: record.startedAt ?? null,
     finishedAt: record.finishedAt ?? null,
@@ -88,6 +99,9 @@ export function toRunUpdateData(patch: Partial<RunRecord>): Prisma.RunUpdateInpu
   if (patch.createdBy !== undefined) data.createdBy = patch.createdBy ?? null;
   if (patch.startedAt !== undefined) data.startedAt = patch.startedAt ?? null;
   if (patch.finishedAt !== undefined) data.finishedAt = patch.finishedAt ?? null;
+  if (patch.source !== undefined) data.source = patch.source ?? null;
+  if (patch.metadata !== undefined) data.metadata = toInputJson(patch.metadata);
+  if (patch.parentRunId !== undefined) data.parentRunId = patch.parentRunId ?? null;
 
   return data;
 }

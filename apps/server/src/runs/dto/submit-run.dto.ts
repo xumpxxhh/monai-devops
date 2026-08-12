@@ -24,4 +24,7 @@ export class SubmitRunDto {
   @IsInt()
   @Min(1)
   maxParallelSteps?: number;
+
+  @IsOptional()
+  initialState?: unknown;
 }

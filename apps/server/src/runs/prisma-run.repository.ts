@@ -87,6 +87,17 @@ export class PrismaRunRepository implements RunRepository {
     };
   }
 
+  async listByParentRunId(parentRunId: string): Promise<RunRecord[]> {
+    const rows = await this.prisma.run.findMany({
+      where: { parentRunId },
+      orderBy: { createdAt: 'asc' },
+      include: {
+        events: { orderBy: { eventIndex: 'asc' } },
+      },
+    });
+    return rows.map((row) => toRunRecord(row, row.events));
+  }
+
   async appendEvent(runId: string, event: RunRecord['events'][number]): Promise<void> {
     const limit = this.config.get<number>('RUN_HISTORY_LIMIT', 500);
 
@@ -172,6 +183,9 @@ export class PrismaRunRepository implements RunRepository {
     }
     if (filter.metadata && Object.keys(filter.metadata).length > 0) {
       where.metadata = { equals: toInputJson(filter.metadata) };
+    }
+    if (filter.parentRunId) {
+      where.parentRunId = filter.parentRunId;
     }
 
     return where;

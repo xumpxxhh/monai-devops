@@ -16,9 +16,9 @@ export function Drawer({ open, onOpenChange, title, children }: DrawerProps) {
   return (
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
       <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 bg-ink/20 z-40" />
+        <Dialog.Overlay className="fixed inset-0 bg-ink/20 z-40 overlay-in overlay-out" />
         <Dialog.Content
-          className="fixed right-0 top-0 bottom-0 z-50 w-full max-w-md bg-surface border-l border-line shadow-pop flex flex-col"
+          className="fixed right-0 top-0 bottom-0 z-50 w-full max-w-md bg-surface border-l border-line shadow-pop flex flex-col drawer-content-in drawer-content-out"
           onPointerDownOutside={(e) => {
             if (shouldPreventDismiss(e.target)) e.preventDefault();
           }}

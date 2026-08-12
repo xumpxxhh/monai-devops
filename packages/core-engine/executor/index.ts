@@ -29,7 +29,11 @@ import {
   WorkflowValidationError,
 } from '../errors.js';
 import type { SkipReason } from '../errors.js';
-import type { WorkflowLifecycleEvent, WorkflowRunMeta } from '../observer/index.js';
+import type {
+  WorkflowEventParent,
+  WorkflowLifecycleEvent,
+  WorkflowRunMeta,
+} from '../observer/index.js';
 import { WorkflowEventTypes } from '../observer/event-types.js';
 import { createContextLogger } from '../plugin/create-context-logger.js';
 import { WorkflowContextKeys } from '../context-keys.js';
@@ -45,51 +49,117 @@ import { resolveConfigReferences, validateWorkflowContextReferences } from './co
 import type {
   AbortSchedulingReason,
   CancelRunOptions,
+  EmbeddedRunHooks,
   ExecutionContext,
   ExecutionResult,
+  ExecuteWorkflowCallOptions,
   ExecutorOptions,
+  JsonSchemaObject,
   PauseRunOptions,
+  ResolveWorkflow,
   RunControlResult,
   RunStatusSnapshot,
+  StateCondition,
   StepCondition,
   WorkflowDefinition,
   WorkflowRunResult,
   WorkflowRunStatus,
   WorkflowStep,
   StepCompleteOptions,
+  WorkflowRefStep,
 } from './types.js';
+import {
+  getStepKind,
+  isPluginStep,
+  isSetStateStep,
+  isWorkflowRefStep,
+  StepKinds,
+} from './types.js';
+import { deriveChildRunId } from './child-run-id.js';
+import { defaultStateFromSchema, parseState } from './state-schema.js';
+import { validateStepKinds } from './step-kind-validation.js';
 
 export type {
   AbortSchedulingReason,
   CancelRunOptions,
+  EmbeddedRunHooks,
   ExecutionContext,
   ExecutionResult,
+  ExecuteWorkflowCallOptions,
   ExecutorOptions,
+  JsonSchemaObject,
   PauseRunOptions,
   PluginExecutor,
+  PluginStep,
+  ResolveWorkflow,
   RunControlMode,
   RunControlResult,
   RunControlStatus,
   RunStatusSnapshot,
+  SetStateStep,
+  StateCondition,
   StepCompleteOptions,
   StepCondition,
+  StepKind,
   WorkflowDefinition,
+  WorkflowRefStep,
   WorkflowRunResult,
   WorkflowRunStatus,
   WorkflowStep,
 } from './types.js';
 
-export type { ContextRef, ValidateWorkflowContextReferencesOptions } from './context-reference.js';
 export {
+  getStepKind,
+  isPluginStep,
+  isSetStateStep,
+  isWorkflowRefStep,
+  StepKinds,
+} from './types.js';
+
+export type {
+  ContextRef,
+  ResolveConfigReferencesOptions,
+  ValidateWorkflowContextReferencesOptions,
+} from './context-reference.js';
+export {
+  WORKFLOW_STATE_REF_ID,
   extractContextReferences,
   getAncestorIds,
   getValueByPath,
   isContextRef,
+  isWorkflowStateRef,
   resolveConfigReferences,
+  resolveStepResultSchema,
   validateWorkflowContextReferences,
 } from './context-reference.js';
 
-export type { WorkflowLifecycleEvent, WorkflowRunMeta };
+export type { StepKindDefinition } from './builtin-step-kinds.js';
+export {
+  BUILTIN_STEP_KIND_DEFINITIONS,
+  SET_STATE_RESULT_SCHEMA,
+  WORKFLOW_REF_RESULT_SCHEMA,
+} from './builtin-step-kinds.js';
+
+export {
+  StateSchemaConversionError,
+  defaultStateFromSchema,
+  jsonSchemaToZod,
+  parseState,
+} from './state-schema.js';
+
+export { deriveChildRunId, shortHash } from './child-run-id.js';
+export { getStepReferencePayload, validateStepKinds } from './step-kind-validation.js';
+export {
+  validateWorkflowNesting,
+  type ValidateWorkflowNestingOptions,
+} from './workflow-nesting.js';
+
+export type {
+  WorkflowEventParent,
+  WorkflowIterationChildResultSummary,
+  WorkflowLifecycleEvent,
+  WorkflowRunMeta,
+} from '../observer/index.js';
 
 export { RunHandle } from './run-handle.js';
 export { RunRegistry } from './run-registry.js';
@@ -98,6 +168,21 @@ export {
   WorkflowRunIdValidationError,
   WorkflowValidationError,
 } from '../errors.js';
+
+/** 单次 run 内可变的 state 容器 */
+interface RunStateBag {
+  current: unknown;
+  schema: JsonSchemaObject;
+}
+
+/** 步骤执行时携带的 run 级能力（state / 子工作流解析等） */
+interface StepRuntime {
+  runState?: RunStateBag;
+  resolveWorkflow?: ResolveWorkflow;
+  embeddedRunHooks?: EmbeddedRunHooks;
+  nestingDepth: number;
+  ancestorWorkflowIds: string[];
+}
 
 const WORKFLOW_RUN_ID_MAX_LENGTH = 128;
 /** 允许字母、数字、下划线、连字符；拒绝首尾空白后校验主体字符集 */
@@ -133,7 +218,7 @@ export function assertValidWorkflowRunId(id: unknown): asserts id is string {
 }
 
 /** 内存中的 DAG 邻接表：入度、下游列表、步骤索引 */
-interface DagGraph {
+export interface DagGraph {
   stepIds: Set<string>;
   inDegree: Map<string, number>;
   dependents: Map<string, string[]>;
@@ -179,8 +264,9 @@ function buildDag(steps: WorkflowStep[]): DagGraph {
 
 /**
  * 构建并校验 DAG 无环。visited !== stepIds.size 表示存在环，抛 WorkflowValidationError。
+ * 导出供 apps/server / apps/web 复用（§0 决策 25）。
  */
-function validateDag(steps: WorkflowStep[]): DagGraph {
+export function validateDag(steps: WorkflowStep[]): DagGraph {
   const graph = buildDag(steps);
   const queue: string[] = [];
   const degrees = new Map(graph.inDegree);
@@ -210,16 +296,16 @@ function validateDag(steps: WorkflowStep[]): DagGraph {
 }
 
 /**
- * 求值结构化步骤条件（基于 previousResults[when]）。
+ * 求值结构化步骤条件（基于 previousResults[when] 或 state[when]）。
  * 优先级：exists → equals → 默认「值非 null/undefined 即通过」。
  */
 function checkCondition(
-  condition: StepCondition | undefined,
-  previousResults: Record<string, unknown>,
+  condition: StepCondition | StateCondition | undefined,
+  source: Record<string, unknown>,
 ): boolean {
   if (!condition) return true;
 
-  const value = previousResults[condition.when];
+  const value = source[condition.when];
 
   if (condition.exists !== undefined) {
     const exists = value !== undefined && value !== null;
@@ -231,6 +317,13 @@ function checkCondition(
   }
 
   return value !== undefined && value !== null;
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
+    return value as Record<string, unknown>;
+  }
+  return {};
 }
 
 /** 依赖步骤均已完成且非 FAILED（SKIPPED/COMPLETED 视为可继续下游） */
@@ -396,6 +489,7 @@ function buildWorkflowRunResult(
   workflowId: string,
   finalResults: ExecutionResult[],
   handle: RunHandle,
+  state?: unknown,
 ): WorkflowRunResult {
   const hasFailed = finalResults.some((r) => r.status === StepStatuses.FAILED);
   const abortReason = handle.getAbortReason();
@@ -412,6 +506,7 @@ function buildWorkflowRunResult(
     status,
     workflowId,
     results: finalResults,
+    ...(state !== undefined ? { state } : {}),
   };
 }
 
@@ -433,14 +528,21 @@ export function createWorkflowExecutor(options: ExecutorOptions = {}) {
     onWorkflowAbort,
     inFlightTimeoutMs = 30_000,
     resolvePluginResultSchema,
+    resolveWorkflow: defaultResolveWorkflow,
+    embeddedRunHooks: defaultEmbeddedRunHooks,
+    maxNestingDepth = 3,
   } = options;
 
   const executionHistory: Map<string, ExecutionResult[]> = new Map();
   const registry = new RunRegistry();
+  /** 子 run id → 父挂靠信息；emit 时统一注入 parent */
+  const eventParents = new Map<string, WorkflowEventParent>();
 
   /** 向 WorkflowObserver 派发事件；onEvent 支持 async，此处 await 保证顺序 */
   async function emit(event: WorkflowLifecycleEvent): Promise<void> {
-    await observer?.onEvent?.(event);
+    const parent = eventParents.get(event.workflowRunId);
+    const enriched = parent && event.parent === undefined ? { ...event, parent } : event;
+    await observer?.onEvent?.(enriched as WorkflowLifecycleEvent);
   }
 
   /**
@@ -499,13 +601,7 @@ export function createWorkflowExecutor(options: ExecutorOptions = {}) {
 
   /**
    * 执行单个步骤（可被 executeWorkflow 调度，也可单独调用）。
-   *
-   * 流程：条件求值 → onStepStart（资源 acquire）→ step:start → 注入 logger/signal →
-   * 插件执行 → flush 日志 → step:finished。
-   *
-   * 跳过路径（不发 step:start）：条件不满足、signal 已 aborted、PLUGIN_CANCELLED、
-   * PluginCancelledError、ResourceQueueCancelledError、in-flight 超时。
-   * 失败路径：插件返回 success:false（非 CANCELLED）、基础设施 throw（StepExecutionError 等）。
+   * 公开 API 不暴露内部 StepRuntime；workflow 步骤需在 executeWorkflow 上下文中运行。
    */
   async function executeStep(
     workflowRunId: string,
@@ -514,6 +610,21 @@ export function createWorkflowExecutor(options: ExecutorOptions = {}) {
     meta?: WorkflowRunMeta,
     signal?: AbortSignal,
     handle?: RunHandle,
+  ): Promise<ExecutionResult> {
+    return executeStepInternal(workflowRunId, step, context, meta, signal, handle, {
+      nestingDepth: 0,
+      ancestorWorkflowIds: [],
+    });
+  }
+
+  async function executeStepInternal(
+    workflowRunId: string,
+    step: WorkflowStep,
+    context: ExecutionContext,
+    meta: WorkflowRunMeta | undefined,
+    signal: AbortSignal | undefined,
+    handle: RunHandle | undefined,
+    runtime: StepRuntime,
   ): Promise<ExecutionResult> {
     if (meta) {
       assertValidWorkflowRunId(workflowRunId);
@@ -525,8 +636,20 @@ export function createWorkflowExecutor(options: ExecutorOptions = {}) {
     }
 
     try {
-      // onStepStart 在 step:start 之前 await，引擎在此挂起资源等待
-      await onStepStart?.(step, context, meta);
+      await onStepStart?.(step, context, meta, {
+        emitQueued: async (info) => {
+          if (!meta) return;
+          await emit(
+            buildEvent(workflowRunId, {
+              type: WorkflowEventTypes.STEP_QUEUED,
+              meta,
+              step,
+              resourceType: info.resourceType,
+              priority: info.priority,
+            }),
+          );
+        },
+      });
       if (meta) {
         await emit(
           buildEvent(workflowRunId, {
@@ -537,114 +660,32 @@ export function createWorkflowExecutor(options: ExecutorOptions = {}) {
         );
       }
 
-      let pluginResult: PluginResult;
+      const kind = getStepKind(step);
 
-      if (pluginExecutor) {
-        let flushLogs: (() => Promise<void>) | undefined;
-        let pluginContext = context as typeof context & Record<string, unknown>;
-
-        if (meta) {
-          const { logger, flush } = createContextLogger({
-            emit: (log) =>
-              emit(
-                buildEvent(workflowRunId, {
-                  type: WorkflowEventTypes.PLUGIN_LOG,
-                  meta,
-                  step,
-                  log,
-                }),
-              ),
-          });
-          flushLogs = flush;
-          // hard cancel / abortInFlight 时注入 AbortSignal，供插件协作式退出
-          pluginContext = {
-            ...context,
-            [PluginContextKeys.logger]: logger,
-            ...(signal ? { [WorkflowContextKeys.signal]: signal } : {}),
-          };
-        } else {
-          pluginContext = { ...context, [PluginContextKeys.logger]: noopLogger };
-        }
-
-        if (signal?.aborted) {
-          const executionResult = buildSkippedResult(
-            step.id,
-            resolveInFlightAbortSkipReason(handle),
-          );
-          await notifyStepComplete(workflowRunId, step, executionResult, context, meta);
-          return executionResult;
-        }
-
-        const resolvedConfig = resolveConfigReferences(
-          step.config,
-          context.previousResultsData ?? {},
-          step.id,
-        ) as typeof step.config;
-
-        const raced = await racePluginWithInFlightAbort(
-          () => pluginExecutor(step.plugin, resolvedConfig, pluginContext),
-          signal,
-          () => handle?.isInFlightAbortActive() ?? false,
-          inFlightTimeoutMs,
-        );
-
-        if (raced.outcome === 'timeout') {
-          const executionResult = buildSkippedResult(
-            step.id,
-            resolveInFlightAbortSkipReason(handle),
-          );
-          // 插件可能仍在运行：推迟 onStepComplete 中的资源释放
-          await notifyStepComplete(workflowRunId, step, executionResult, context, meta, {
-            deferReleaseUntil: raced.pluginSettled,
-          });
-          return executionResult;
-        }
-
-        pluginResult = raced.result;
-        await flushLogs?.();
-      } else {
-        pluginResult = {
-          success: true,
-          data: {
-            message: `步骤 ${step.name} 执行成功`,
-            plugin: step.plugin,
-          },
-        };
+      if (kind === StepKinds.SET_STATE) {
+        return await executeSetStateStep(workflowRunId, step, context, meta, runtime);
       }
 
-      // PLUGIN_CANCELLED：协作取消，记 SKIPPED 而非 FAILED
-      if (!pluginResult.success && pluginResult.code === PluginFailureCodes.PLUGIN_CANCELLED) {
-        const executionResult = buildSkippedResult(step.id, resolveInFlightAbortSkipReason(handle));
-        await notifyStepComplete(workflowRunId, step, executionResult, context, meta);
-        return executionResult;
-      }
-
-      if (!pluginResult.success) {
-        return finalizeFailure(
+      if (kind === StepKinds.WORKFLOW) {
+        return await executeWorkflowRefStep(
           workflowRunId,
           step,
-          buildFailedResult(step.id, {
-            pluginResult,
-            error: new Error(pluginResult.message ?? `插件 ${step.plugin} 执行失败`),
-            failureKind: pluginFailureKind(pluginResult),
-          }),
           context,
           meta,
+          signal,
+          handle,
+          runtime,
         );
       }
 
-      const executionResult = buildCompletedResult(step.id, pluginResult);
-      await notifyStepComplete(workflowRunId, step, executionResult, context, meta);
-      return executionResult;
+      return await executePluginStep(workflowRunId, step, context, meta, signal, handle, runtime);
     } catch (error) {
-      // 插件层协作取消：转为 SKIPPED 而非 FAILED
       if (error instanceof PluginCancelledError) {
         const executionResult = buildSkippedResult(step.id, resolveInFlightAbortSkipReason(handle));
         await notifyStepComplete(workflowRunId, step, executionResult, context, meta);
         return executionResult;
       }
 
-      // onStepStart 资源等待被 cancelByWorkflowRunId 拒绝
       if (error instanceof ResourceQueueCancelledError) {
         const executionResult = buildSkippedResult(step.id, resolveQueueSkipReason(handle));
         await notifyStepComplete(workflowRunId, step, executionResult, context, meta);
@@ -666,6 +707,506 @@ export function createWorkflowExecutor(options: ExecutorOptions = {}) {
         meta,
       );
     }
+  }
+
+  async function executeSetStateStep(
+    workflowRunId: string,
+    step: WorkflowStep,
+    context: ExecutionContext,
+    meta: WorkflowRunMeta | undefined,
+    runtime: StepRuntime,
+  ): Promise<ExecutionResult> {
+    if (!isSetStateStep(step)) {
+      return finalizeFailure(
+        workflowRunId,
+        step,
+        buildFailedResult(step.id, {
+          error: new Error(`步骤 ${step.id} 缺少 patch`),
+          failureKind: StepFailureKinds.INTERNAL,
+        }),
+        context,
+        meta,
+      );
+    }
+
+    const runState = runtime.runState;
+    if (!runState) {
+      return finalizeFailure(
+        workflowRunId,
+        step,
+        buildFailedResult(step.id, {
+          error: new Error(
+            `步骤 ${step.id} 为 set_state，但当前 run 无 state（未声明 stateSchema）`,
+          ),
+          failureKind: StepFailureKinds.INTERNAL,
+        }),
+        context,
+        meta,
+      );
+    }
+
+    const resolvedPatch = resolveConfigReferences(
+      step.patch,
+      context.previousResultsData ?? {},
+      step.id,
+      { runState: runState.current },
+    );
+
+    if (
+      typeof resolvedPatch !== 'object' ||
+      resolvedPatch === null ||
+      Array.isArray(resolvedPatch)
+    ) {
+      return finalizeFailure(
+        workflowRunId,
+        step,
+        buildFailedResult(step.id, {
+          error: new Error(`步骤 ${step.id} 的 patch 解析后必须是对象`),
+          failureKind: StepFailureKinds.CONFIG_RESOLUTION,
+        }),
+        context,
+        meta,
+      );
+    }
+
+    const merged = { ...asRecord(runState.current), ...(resolvedPatch as Record<string, unknown>) };
+    const parsed = parseState(runState.schema, merged);
+    if (!parsed.success) {
+      return finalizeFailure(
+        workflowRunId,
+        step,
+        buildFailedResult(step.id, {
+          error: new Error(`步骤 ${step.id} set_state 后 state 校验失败：${parsed.message}`),
+          failureKind: StepFailureKinds.INTERNAL,
+        }),
+        context,
+        meta,
+      );
+    }
+
+    runState.current = parsed.data;
+    const pluginResult: PluginResult = { success: true, data: parsed.data };
+    const executionResult = buildCompletedResult(step.id, pluginResult);
+    await notifyStepComplete(workflowRunId, step, executionResult, context, meta);
+    return executionResult;
+  }
+
+  async function executeWorkflowRefStep(
+    workflowRunId: string,
+    step: WorkflowStep,
+    context: ExecutionContext,
+    meta: WorkflowRunMeta | undefined,
+    signal: AbortSignal | undefined,
+    handle: RunHandle | undefined,
+    runtime: StepRuntime,
+  ): Promise<ExecutionResult> {
+    if (!isWorkflowRefStep(step)) {
+      return finalizeFailure(
+        workflowRunId,
+        step,
+        buildFailedResult(step.id, {
+          error: new Error(`步骤 ${step.id} 缺少 workflowRef`),
+          failureKind: StepFailureKinds.INTERNAL,
+        }),
+        context,
+        meta,
+      );
+    }
+
+    const resolveWorkflow = runtime.resolveWorkflow;
+    if (!resolveWorkflow) {
+      return finalizeFailure(
+        workflowRunId,
+        step,
+        buildFailedResult(step.id, {
+          error: new Error(`步骤 ${step.id} 为 workflow 引用，但未提供 resolveWorkflow`),
+          failureKind: StepFailureKinds.INTERNAL,
+        }),
+        context,
+        meta,
+      );
+    }
+
+    if (signal?.aborted) {
+      const executionResult = buildSkippedResult(step.id, resolveInFlightAbortSkipReason(handle));
+      await notifyStepComplete(workflowRunId, step, executionResult, context, meta);
+      return executionResult;
+    }
+
+    const nextDepth = runtime.nestingDepth + 1;
+    if (nextDepth > maxNestingDepth) {
+      return finalizeFailure(
+        workflowRunId,
+        step,
+        buildFailedResult(step.id, {
+          error: new Error(`步骤 ${step.id} 嵌套深度 ${nextDepth} 超过上限 ${maxNestingDepth}`),
+          failureKind: StepFailureKinds.INTERNAL,
+        }),
+        context,
+        meta,
+      );
+    }
+
+    const maxIterations = step.loop?.maxIterations ?? 1;
+    const iterations: Array<{ index: number; state?: unknown; success: boolean }> = [];
+    let lastSuccess = true;
+    let lastState: unknown;
+    let stateIn = resolveInputState(step, context, runtime);
+
+    let activeChildRunId: string | undefined;
+    const unsubscribers: Array<() => void> = [];
+    if (handle) {
+      unsubscribers.push(
+        handle.onPauseRequested(async (options) => {
+          if (!activeChildRunId) return;
+          await pauseRun(activeChildRunId, options);
+          handle.markNestedPaused(step.id);
+        }),
+        handle.onResumeRequested(async () => {
+          if (!activeChildRunId) return;
+          handle.clearNestedPaused(step.id);
+          await resumeRun(activeChildRunId);
+        }),
+        handle.onCancelRequested(async (options) => {
+          if (!activeChildRunId) return;
+          await cancelRun(activeChildRunId, options);
+        }),
+      );
+    }
+
+    try {
+      for (let i = 0; i < maxIterations; i++) {
+        if (signal?.aborted || handle?.shouldStopScheduling()) {
+          const skipReason = signal?.aborted
+            ? resolveInFlightAbortSkipReason(handle)
+            : resolveAbortSkipReason(handle?.getAbortReason() ?? 'user_cancel');
+          const executionResult = buildSkippedResult(step.id, skipReason);
+          await notifyStepComplete(workflowRunId, step, executionResult, context, meta);
+          return executionResult;
+        }
+
+        const childDefinition = await resolveWorkflow(step.workflowRef.importId);
+        if (runtime.ancestorWorkflowIds.includes(childDefinition.id)) {
+          return finalizeFailure(
+            workflowRunId,
+            step,
+            buildFailedResult(step.id, {
+              error: new Error(`步骤 ${step.id} 引用工作流 "${childDefinition.id}" 形成引用环`),
+              failureKind: StepFailureKinds.INTERNAL,
+            }),
+            context,
+            meta,
+          );
+        }
+
+        // 禁止循环嵌套循环：本步带 loop 时，子定义不得再含带 loop 的 workflow 步骤
+        if (step.loop !== undefined) {
+          const nestedLoop = childDefinition.steps.find(
+            (s) => isWorkflowRefStep(s) && s.loop !== undefined,
+          );
+          if (nestedLoop) {
+            return finalizeFailure(
+              workflowRunId,
+              step,
+              buildFailedResult(step.id, {
+                error: new Error(
+                  `禁止循环嵌套循环：步骤 ${step.id} 带 loop，但子工作流 "${childDefinition.id}" 含带 loop 的步骤 "${nestedLoop.id}"`,
+                ),
+                failureKind: StepFailureKinds.INTERNAL,
+              }),
+              context,
+              meta,
+            );
+          }
+        }
+
+        if (step.loop?.until && childDefinition.stateSchema === undefined) {
+          return finalizeFailure(
+            workflowRunId,
+            step,
+            buildFailedResult(step.id, {
+              error: new Error(
+                `步骤 ${step.id} 配置了 loop.until，但被引用工作流未声明 stateSchema`,
+              ),
+              failureKind: StepFailureKinds.INTERNAL,
+            }),
+            context,
+            meta,
+          );
+        }
+
+        if (stateIn !== undefined && childDefinition.stateSchema === undefined) {
+          return finalizeFailure(
+            workflowRunId,
+            step,
+            buildFailedResult(step.id, {
+              error: new Error(
+                `步骤 ${step.id} 传入了 inputState，但被引用工作流未声明 stateSchema`,
+              ),
+              failureKind: StepFailureKinds.INTERNAL,
+            }),
+            context,
+            meta,
+          );
+        }
+
+        const childRunId = deriveChildRunId(workflowRunId, step.id, i);
+        activeChildRunId = childRunId;
+        const parentCtx: WorkflowEventParent = {
+          runId: workflowRunId,
+          stepId: step.id,
+          iteration: i,
+        };
+        eventParents.set(childRunId, parentCtx);
+
+        if (meta) {
+          await emit(
+            buildEvent(workflowRunId, {
+              type: WorkflowEventTypes.WORKFLOW_ITERATION_START,
+              meta,
+              step,
+              iteration: i,
+            }),
+          );
+        }
+
+        const hooks = runtime.embeddedRunHooks;
+        await hooks?.onChildRunStart(childRunId, childDefinition, {
+          parentRunId: workflowRunId,
+          stepId: step.id,
+          iteration: i,
+        });
+
+        let childResult: WorkflowRunResult;
+        try {
+          childResult = await executeWorkflow(
+            childRunId,
+            childDefinition,
+            {
+              ...stripCallerRunId(context),
+              artifacts: context.artifacts,
+            },
+            {
+              initialState: stateIn,
+              resolveWorkflow,
+              embeddedRunHooks: hooks,
+              nestingDepth: nextDepth,
+              ancestorWorkflowIds: [...runtime.ancestorWorkflowIds, childDefinition.id],
+            },
+          );
+        } finally {
+          eventParents.delete(childRunId);
+        }
+
+        activeChildRunId = undefined;
+        handle?.clearNestedPaused(step.id);
+        await hooks?.onChildRunFinished(childRunId, childResult);
+
+        if (meta) {
+          await emit(
+            buildEvent(workflowRunId, {
+              type: WorkflowEventTypes.WORKFLOW_ITERATION_FINISHED,
+              meta,
+              step,
+              iteration: i,
+              childResult: {
+                childRunId,
+                success: childResult.success,
+                status: childResult.status,
+                ...(childResult.state !== undefined ? { state: childResult.state } : {}),
+              },
+            }),
+          );
+        }
+
+        iterations.push({
+          index: i,
+          state: childResult.state,
+          success: childResult.success,
+        });
+        lastSuccess = childResult.success;
+        lastState = childResult.state;
+
+        if (handle?.getAbortReason() === 'user_cancel' || handle?.getAbortReason() === 'destroy') {
+          const executionResult = buildSkippedResult(
+            step.id,
+            resolveAbortSkipReason(handle.getAbortReason()),
+          );
+          await notifyStepComplete(workflowRunId, step, executionResult, context, meta);
+          return executionResult;
+        }
+
+        if (!childResult.success) {
+          break;
+        }
+
+        if (step.loop?.until && checkCondition(step.loop.until, asRecord(childResult.state))) {
+          break;
+        }
+
+        stateIn = childResult.state;
+      }
+    } finally {
+      activeChildRunId = undefined;
+      for (const unsub of unsubscribers) unsub();
+      handle?.clearNestedPaused(step.id);
+    }
+
+    const data = {
+      state: lastState,
+      iterations,
+      iterationCount: iterations.length,
+    };
+
+    if (!lastSuccess) {
+      const pluginResult: PluginResult = {
+        success: false,
+        message: `子工作流执行失败（共 ${iterations.length} 轮）`,
+        data,
+      };
+      return finalizeFailure(
+        workflowRunId,
+        step,
+        buildFailedResult(step.id, {
+          pluginResult,
+          error: new Error(pluginResult.message!),
+          failureKind: StepFailureKinds.SUBWORKFLOW_FAILED,
+        }),
+        context,
+        meta,
+      );
+    }
+
+    const pluginResult: PluginResult = { success: true, data };
+    const executionResult = buildCompletedResult(step.id, pluginResult);
+    await notifyStepComplete(workflowRunId, step, executionResult, context, meta);
+    return executionResult;
+  }
+
+  function resolveInputState(
+    step: WorkflowRefStep,
+    context: ExecutionContext,
+    runtime: StepRuntime,
+  ): unknown {
+    if (step.inputState === undefined) return undefined;
+    return resolveConfigReferences(step.inputState, context.previousResultsData ?? {}, step.id, {
+      runState: runtime.runState?.current,
+    });
+  }
+
+  async function executePluginStep(
+    workflowRunId: string,
+    step: WorkflowStep,
+    context: ExecutionContext,
+    meta: WorkflowRunMeta | undefined,
+    signal: AbortSignal | undefined,
+    handle: RunHandle | undefined,
+    runtime: StepRuntime,
+  ): Promise<ExecutionResult> {
+    if (!isPluginStep(step)) {
+      return finalizeFailure(
+        workflowRunId,
+        step,
+        buildFailedResult(step.id, {
+          error: new Error(`步骤 ${step.id} 缺少 plugin/config`),
+          failureKind: StepFailureKinds.INTERNAL,
+        }),
+        context,
+        meta,
+      );
+    }
+
+    let pluginResult: PluginResult;
+
+    if (pluginExecutor) {
+      let flushLogs: (() => Promise<void>) | undefined;
+      let pluginContext = context as typeof context & Record<string, unknown>;
+
+      if (meta) {
+        const { logger, flush } = createContextLogger({
+          emit: (log) =>
+            emit(
+              buildEvent(workflowRunId, {
+                type: WorkflowEventTypes.PLUGIN_LOG,
+                meta,
+                step,
+                log,
+              }),
+            ),
+        });
+        flushLogs = flush;
+        pluginContext = {
+          ...context,
+          [PluginContextKeys.logger]: logger,
+          ...(signal ? { [WorkflowContextKeys.signal]: signal } : {}),
+        };
+      } else {
+        pluginContext = { ...context, [PluginContextKeys.logger]: noopLogger };
+      }
+
+      if (signal?.aborted) {
+        const executionResult = buildSkippedResult(step.id, resolveInFlightAbortSkipReason(handle));
+        await notifyStepComplete(workflowRunId, step, executionResult, context, meta);
+        return executionResult;
+      }
+
+      const resolvedConfig = resolveConfigReferences(
+        step.config,
+        context.previousResultsData ?? {},
+        step.id,
+        { runState: runtime.runState?.current },
+      ) as typeof step.config;
+
+      const raced = await racePluginWithInFlightAbort(
+        () => pluginExecutor(step.plugin, resolvedConfig, pluginContext),
+        signal,
+        () => handle?.isInFlightAbortActive() ?? false,
+        inFlightTimeoutMs,
+      );
+
+      if (raced.outcome === 'timeout') {
+        const executionResult = buildSkippedResult(step.id, resolveInFlightAbortSkipReason(handle));
+        await notifyStepComplete(workflowRunId, step, executionResult, context, meta, {
+          deferReleaseUntil: raced.pluginSettled,
+        });
+        return executionResult;
+      }
+
+      pluginResult = raced.result;
+      await flushLogs?.();
+    } else {
+      pluginResult = {
+        success: true,
+        data: {
+          message: `步骤 ${step.name} 执行成功`,
+          plugin: step.plugin,
+        },
+      };
+    }
+
+    if (!pluginResult.success && pluginResult.code === PluginFailureCodes.PLUGIN_CANCELLED) {
+      const executionResult = buildSkippedResult(step.id, resolveInFlightAbortSkipReason(handle));
+      await notifyStepComplete(workflowRunId, step, executionResult, context, meta);
+      return executionResult;
+    }
+
+    if (!pluginResult.success) {
+      return finalizeFailure(
+        workflowRunId,
+        step,
+        buildFailedResult(step.id, {
+          pluginResult,
+          error: new Error(pluginResult.message ?? `插件 ${step.plugin} 执行失败`),
+          failureKind: pluginFailureKind(pluginResult),
+        }),
+        context,
+        meta,
+      );
+    }
+
+    const executionResult = buildCompletedResult(step.id, pluginResult);
+    await notifyStepComplete(workflowRunId, step, executionResult, context, meta);
+    return executionResult;
   }
 
   /** 为补发 step:finished 等场景构造最小 ExecutionContext */
@@ -759,24 +1300,52 @@ export function createWorkflowExecutor(options: ExecutorOptions = {}) {
   /**
    * 执行完整工作流（DAG 调度主循环）。
    *
-   * 1. 校验 workflowRunId + DAG，注册 RunHandle，发出 workflow:start
+   * 1. 校验 workflowRunId + DAG + step kinds，注册 RunHandle，发出 workflow:start
    * 2. ready 队列 + inFlight 池并行执行，上限 maxParallelSteps
    * 3. 每步完成后 propagateDependents 解锁下游
    * 4. 循环内处理：failFast 中止、用户取消、暂停/恢复
-   * 5. 收尾：补发未执行步骤的 step:finished，汇总 WorkflowRunResult，workflow:finished
+   * 5. 收尾：补发未执行步骤的 step:finished，汇总 WorkflowRunResult（含 state），workflow:finished
    */
   async function executeWorkflow(
     workflowRunId: string,
     workflow: WorkflowDefinition,
     context: Partial<ExecutionContext> = {},
+    callOptions: ExecuteWorkflowCallOptions = {},
   ): Promise<WorkflowRunResult> {
     assertValidWorkflowRunId(workflowRunId);
     const handle = registry.register(workflowRunId);
     handle.setTotalSteps(workflow.steps.length);
 
+    const resolveWorkflow = callOptions.resolveWorkflow ?? defaultResolveWorkflow;
+    const embeddedRunHooks = callOptions.embeddedRunHooks ?? defaultEmbeddedRunHooks;
+    const nestingDepth = callOptions.nestingDepth ?? 0;
+    const ancestorWorkflowIds =
+      callOptions.ancestorWorkflowIds ?? (workflow.id ? [workflow.id] : []);
+
     try {
       const graph = validateDag(workflow.steps);
+      validateStepKinds(workflow);
       validateWorkflowContextReferences(workflow, { resolvePluginResultSchema });
+
+      if (callOptions.initialState !== undefined && workflow.stateSchema === undefined) {
+        throw new WorkflowValidationError(
+          `工作流 "${workflow.id}" 未声明 stateSchema，不允许传入 initialState`,
+        );
+      }
+
+      let runState: RunStateBag | undefined;
+      if (workflow.stateSchema !== undefined) {
+        const initial =
+          callOptions.initialState !== undefined
+            ? callOptions.initialState
+            : defaultStateFromSchema(workflow.stateSchema);
+        const parsed = parseState(workflow.stateSchema, initial);
+        if (!parsed.success) {
+          throw new WorkflowValidationError(`initialState 不符合 stateSchema：${parsed.message}`);
+        }
+        runState = { current: parsed.data, schema: workflow.stateSchema };
+      }
+
       const cleanContext = stripCallerRunId(context);
       const runMeta = buildRunMeta(workflow.id, cleanContext);
       handle.setRunMeta(runMeta);
@@ -785,6 +1354,15 @@ export function createWorkflowExecutor(options: ExecutorOptions = {}) {
         ...cleanContext,
         runId: workflowRunId,
         ...(traceId !== undefined ? { traceId } : {}),
+        ...(runState ? { [WorkflowContextKeys.state]: runState.current } : {}),
+      };
+
+      const stepRuntime: StepRuntime = {
+        runState,
+        resolveWorkflow,
+        embeddedRunHooks,
+        nestingDepth,
+        ancestorWorkflowIds,
       };
 
       await emit(
@@ -818,15 +1396,17 @@ export function createWorkflowExecutor(options: ExecutorOptions = {}) {
             stepId: step.id,
             previousResults: toPreviousResults(results),
             previousResultsData: toPreviousResultsData(results),
+            ...(runState ? { [WorkflowContextKeys.state]: runState.current } : {}),
           };
 
-          const result = await executeStep(
+          const result = await executeStepInternal(
             workflowRunId,
             step,
             executionContext,
             runMeta,
             signal,
             handle,
+            stepRuntime,
           );
           results.set(stepId, result);
 
@@ -943,7 +1523,18 @@ export function createWorkflowExecutor(options: ExecutorOptions = {}) {
 
       executionHistory.set(workflowRunId, finalResults);
 
-      const runResult = buildWorkflowRunResult(workflow.id, finalResults, handle);
+      let finalState: unknown | undefined;
+      if (runState) {
+        const parsed = parseState(runState.schema, runState.current);
+        if (!parsed.success) {
+          throw new WorkflowValidationError(
+            `工作流结束时 state 不符合 stateSchema：${parsed.message}`,
+          );
+        }
+        finalState = parsed.data;
+      }
+
+      const runResult = buildWorkflowRunResult(workflow.id, finalResults, handle, finalState);
       handle.setTerminalStatus(runResult.status === 'success' ? 'finished' : runResult.status);
 
       await emit(

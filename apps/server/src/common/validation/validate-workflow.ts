@@ -1,43 +1,29 @@
-import type { WorkflowDefinition, WorkflowStep } from '@monai-devops/core-engine';
 import {
+  isWorkflowRefStep,
+  validateDag,
+  validateStepKinds,
   validateWorkflowContextReferences,
+  validateWorkflowNesting,
   WorkflowValidationError,
+  type ResolveWorkflow,
   type ValidateWorkflowContextReferencesOptions,
+  type WorkflowDefinition,
 } from '@monai-devops/core-engine';
 
-function buildDag(steps: WorkflowStep[]) {
-  const stepById = new Map<string, WorkflowStep>();
-  const inDegree = new Map<string, number>();
-  const dependents = new Map<string, string[]>();
+export type ValidateWorkflowDefinitionOptions = ValidateWorkflowContextReferencesOptions & {
+  /** 嵌套校验用；保存侧应注入查库 resolve */
+  resolveWorkflow?: ResolveWorkflow;
+  /** 本工作流已登记的 importId 集合；提供时校验 workflow 步骤引用一致性 */
+  knownImportIds?: ReadonlySet<string>;
+};
 
-  for (const step of steps) {
-    if (stepById.has(step.id)) {
-      throw new WorkflowValidationError(`重复的步骤 ID: ${step.id}`);
-    }
-    stepById.set(step.id, step);
-    inDegree.set(step.id, 0);
-    dependents.set(step.id, []);
-  }
-
-  for (const step of steps) {
-    for (const depId of step.dependsOn ?? []) {
-      if (!stepById.has(depId)) {
-        throw new WorkflowValidationError(`步骤 ${step.id} 依赖不存在的步骤: ${depId}`);
-      }
-      inDegree.set(step.id, (inDegree.get(step.id) ?? 0) + 1);
-      dependents.get(depId)!.push(step.id);
-    }
-  }
-
-  return { stepIds: new Set(stepById.keys()), inDegree, dependents };
-}
-
-export type ValidateWorkflowDefinitionOptions = ValidateWorkflowContextReferencesOptions;
-
-export function validateWorkflowDefinition(
+/**
+ * 校验工作流定义：基础字段、step kinds、DAG、`$ref`、可选嵌套与 import 一致性。
+ */
+export async function validateWorkflowDefinition(
   workflow: WorkflowDefinition,
   options: ValidateWorkflowDefinitionOptions = {},
-): void {
+): Promise<void> {
   if (!workflow.id?.trim()) {
     throw new WorkflowValidationError('workflow.id 必须是非空字符串');
   }
@@ -48,39 +34,66 @@ export function validateWorkflowDefinition(
     throw new WorkflowValidationError('workflow.steps 必须是非空数组');
   }
 
+  const seenNames = new Set<string>();
   for (const step of workflow.steps) {
-    if (!step.id?.trim() || !step.name?.trim() || !step.plugin?.trim()) {
-      throw new WorkflowValidationError('每个 step 需要非空的 id、name、plugin');
+    if (!step.id?.trim() || !step.name?.trim()) {
+      throw new WorkflowValidationError('每个 step 需要非空的 id、name');
     }
-    if (!step.config || typeof step.config !== 'object') {
-      throw new WorkflowValidationError(`步骤 ${step.id} 的 config 必须是对象`);
+    const name = step.name.trim();
+    if (seenNames.has(name)) {
+      throw new WorkflowValidationError(`步骤名称「${name}」重复`);
     }
+    seenNames.add(name);
   }
 
-  const graph = buildDag(workflow.steps);
-  const degrees = new Map(graph.inDegree);
-  const queue: string[] = [];
-
-  for (const [id, degree] of degrees) {
-    if (degree === 0) queue.push(id);
-  }
-
-  let visited = 0;
-  const queueCopy = [...queue];
-
-  while (queueCopy.length > 0) {
-    const id = queueCopy.shift()!;
-    visited++;
-    for (const dependent of graph.dependents.get(id) ?? []) {
-      const next = (degrees.get(dependent) ?? 0) - 1;
-      degrees.set(dependent, next);
-      if (next === 0) queueCopy.push(dependent);
-    }
-  }
-
-  if (visited !== graph.stepIds.size) {
-    throw new WorkflowValidationError('工作流存在循环依赖');
-  }
-
+  validateStepKinds(workflow);
+  validateDag(workflow.steps);
   validateWorkflowContextReferences(workflow, options);
+
+  if (options.knownImportIds) {
+    validateWorkflowImportConsistency(workflow, options.knownImportIds);
+  }
+
+  await validateWorkflowNesting(workflow, {
+    resolveWorkflow: options.resolveWorkflow,
+  });
+}
+
+/**
+ * 每个 `kind: 'workflow'` 步骤的 `workflowRef.importId` 必须落在已知导入集合中。
+ */
+export function validateWorkflowImportConsistency(
+  workflow: WorkflowDefinition,
+  knownImportIds: ReadonlySet<string>,
+): void {
+  for (const step of workflow.steps) {
+    if (!isWorkflowRefStep(step)) continue;
+    const importId = step.workflowRef?.importId?.trim();
+    if (!importId) {
+      throw new WorkflowValidationError(`步骤 ${step.id} 缺少 workflowRef.importId`);
+    }
+    if (!knownImportIds.has(importId)) {
+      throw new WorkflowValidationError(
+        `步骤 ${step.id} 的 importId "${importId}" 不在本工作流的导入记录中`,
+      );
+    }
+  }
+}
+
+/**
+ * 收集定义中被引用的 importId，以及 stepId → importId 映射（供保存时同步清理）。
+ */
+export function collectWorkflowImportRefs(workflow: WorkflowDefinition): {
+  importIds: Set<string>;
+  stepIdByImportId: Map<string, string>;
+} {
+  const importIds = new Set<string>();
+  const stepIdByImportId = new Map<string, string>();
+  for (const step of workflow.steps) {
+    if (!isWorkflowRefStep(step)) continue;
+    const importId = step.workflowRef.importId.trim();
+    importIds.add(importId);
+    stepIdByImportId.set(importId, step.id);
+  }
+  return { importIds, stepIdByImportId };
 }

@@ -16,6 +16,8 @@ export const StepFailureKinds = {
   RESOURCE: 'resource',
   INTERNAL: 'internal',
   CONFIG_RESOLUTION: 'config_resolution',
+  /** 子工作流执行失败（workflow 步骤） */
+  SUBWORKFLOW_FAILED: 'subworkflow_failed',
 } as const;
 
 export type StepFailureKind = (typeof StepFailureKinds)[keyof typeof StepFailureKinds];

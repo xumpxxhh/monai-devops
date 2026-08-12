@@ -64,6 +64,33 @@ describe('createEngine integration', () => {
     engine.destroy();
   });
 
+  it('scheduleWorkflow forwards callOptions to runWorkflow', async () => {
+    const engine = createEngine({ plugins: [testPlugin] });
+    const result = await engine.scheduleWorkflow(
+      'scheduled-call-options-run',
+      {
+        id: 'wf-no-state',
+        name: 'no state schema',
+        steps: [
+          {
+            id: 's1',
+            name: 'step',
+            plugin: 'test-plugin',
+            config: { type: 'unit' },
+          },
+        ],
+      },
+      {},
+      { initialState: { count: 1 } },
+    );
+    assert.equal(result.success, false);
+    assert.ok(
+      result.error instanceof Error &&
+        /未声明 stateSchema，不允许传入 initialState/.test(result.error.message),
+    );
+    engine.destroy();
+  });
+
   it('queues step when resource unavailable then completes after register', async () => {
     const engine = createEngine({
       plugins: [testPlugin],

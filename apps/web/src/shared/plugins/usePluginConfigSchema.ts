@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { pluginsApi } from '../api/misc';
-import type { JsonObjectSchema } from '../ui/json-schema-form/types';
+import type { ConfigReferenceSource, JsonObjectSchema } from '../ui/json-schema-form/types';
 import {
   coerceValidatedValues,
   mergeWithDefaults,
@@ -29,6 +29,7 @@ export function preloadPluginConfigSchemas() {
 export interface UsePluginConfigSchemaOptions {
   enabled?: boolean;
   initialValue?: Record<string, unknown>;
+  referenceSources?: ConfigReferenceSource[];
 }
 
 export type ValidateResult =
@@ -37,7 +38,7 @@ export type ValidateResult =
 
 export function usePluginConfigSchema(
   pluginName: string,
-  { enabled = true, initialValue }: UsePluginConfigSchemaOptions = {},
+  { enabled = true, initialValue, referenceSources }: UsePluginConfigSchemaOptions = {},
 ) {
   const [schema, setSchema] = useState<JsonObjectSchema | null>(null);
   const [loading, setLoading] = useState(false);
@@ -96,7 +97,7 @@ export function usePluginConfigSchema(
         return { ok: false, errors: {}, config: {} };
       }
 
-      const errors = validateAgainstSchema(schema, current);
+      const errors = validateAgainstSchema(schema, current, { referenceSources });
       setFieldErrors(errors);
 
       if (Object.keys(errors).length > 0) {
@@ -109,7 +110,7 @@ export function usePluginConfigSchema(
         config: coerceValidatedValues(schema, current),
       };
     },
-    [schema, formValue],
+    [schema, formValue, referenceSources],
   );
 
   const ready = !loading && !loadError && schema !== null;

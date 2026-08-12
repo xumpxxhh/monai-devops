@@ -2,6 +2,7 @@ import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faCheck, faChevronDown, faChevronRight } from '@fortawesome/free-solid-svg-icons';
+import { useFieldId } from './field-context';
 import { mergeClass, selectTriggerClass } from './form-styles';
 
 export interface CascaderOption {
@@ -65,6 +66,7 @@ export function Cascader({
   'aria-label': ariaLabel,
   changeOnSelect = true,
 }: CascaderProps) {
+  const fieldId = useFieldId();
   const [open, setOpen] = useState(false);
   const [activePath, setActivePath] = useState<string[]>(value);
   const rootRef = useRef<HTMLDivElement>(null);
@@ -174,7 +176,7 @@ export function Cascader({
     <div ref={rootRef} className={mergeClass('relative w-full', className)}>
       <button
         type="button"
-        id={id}
+        id={id ?? fieldId}
         aria-label={ariaLabel}
         aria-haspopup="listbox"
         aria-expanded={open}

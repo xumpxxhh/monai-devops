@@ -15,14 +15,19 @@ import { createPluginManager } from '../plugin/index.js';
 import {
   createWorkflowExecutor,
   assertValidWorkflowRunId,
+  isPluginStep,
+  isSetStateStep,
   type WorkflowDefinition,
   type WorkflowRunResult,
   type ExecutionContext,
+  type ExecuteWorkflowCallOptions,
   type WorkflowStep,
   type CancelRunOptions,
   type PauseRunOptions,
   type RunControlResult,
   type RunStatusSnapshot,
+  type ResolveWorkflow,
+  type EmbeddedRunHooks,
 } from '../executor/index.js';
 import {
   createTaskScheduler,
@@ -36,7 +41,6 @@ import {
   type ResourcePoolOptions,
 } from '../resource/index.js';
 import type { WorkflowObserver } from '../observer/index.js';
-import { WorkflowEventTypes } from '../observer/event-types.js';
 import { ResourceRegistrationError } from '../errors.js';
 
 export interface EngineOptions {
@@ -54,6 +58,12 @@ export interface EngineOptions {
   observer?: WorkflowObserver;
   /** hard cancel / pause+abortInFlight 时 in-flight 步骤超时（ms），透传 executor */
   inFlightTimeoutMs?: number;
+  /** 按 importId 解析子工作流定义 */
+  resolveWorkflow?: ResolveWorkflow;
+  /** 子 run 落表钩子 */
+  embeddedRunHooks?: EmbeddedRunHooks;
+  /** 嵌套深度上限，默认 3 */
+  maxNestingDepth?: number;
 }
 
 /** 资源等待队列项与 releaseHandles 的键：${workflowRunId}:${stepId} */
@@ -65,9 +75,13 @@ const DEFAULT_RESOURCE_TYPE = 'default';
 
 /**
  * 解析步骤所需资源类型。config.resourceType 未声明或为空时使用 default 池。
+ * 非 plugin 步骤无 config，直接使用 default。
  * 拼写错误不会抛错，会静默落到 default（见 CE-010）。
  */
 function getResourceType(step: WorkflowStep): string {
+  if (!isPluginStep(step)) {
+    return DEFAULT_RESOURCE_TYPE;
+  }
   const resourceType = step.config.resourceType;
   if (typeof resourceType === 'string' && resourceType.length > 0) {
     return resourceType;
@@ -129,10 +143,16 @@ export function createEngine(options: EngineOptions = {}) {
     failFast: options.failFast ?? true,
     inFlightTimeoutMs: options.inFlightTimeoutMs,
     observer: options.observer,
+    resolveWorkflow: options.resolveWorkflow,
+    embeddedRunHooks: options.embeddedRunHooks,
+    maxNestingDepth: options.maxNestingDepth,
     pluginExecutor: (name, config, ctx) => plugins.executePlugin(name, config, ctx),
     resolvePluginResultSchema: (name) => plugins.getPlugin(name)?.resultSchema,
     // 资源钩子：在 step:start 之前挂起等待槽位（可能触发 step:queued）
-    onStepStart: async (step, context, meta) => {
+    onStepStart: async (step, context, meta, helpers) => {
+      // set_state 不占资源池
+      if (isSetStateStep(step)) return;
+
       const resourceType = getResourceType(step);
       // runId 由 executor 从 workflowRunId 注入；缺失时跳过资源分配（单测/无 meta 场景）
       const runId =
@@ -146,18 +166,8 @@ export function createEngine(options: EngineOptions = {}) {
         workflowRunId: runId,
         resourceType,
         priority,
-        // 进入资源堆时通知观察者（即使随后立即可用也会触发，见 CE-008）
-        onQueued: meta
-          ? () =>
-              options.observer?.onEvent?.({
-                type: WorkflowEventTypes.STEP_QUEUED,
-                workflowRunId: runId,
-                meta,
-                step,
-                resourceType,
-                priority,
-              })
-          : undefined,
+        // 进入资源堆时经 executor.emit 发 step:queued，保证嵌套执行带上 parent
+        onQueued: meta ? () => helpers?.emitQueued({ resourceType, priority }) : undefined,
       });
       releaseHandles.set(id, release);
     },
@@ -211,18 +221,21 @@ export function createEngine(options: EngineOptions = {}) {
     workflowRunId: string,
     workflow: WorkflowDefinition,
     context: Partial<ExecutionContext> = {},
+    callOptions?: ExecuteWorkflowCallOptions,
   ): Promise<WorkflowRunResult> {
-    return executor.executeWorkflow(workflowRunId, workflow, context);
+    return executor.executeWorkflow(workflowRunId, workflow, context, callOptions);
   }
 
   /**
    * 将整次 workflow 作为调度器任务异步投递。
    * retryable: false — 业务失败不 throw，且整次重跑非幂等，禁止任务级重试。
+   * callOptions 透传给 runWorkflow（initialState / resolveWorkflow / embeddedRunHooks 等）。
    */
   function scheduleWorkflow(
     workflowRunId: string,
     workflow: WorkflowDefinition,
     context: Partial<ExecutionContext> = {},
+    callOptions?: ExecuteWorkflowCallOptions,
   ): Promise<ScheduleResult> {
     assertValidWorkflowRunId(workflowRunId);
     const taskId = `workflow-${workflow.id}-${Date.now()}`;
@@ -233,7 +246,7 @@ export function createEngine(options: EngineOptions = {}) {
       createdAt: new Date(),
       workflowRunId,
       retryable: false,
-      execute: () => runWorkflow(workflowRunId, workflow, context),
+      execute: () => runWorkflow(workflowRunId, workflow, context, callOptions),
     });
   }
 

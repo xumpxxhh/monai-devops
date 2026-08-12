@@ -24,7 +24,7 @@ function baseWorkflow(
 }
 
 describe('validateWorkflowDefinition context references', () => {
-  it('accepts a valid $ref from an ancestor with resultSchema', () => {
+  it('accepts a valid $ref from an ancestor with resultSchema', async () => {
     const workflow = baseWorkflow([
       { id: 'a', plugin: 'p-a', config: {} },
       {
@@ -37,14 +37,14 @@ describe('validateWorkflowDefinition context references', () => {
       },
     ]);
 
-    expect(() =>
+    await expect(
       validateWorkflowDefinition(workflow, {
         resolvePluginResultSchema: (name) => (name === 'p-a' ? resultSchema : undefined),
       }),
-    ).not.toThrow();
+    ).resolves.toBeUndefined();
   });
 
-  it('rejects $ref to a non-ancestor step', () => {
+  it('rejects $ref to a non-ancestor step', async () => {
     const workflow = baseWorkflow([
       { id: 'a', plugin: 'p-a', config: {} },
       { id: 'b', plugin: 'p-b', config: {} },
@@ -58,19 +58,19 @@ describe('validateWorkflowDefinition context references', () => {
       },
     ]);
 
-    expect(() =>
+    await expect(
       validateWorkflowDefinition(workflow, {
         resolvePluginResultSchema: () => resultSchema,
       }),
-    ).toThrow(WorkflowValidationError);
-    expect(() =>
+    ).rejects.toBeInstanceOf(WorkflowValidationError);
+    await expect(
       validateWorkflowDefinition(workflow, {
         resolvePluginResultSchema: () => resultSchema,
       }),
-    ).toThrow(/非祖先步骤/);
+    ).rejects.toThrow(/非祖先步骤/);
   });
 
-  it('rejects $ref to a missing step', () => {
+  it('rejects $ref to a missing step', async () => {
     const workflow = baseWorkflow([
       {
         id: 'a',
@@ -81,11 +81,13 @@ describe('validateWorkflowDefinition context references', () => {
       },
     ]);
 
-    expect(() => validateWorkflowDefinition(workflow)).toThrow(WorkflowValidationError);
-    expect(() => validateWorkflowDefinition(workflow)).toThrow(/不存在的步骤/);
+    await expect(validateWorkflowDefinition(workflow)).rejects.toBeInstanceOf(
+      WorkflowValidationError,
+    );
+    await expect(validateWorkflowDefinition(workflow)).rejects.toThrow(/不存在的步骤/);
   });
 
-  it('rejects $ref when upstream plugin has no resultSchema', () => {
+  it('rejects $ref when upstream plugin has no resultSchema', async () => {
     const workflow = baseWorkflow([
       { id: 'a', plugin: 'p-a', config: {} },
       {
@@ -98,19 +100,19 @@ describe('validateWorkflowDefinition context references', () => {
       },
     ]);
 
-    expect(() =>
+    await expect(
       validateWorkflowDefinition(workflow, {
         resolvePluginResultSchema: () => undefined,
       }),
-    ).toThrow(WorkflowValidationError);
-    expect(() =>
+    ).rejects.toBeInstanceOf(WorkflowValidationError);
+    await expect(
       validateWorkflowDefinition(workflow, {
         resolvePluginResultSchema: () => undefined,
       }),
-    ).toThrow(/未声明 resultSchema/);
+    ).rejects.toThrow(/未声明 resultSchema/);
   });
 
-  it('still checks existence and ancestry when resolvePluginResultSchema is omitted', () => {
+  it('still checks existence and ancestry when resolvePluginResultSchema is omitted', async () => {
     const workflow = baseWorkflow([
       { id: 'a', plugin: 'p-a', config: {} },
       {
@@ -123,6 +125,20 @@ describe('validateWorkflowDefinition context references', () => {
       },
     ]);
 
-    expect(() => validateWorkflowDefinition(workflow)).toThrow(/不存在的步骤/);
+    await expect(validateWorkflowDefinition(workflow)).rejects.toThrow(/不存在的步骤/);
+  });
+});
+
+describe('validateWorkflowDefinition step names', () => {
+  it('rejects duplicate step names', async () => {
+    const workflow = baseWorkflow([
+      { id: 'a', name: '处理', plugin: 'p-a', config: {} },
+      { id: 'b', name: '处理', plugin: 'p-b', config: {} },
+    ]);
+
+    await expect(validateWorkflowDefinition(workflow)).rejects.toBeInstanceOf(
+      WorkflowValidationError,
+    );
+    await expect(validateWorkflowDefinition(workflow)).rejects.toThrow(/步骤名称「处理」重复/);
   });
 });

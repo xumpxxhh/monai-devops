@@ -5,7 +5,18 @@
 
 import type { ZodType } from '@monai-devops/plugin-sdk';
 import { StepExecutionError, StepFailureKinds, WorkflowValidationError } from '../errors.js';
-import type { WorkflowDefinition, WorkflowStep } from './types.js';
+import { SET_STATE_RESULT_SCHEMA, WORKFLOW_REF_RESULT_SCHEMA } from './builtin-step-kinds.js';
+import { getStepReferencePayload } from './step-kind-validation.js';
+import {
+  getStepKind,
+  isPluginStep,
+  StepKinds,
+  type WorkflowDefinition,
+  type WorkflowStep,
+} from './types.js';
+
+/** `$ref.fromStepId` 保留值：指向本工作流当前 run state（非真实步骤 id） */
+export const WORKFLOW_STATE_REF_ID = '__workflow_state__';
 
 export type ContextRef = {
   $ref: {
@@ -29,6 +40,10 @@ export function isContextRef(value: unknown): value is ContextRef {
     Array.isArray(path) &&
     path.every((segment) => typeof segment === 'string')
   );
+}
+
+export function isWorkflowStateRef(value: ContextRef): boolean {
+  return value.$ref.fromStepId === WORKFLOW_STATE_REF_ID;
 }
 
 /** 递归收集 config 中全部 ContextRef（深度优先） */
@@ -111,17 +126,32 @@ export function getValueByPath(
   return current;
 }
 
+export interface ResolveConfigReferencesOptions {
+  /** 当前 run state；用于解析 WORKFLOW_STATE_REF_ID */
+  runState?: unknown;
+}
+
 /**
- * 递归解析 config 中的 ContextRef，整字段替换为上游 data 中的值。
+ * 递归解析 config 中的 ContextRef，整字段替换为上游 data / 工作流 state 中的值。
  * 失败时抛出 StepExecutionError(CONFIG_RESOLUTION)。
  */
 export function resolveConfigReferences(
   config: unknown,
   previousResultsData: Record<string, unknown>,
   stepId = '',
+  options: ResolveConfigReferencesOptions = {},
 ): unknown {
   if (isContextRef(config)) {
     const { fromStepId, path } = config.$ref;
+    if (fromStepId === WORKFLOW_STATE_REF_ID) {
+      if (options.runState === undefined) {
+        throw new StepExecutionError(
+          `步骤 "${stepId}" 的 config 引用了工作流 state，但当前 run 无 state`,
+          StepFailureKinds.CONFIG_RESOLUTION,
+        );
+      }
+      return getValueByPath(options.runState, path, stepId, 'state');
+    }
     if (!(fromStepId in previousResultsData)) {
       throw new StepExecutionError(
         `步骤 "${stepId}" 的 config 引用了步骤 "${fromStepId}"，但该步骤没有可用的执行结果`,
@@ -132,13 +162,15 @@ export function resolveConfigReferences(
   }
 
   if (Array.isArray(config)) {
-    return config.map((item) => resolveConfigReferences(item, previousResultsData, stepId));
+    return config.map((item) =>
+      resolveConfigReferences(item, previousResultsData, stepId, options),
+    );
   }
 
   if (typeof config === 'object' && config !== null) {
     const out: Record<string, unknown> = {};
     for (const [key, value] of Object.entries(config)) {
-      out[key] = resolveConfigReferences(value, previousResultsData, stepId);
+      out[key] = resolveConfigReferences(value, previousResultsData, stepId, options);
     }
     return out;
   }
@@ -173,11 +205,28 @@ export interface ValidateWorkflowContextReferencesOptions {
   resolvePluginResultSchema?: (pluginName: string) => ZodType | undefined;
 }
 
+/** 按来源步骤 kind 解析可用于 $ref 校验的 resultSchema */
+export function resolveStepResultSchema(
+  sourceStep: WorkflowStep,
+  resolvePluginResultSchema?: (pluginName: string) => ZodType | undefined,
+): ZodType | undefined {
+  const kind = getStepKind(sourceStep);
+  if (kind === StepKinds.SET_STATE) {
+    return SET_STATE_RESULT_SCHEMA;
+  }
+  if (kind === StepKinds.WORKFLOW) {
+    return WORKFLOW_REF_RESULT_SCHEMA;
+  }
+  if (isPluginStep(sourceStep) && resolvePluginResultSchema) {
+    return resolvePluginResultSchema(sourceStep.plugin);
+  }
+  return undefined;
+}
+
 /**
- * 静态校验工作流 config 中的 ContextRef：
- * - fromStepId 存在
- * - fromStepId 是当前步骤祖先
- * - 来源插件已声明 resultSchema
+ * 静态校验工作流中的 ContextRef：
+ * - 工作流 state 引用（WORKFLOW_STATE_REF_ID）：要求已声明 stateSchema，不做祖先校验
+ * - 普通 fromStepId：存在、为当前步骤祖先、来源允许被引用
  */
 export function validateWorkflowContextReferences(
   workflow: WorkflowDefinition,
@@ -185,15 +234,26 @@ export function validateWorkflowContextReferences(
 ): void {
   const { resolvePluginResultSchema } = options;
   const stepById = new Map<string, WorkflowStep>(workflow.steps.map((s) => [s.id, s]));
+  const hasStateSchema = workflow.stateSchema !== undefined;
 
   for (const step of workflow.steps) {
-    const refs = extractContextReferences(step.config);
+    const payload = getStepReferencePayload(step);
+    const refs = extractContextReferences(payload);
     if (refs.length === 0) continue;
 
     const ancestors = getAncestorIds(step.id, workflow.steps);
 
     for (const ref of refs) {
       const { fromStepId } = ref.$ref;
+
+      if (fromStepId === WORKFLOW_STATE_REF_ID) {
+        if (!hasStateSchema) {
+          throw new WorkflowValidationError(
+            `步骤 "${step.id}" 引用了工作流 state，但当前工作流未声明 stateSchema`,
+          );
+        }
+        continue;
+      }
 
       if (!stepById.has(fromStepId)) {
         throw new WorkflowValidationError(
@@ -208,11 +268,14 @@ export function validateWorkflowContextReferences(
       }
 
       const sourceStep = stepById.get(fromStepId)!;
-      if (resolvePluginResultSchema) {
-        const schema = resolvePluginResultSchema(sourceStep.plugin);
+      const sourceKind = getStepKind(sourceStep);
+
+      if (resolvePluginResultSchema || sourceKind !== StepKinds.PLUGIN) {
+        const schema = resolveStepResultSchema(sourceStep, resolvePluginResultSchema);
         if (!schema) {
+          const pluginLabel = isPluginStep(sourceStep) ? `（插件 "${sourceStep.plugin}"）` : '';
           throw new WorkflowValidationError(
-            `步骤 "${step.id}" 引用了步骤 "${fromStepId}"（插件 "${sourceStep.plugin}"），但该插件未声明 resultSchema`,
+            `步骤 "${step.id}" 引用了步骤 "${fromStepId}"${pluginLabel}，但该步骤未声明 resultSchema`,
           );
         }
       }

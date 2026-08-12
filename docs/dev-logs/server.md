@@ -1,5 +1,24 @@
 # apps/server 开发日志
 
+## 2026-08-10
+
+- **变更**：数据库改为团队公共 Postgres（共享 `monai_devops` / `monai_devops_test`）；移除仓库 compose，补充迁数据与协作说明
+- **文件**：`apps/server/.env.example`, `apps/server/.env.test`, `apps/server/README.md`, `docs/ops/postgres-shared.md`, `docker/postgres/init-databases.sql`
+
+## 2026-08-05
+
+- **变更**：`WorkflowImportRecord` 新增 `childStateSchema` 透传子工作流 stateSchema；`normalize-workflow-ids` 保留 `WORKFLOW_STATE_REF_ID` 不重映射
+- **文件**：`workflows/prisma-workflow.repository.ts`, `workflows/workflows.repository.ts`, `common/validation/normalize-workflow-ids.ts`, `common/validation/normalize-workflow-ids.spec.ts`
+
+## 2026-07-24
+
+- **变更**：工作流可组合化服务端（阶段 4）：Prisma 新增 WorkflowImport / ownerWorkflowId / parentRunId、resolveWorkflow(importId) 两跳查库注入、POST/GET /imports（copy 建私有 Workflow）、GET /step-kinds、initialState Zod 强校验、validate 复用 core-engine 并接入新校验、normalize-workflow-ids 适配 importId、DELETE 应用层预检 409
+- **文件**：`prisma/schema.prisma`, `src/engine/engine.service.ts`, `src/workflows/*`, `src/runs/*`, `src/common/validation/*`
+- **变更**：步骤名重复校验（validate-workflow）+ POST /imports 前置判重
+- **文件**：`src/common/validation/validate-workflow.ts`, `src/workflows/workflows.service.ts`
+- **变更**：子工作流执行不再落独立 Run 行；嵌套事件写入并推流到顶层父 run；`GET /runs/:runId/children` 恒返回空列表
+- **文件**：`src/runs/run-manager.service.ts`, `src/runs/runs.controller.ts`, `src/runs/run-manager.nested-events.spec.ts`
+
 ## 2026-07-05
 
 - **变更**：合并流式 `plugin:log` 并优化事件缓冲裁剪；WS 出站附带 `runId`，按 run 串行处理内核事件

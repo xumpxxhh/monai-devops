@@ -1,104 +1,51 @@
-# plugin-sdk
+# @monai-devops/plugin-sdk
 
-`@monai-devops/plugin-sdk` 定义 monai-devops **插件契约与开发辅助 API**。插件实现只需依赖本包；编排、调度、资源池由 [`core-engine`](../core-engine) 负责，依赖方向为 **core-engine → plugin-sdk**，本包不反向耦合引擎。
+插件契约与辅助工具：定义「什么是插件」、如何校验 config、如何协作取消，以及如何向编排层输出日志。
 
-## 职责边界
+本包**不负责**插件注册表或工作流调度；那一层由 `@monai-devops/core-engine`（及上层应用）完成。插件作者日常只依赖本 SDK。
 
-| 关注点                                           | plugin-sdk | core-engine                        |
-| ------------------------------------------------ | ---------- | ---------------------------------- |
-| 插件类型（Config / Context / Result）            | ✓          | 扩展 `ExecutionContext`            |
-| `createPlugin`、生命周期钩子                     | ✓          | —                                  |
-| 步骤级日志 API                                   | ✓          | 注入 logger、发出 `plugin:log`     |
-| DAG 执行、资源调度                               | —          | ✓                                  |
-| `WorkflowContextKeys`（编排字段名，引擎/测试用） | —          | ✓（re-export `PluginContextKeys`） |
+## 核心约定
 
-## 核心类型
+1. **`execute` 以 `PluginResult` 表达成败**，业务失败返回 `{ success: false }`，不要靠 throw 表示「这一步失败了」。
+2. **取消是协作式的**：编排层往 `context` 注入 `AbortSignal`；插件在可中断点调用 `throwIfAborted` / `await sleep(...)`，抛出 `PluginCancelledError`。`createPlugin` 会把它收成 `PLUGIN_CANCELLED` 结果。
+3. **其它未捕获 throw**：若走了 `hooks`，`createPlugin` 会调 `onError` 并返回 `{ success: false, message }`；若无 hooks、且不是 `PluginCancelledError`，异常会继续向外抛（引擎的 plugin manager 再兜底）。
+4. **`configSchema` 做运行时校验**；**`resultSchema` 只作结构声明**（前端选字段、工作流 `$ref` 静态校验），不对 `data` 做运行时校验。
 
-### PluginManifest
+## 安装与环境
 
-插件注册元数据，由 `createPlugin` 填写：
+- Node.js `>= 20`
+- ESM（`"type": "module"`）
+- 依赖：`zod ^3.24`
 
-| 字段          | 必填 | 说明                                          |
-| ------------- | ---- | --------------------------------------------- |
-| `name`        | 是   | 全局唯一插件名，工作流 `step.plugin` 引用此值 |
-| `version`     | 是   | 语义化版本字符串                              |
-| `description` | 否   | 展示用描述                                    |
-
-### PluginConfig
-
-引擎/工作流边界类型：`Record<string, unknown>`。来自工作流步骤的 `config` 字段，由引擎原样透传给插件。
-
-常见约定（由引擎解释，非 SDK 强制）：
-
-- `resourceType?: string` — 声明所需资源类型，由 engine 在 execute 之前读取并分配/释放
-
-**推荐**：插件通过 `configSchema`（Zod）声明自己的业务 config 结构，`createPlugin` 在 `execute` 前统一校验并收窄类型。插件 `execute` 内应使用 `z.infer<typeof configSchema>`，而非直接操作原始 `PluginConfig`。
-
-若插件业务逻辑需要读取 `resourceType`，在 schema 中显式声明 `resourceType: z.string().optional()` 即可（默认 `z.object()` 会 strip 未知字段）。
-
-### resultSchema
-
-可选 Zod schema，**只描述** `PluginResult.data` 的结构（不是整个 `PluginResult`）。用途：
-
-- 前端编排时选择「引用上游」字段树
-- 工作流启动/保存前校验：未声明 `resultSchema` 的插件**不能**被其他步骤的 `$ref` 引用
-
-`createPlugin` **原样透传** `resultSchema`，**不参与** `execute` 类型推断，也**不做**运行时校验（声明与实际返回 `data` 是否一致由插件作者保证）。
-
-### InferPluginConfig
-
-工具类型，从 Zod schema 推断插件 config 类型：`InferPluginConfig<typeof configSchema>`。
-
-### PluginContext
-
-单次 `execute` 的运行时上下文，索引签名。引擎可在步骤执行期注入扩展字段；**典型插件只需 `getLogger(context)`**，业务入参从已校验的 `config` 读取即可（见 [`plugins/test-plugin`](../../plugins/test-plugin)）。若将来确需读取编排字段，用 `getContext(context, 'stepId')` 等字符串键，键名约定见 [core-engine README](../core-engine/README.md#executioncontext-与-workflowcontextkeys)。
-
-### PluginResult
-
-插件执行结果，**业务失败应返回此结构，不要 throw**：
-
-| 字段      | 说明                                                   |
-| --------- | ------------------------------------------------------ |
-| `success` | `true` 成功，`false` 失败                              |
-| `message` | 可选，人类可读说明                                     |
-| `data`    | 可选，成功时的业务数据（写入步骤 `result`）            |
-| `code`    | 可选，失败错误码；通常由引擎填充，插件作者一般无需设置 |
-
-```ts
-// 成功
-return { success: true, data: { artifact: 'path/to/out' }, message: '完成' };
-
-// 业务失败
-return { success: false, message: '参数 type 无效' };
+```bash
+pnpm --filter @monai-devops/plugin-sdk build
+pnpm --filter @monai-devops/plugin-sdk test
 ```
 
-### PluginFailureCodes
-
-引擎在插件边界自动填充的失败码（插件作者通常只读、不写）：
-
-| 常量                     | 含义                                                                      |
-| ------------------------ | ------------------------------------------------------------------------- |
-| `PLUGIN_NOT_FOUND`       | 插件未注册                                                                |
-| `PLUGIN_CONFIG_INVALID`  | config 未通过 `configSchema` 校验（由 `createPlugin` 填充）               |
-| `PLUGIN_EXECUTION_ERROR` | `execute` 抛出未捕获异常（经 `createPlugin` hooks 包装后也会转为 Result） |
-
-## createPlugin
-
-`createPlugin(options)` 返回 `PluginDefinition`，供 `createEngine({ plugins: [...] })` 注册。
-
-### 推荐：带 configSchema
+工作区引用：
 
 ```ts
-import {
-  createPlugin,
-  getLogger,
-  z,
-  type PluginContext,
-  type PluginResult,
-} from '@monai-devops/plugin-sdk';
+import { createPlugin, z, getLogger, sleep, throwIfAborted } from '@monai-devops/plugin-sdk';
+```
+
+包同时再导出 `z`、`ZodType`、`ZodError`，插件侧一般不必再单独依赖 zod（除非版本要对齐）。
+
+---
+
+## 快速开始
+
+```ts
+import { createPlugin, getLogger, sleep, throwIfAborted, z } from '@monai-devops/plugin-sdk';
+import type { PluginContext, PluginResult } from '@monai-devops/plugin-sdk';
 
 const configSchema = z.object({
   type: z.enum(['unit', 'integration', 'e2e']),
+  label: z.string().default('default'),
+});
+
+const resultSchema = z.object({
+  type: z.enum(['unit', 'integration', 'e2e']),
+  message: z.string(),
 });
 
 async function execute(
@@ -106,8 +53,18 @@ async function execute(
   context: PluginContext,
 ): Promise<PluginResult> {
   const log = getLogger(context);
+
   log.info('开始执行', { type: config.type });
-  return { success: true, message: `${config.type} 执行成功` };
+  await sleep(1000, context); // 可被 AbortSignal 打断
+  throwIfAborted(context);
+
+  log.append(`[runner] ${config.type} done\n`, 'stdout');
+
+  return {
+    success: true,
+    message: 'ok',
+    data: { type: config.type, message: `${config.label} finished` },
+  };
 }
 
 export const myPlugin = createPlugin({
@@ -115,208 +72,257 @@ export const myPlugin = createPlugin({
   version: '1.0.0',
   description: '示例插件',
   configSchema,
-  resultSchema: z.object({
-    message: z.string(),
-  }),
+  resultSchema,
   execute,
 });
 ```
 
-校验失败时返回 `{ success: false, code: PLUGIN_CONFIG_INVALID, message }`，**不调用** `execute` 与 hooks。
+无 `configSchema` 时仍可用（向后兼容）：`execute` 收到原始 `PluginConfig`（`Record<string, unknown>`）。
 
-### 向后兼容：无 configSchema
+---
+
+## 类型与结果
+
+### Manifest / Definition
 
 ```ts
-import {
-  createPlugin,
-  getConfig,
-  getLogger,
-  type PluginConfig,
-  type PluginContext,
-  type PluginResult,
-} from '@monai-devops/plugin-sdk';
-
-async function execute(config: PluginConfig, context: PluginContext): Promise<PluginResult> {
-  const type = getConfig<string>(config, 'type');
-  const log = getLogger(context);
-  // ...
-  return { success: true };
+interface PluginManifest {
+  name: string;
+  version: string;
+  description?: string;
 }
 
-export const myPlugin = createPlugin({
-  name: 'my-plugin',
-  version: '1.0.0',
-  execute,
-});
-```
-
-传入 `hooks` 时，对外暴露的 `execute` 会自动编排生命周期（见下一节）；无 hooks 时 `execute` 原样导出。
-
-## 生命周期钩子（PluginHooks）
-
-由 `createPlugin` 绑定到 `execute` 外层，调用顺序与错误语义如下：
-
-```
-beforeExecute → execute → afterExecute
-                ↓ throw
-              onError → return { success: false, message }
-```
-
-| 钩子            | 触发时机                                                     |
-| --------------- | ------------------------------------------------------------ |
-| `beforeExecute` | `execute` 之前                                               |
-| `afterExecute`  | `execute` 正常返回后（**含** `{ success: false }` 业务失败） |
-| `onError`       | `beforeExecute` 或 `execute` **抛异常**时                    |
-
-**注意**
-
-- 业务失败（`return { success: false }`）**不**触发 `onError`，仍会调用 `afterExecute`
-- 有 hooks 时，异常会被捕获并转为 `{ success: false, message }`，不会穿透到 executor
-- 无 hooks 时，`execute` 内未捕获异常由 core-engine 的 `executePlugin` 捕获并填充 `PLUGIN_EXECUTION_ERROR`
-
-## 辅助函数
-
-### getConfig / getContext
-
-类型安全的字典读取，用于**无 configSchema 的向后兼容场景**：
-
-```ts
-const branch = getConfig<string>(config, 'branch');
-const custom = getContext<string>(context, 'someKey'); // 仅在有约定扩展字段时使用
-```
-
-### formatZodError / z
-
-`z` 从本包 re-export，插件无需单独依赖 zod。`formatZodError` 将 Zod 校验错误格式化为人类可读字符串。
-
-## 步骤日志（PluginLogger）
-
-引擎在 `step:start` 之后向 context 注入 `PluginLogger`（键名 `PluginContextKeys.logger`，值为 `'logger'`）。插件通过 `getLogger(context)` 获取；无注入时回退为 `noopLogger`（静默）。
-
-```ts
-import { getLogger } from '@monai-devops/plugin-sdk';
-
-const log = getLogger(context);
-
-log.debug('调试信息', { detail: 1 });
-log.info('阶段完成');
-log.warn('资源紧张');
-log.error('非致命告警');
-log.append('[build] compiling...\n', 'stdout'); // stream: 'stdout' | 'stderr'
-```
-
-日志经 core-engine 串行 emit 为 `WorkflowObserver` 的 `plugin:log` 事件；全部 flush 完成后才发出 `step:finished`。调用方（如 `apps/server` WebSocket）可实时推送给前端。
-
-| 类型              | 说明                                            |
-| ----------------- | ----------------------------------------------- |
-| `PluginLogLevel`  | `'debug' \| 'info' \| 'warn' \| 'error'`        |
-| `PluginLogStream` | `'stdout' \| 'stderr'`（`append` 使用）         |
-| `PluginLogEntry`  | `{ level, message, timestamp, data?, stream? }` |
-| `noopLogger`      | 空实现，用于单测或无 observer 场景              |
-
-## 取消信号（AbortSignal）
-
-`mode: 'hard'` 取消或 `pauseRun({ abortInFlight: true })` 时，core-engine 在 `step:start` 之后向 context 注入 `AbortSignal`（键名 `PluginContextKeys.signal`，值为 `'signal'`）。插件应在 `await` 检查点响应 signal；未响应时在 `inFlightTimeoutMs` 超时后步骤会被标记为 `SKIPPED / user_cancelled`。
-
-```ts
-import {
-  getAbortSignal,
-  throwIfAborted,
-  sleep,
-  PluginCancelledError,
-} from '@monai-devops/plugin-sdk';
-
-// 在循环或长任务中主动检查
-for await (const chunk of stream) {
-  throwIfAborted(context);
-  // ...
+interface PluginDefinition extends PluginManifest {
+  execute: (config: PluginConfig, context: PluginContext) => Promise<PluginResult>;
+  hooks?: PluginHooks;
+  configSchema?: ZodType;   // 有则 execute 前 safeParse
+  resultSchema?: ZodType;   // 声明 data 形状；不做运行时校验
 }
-
-// 可中断等待（替代 setTimeout）
-await sleep(3000, context);
-
-// 传给支持 abort 的底层 API
-const signal = getAbortSignal(context);
-await fetch(url, { signal });
 ```
 
-`throwIfAborted` 抛出 `PluginCancelledError`，经 `createPlugin` / plugin manager 转为 `PLUGIN_CANCELLED` Result，executor 将其记为 `SKIPPED`（非 `FAILED`）。
+### Config / Context
 
-## 编写约定
+| 类型 | 含义 |
+|---|---|
+| `PluginConfig` | 引擎边界：来自 JSON 的原始 config |
+| `InferPluginConfig<T>` | `z.infer<T>`，供带 schema 的插件内部使用 |
+| `PluginContext` | 索引签名对象；编排器可注入任意扩展字段 |
 
-1. **业务失败用 Result，不用 throw** — 便于 executor 统一归类为插件失败
-2. **用 `configSchema` 声明 config 结构** — 编译期类型安全 + 运行时统一校验
-3. **需要被下游引用时声明 `resultSchema`** — 只描述 `data`；未声明则不能作为 `$ref` 来源
-4. **日志用 `getLogger`** — 不要 `console.log`，以便调用层聚合与展示
-5. **插件包只 production 依赖 SDK** — 不依赖 core-engine，保持可独立发布与测试
-6. **`name` 与工作流 `step.plugin` 一致** — 注册名即调用名
+### `PluginResult`
 
-## 在 monorepo 中新建插件
-
-参考 [`plugins/test-plugin`](../../plugins/test-plugin)：
-
-```
-plugins/my-plugin/
-├── package.json      # dependencies: @monai-devops/plugin-sdk
-├── tsconfig.json
-└── src/index.ts      # export const myPlugin = createPlugin({...})
+```ts
+interface PluginResult {
+  success: boolean;
+  message?: string;
+  data?: unknown;
+  code?: PluginFailureCode; // 仅失败时使用
+}
 ```
 
-`package.json` 示例：
+### 失败码 `PluginFailureCodes`
 
-```json
+| 码 | 谁产生 | 含义 |
+|---|---|---|
+| `PLUGIN_CONFIG_INVALID` | `createPlugin`（有 `configSchema`） | Zod 校验失败 |
+| `PLUGIN_CANCELLED` | `createPlugin`（捕获 `PluginCancelledError`） | 协作取消 |
+| `PLUGIN_NOT_FOUND` | 引擎 plugin manager | 未注册该插件名 |
+| `PLUGIN_EXECUTION_ERROR` | 引擎 plugin manager | execute 意外 throw（非取消） |
+
+SDK 本身只直接产生前两种；后两种由上层在「查表 / 兜底 catch」时写入。
+
+### `PluginCancelledError`
+
+```ts
+throw new PluginCancelledError();           // 默认文案：「插件执行已取消」
+throw new PluginCancelledError('自定义');
+```
+
+`createPlugin` 在 `execute` / hooks 路径上捕获后返回：
+
+```ts
+{ success: false, code: 'PLUGIN_CANCELLED', message }
+```
+
+---
+
+## `createPlugin`
+
+工厂函数：把作者写的 `execute` 包装成对外统一的 `PluginDefinition.execute`。
+
+### 执行流水线（有 `configSchema`）
+
+```
+rawConfig
+  → configSchema.safeParse
+       ├─ 失败 → { success:false, code: PLUGIN_CONFIG_INVALID, message: formatZodError(...) }
+       └─ 成功 → parsed.data
+            → hooks.beforeExecute?（收到已解析 config）
+            → execute(parsed, context)
+            → hooks.afterExecute?(result, ...)
+            → 返回 result
+```
+
+校验失败时**不会**调用 `execute` 与 hooks。
+
+### 无 `configSchema`
+
+跳过解析，直接 `wrapWithHooks(legacyExecute)`；`execute` / hooks 看到的是原始 `PluginConfig`。
+
+### 取消包装
+
+无论是否配置 hooks，用户 `execute` 都会先经 `wrapWithCancellation`：`PluginCancelledError` → `PLUGIN_CANCELLED` Result；其它错误原样抛出（再由 hooks 的外层 catch 或调用方处理）。
+
+### Hooks 错误语义
+
+```ts
+interface PluginHooks<TConfig = PluginConfig> {
+  beforeExecute?: (config: TConfig, context: PluginContext) => void | Promise<void>;
+  afterExecute?: (
+    result: PluginResult,
+    config: TConfig,
+    context: PluginContext,
+  ) => void | Promise<void>;
+  onError?: (error: Error, config: TConfig, context: PluginContext) => void | Promise<void>;
+}
+```
+
+| 情况 | `afterExecute` | `onError` | 返回值 |
+|---|---|---|---|
+| `execute` 返回 `{ success: false }`（业务失败） | ✅ 仍调用 | ❌ | 原 Result |
+| `execute` / `beforeExecute` **抛** `PluginCancelledError` | ❌ | ❌ | `PLUGIN_CANCELLED` |
+| `execute` / `beforeExecute` **抛** 其它 Error | ❌ | ✅ | `{ success: false, message }` |
+| 无 hooks，抛非取消异常 | — | — | 继续向外抛 |
+
+要点：**业务失败用 Result，不走 `onError`；异常才走 `onError`。**
+
+### `resultSchema`
+
+挂在 `PluginDefinition` 上供编排层 / 前端读取。`createPlugin` **不会**在运行时用它对 `data` 做 `safeParse`。
+
+---
+
+## 日志与 Context 键
+
+编排层（如 core-engine）通常注入：
+
+```ts
+PluginContextKeys.logger  // 'logger'
+PluginContextKeys.signal // 'signal'
+```
+
+### `PluginLogger`
+
+```ts
+interface PluginLogger {
+  debug(message: string, data?: Record<string, unknown>): void;
+  info(message: string, data?: Record<string, unknown>): void;
+  warn(message: string, data?: Record<string, unknown>): void;
+  error(message: string, data?: Record<string, unknown>): void;
+  /** 流式片段（如子进程 stdout/stderr） */
+  append(chunk: string, stream?: 'stdout' | 'stderr'): void;
+}
+```
+
+```ts
+const log = getLogger(context); // 无 logger 时退回 noopLogger
+log.info('step', { id: 1 });
+log.append('line\n', 'stdout');
+```
+
+`PluginLogEntry` 形状（供观察者落库 / 推送）：
+
+```ts
 {
-  "name": "my-plugin",
-  "type": "module",
-  "main": "./dist/index.js",
-  "types": "./dist/index.d.ts",
-  "dependencies": {
-    "@monai-devops/plugin-sdk": "workspace:*"
-  }
+  level: 'debug' | 'info' | 'warn' | 'error';
+  message: string;
+  timestamp: number;
+  data?: Record<string, unknown>;
+  stream?: 'stdout' | 'stderr';
 }
 ```
 
-在服务端或脚本中注册：
+### 取消辅助
+
+| API | 行为 |
+|---|---|
+| `getAbortSignal(context)` | 读取 `context.signal` |
+| `isAborted(context)` | 无 signal 或未 abort → `false` |
+| `throwIfAborted(context)` | 已 abort → 抛 `PluginCancelledError` |
+| `sleep(ms, context)` | 可中断等待；abort 时以 `PluginCancelledError` reject；无 signal 则普通 `setTimeout` |
+
+长任务推荐模式：
 
 ```ts
-import { createEngine } from '@monai-devops/core-engine';
-import { myPlugin } from 'my-plugin';
-
-const engine = createEngine({ plugins: [myPlugin] });
+while (!done) {
+  throwIfAborted(context);
+  await doChunk();
+  await sleep(0, context); // 或固定间隔，给 abort 机会
+}
 ```
 
-## 包导出
+---
 
-入口 [`index.ts`](./index.ts) 导出：
+## 其它辅助
 
-| 模块       | 导出                                                                                                                  |
-| ---------- | --------------------------------------------------------------------------------------------------------------------- |
-| `./types`  | `PluginManifest`、`PluginConfig`、`InferPluginConfig`、`PluginContext`、`PluginResult`、`PluginFailureCodes`、`PluginFailureCode` |
-| `./base`   | `createPlugin`、`getConfig`、`getContext`、`PluginDefinition`、`PluginExecuteFn`、`CreatePluginOptions`、`CreatePluginOptionsWithSchema`、`CreatePluginOptionsWithoutSchema` |
-| `./hooks`  | `PluginHooks`                                                                                                         |
-| `./validation` | `formatZodError`                                                                                                  |
-| `./logger` | `PluginLogger`、`PluginLogEntry`、`PluginLogLevel`、`PluginLogStream`、`PluginContextKeys`、`getLogger`、`noopLogger`、`z` |
+```ts
+getConfig<T>(config, key): T | undefined;   // config[key]
+getContext<T>(context, key): T | undefined; // context[key]
 
-## 开发与构建
-
-```bash
-# 类型检查
-pnpm --filter @monai-devops/plugin-sdk check-types
-
-# 单元测试
-pnpm --filter @monai-devops/plugin-sdk test
-
-# 构建（输出 dist/）
-pnpm --filter @monai-devops/plugin-sdk build
-
-# 格式 / lint
-pnpm --filter @monai-devops/plugin-sdk lint
-pnpm --filter @monai-devops/plugin-sdk format
+formatZodError(error: ZodError): string;
+// 例："type: Invalid enum value; label: Required"
+// 无 path 时用 "(root): ..."
 ```
 
-本包单元测试位于 `__tests__/`；端到端契约行为由 `core-engine` 集成测试与 `plugins/test-plugin` 验证。
+`formatZodError` 用于 `PLUGIN_CONFIG_INVALID` 的 `message`，也可在插件自定义校验时复用。
 
-## 相关文档
+---
 
-- [core-engine README](../core-engine/README.md) — DAG 执行、资源调度、`WorkflowObserver` / `plugin:log` 语义
-- [根目录 README](../../README.md) — monorepo 快速开始与整体架构
+## 导出一览
+
+| 来源 | 导出 |
+|---|---|
+| `zod` | `z`、`ZodType`、`ZodError` |
+| `types` | `PluginManifest`、`PluginConfig`、`InferPluginConfig`、`PluginContext`、`PluginResult`、`PluginFailureCode`、`PluginFailureCodes`、`PluginCancelledError` |
+| `base` | `createPlugin`、`getConfig`、`getContext`、及相关 options / `PluginDefinition` / `PluginExecuteFn` 类型 |
+| `hooks` | `PluginHooks` |
+| `logger` | `PluginLogger`、`PluginLogEntry`、`PluginLogLevel`、`PluginLogStream`、`PluginContextKeys`、`noopLogger`、`getLogger`、`getAbortSignal`、`isAborted`、`throwIfAborted`、`sleep` |
+| `validation` | `formatZodError` |
+
+---
+
+## 目录结构
+
+```
+packages/plugin-sdk/
+├── index.ts           # 公共入口
+├── types/             # Manifest、Result、失败码、PluginCancelledError
+├── base/              # createPlugin、getConfig、getContext
+├── hooks/             # PluginHooks
+├── logger/            # Logger、Abort 辅助、Context 键
+├── validation/        # formatZodError
+└── __tests__/
+```
+
+## 开发脚本
+
+| 脚本 | 作用 |
+|---|---|
+| `pnpm build` | `tsc -p tsconfig.build.json` → `dist/` |
+| `pnpm check-types` | 类型检查 |
+| `pnpm test` | Node test runner（`scripts/run-tests.mjs`） |
+| `pnpm lint` / `lint:fix` | ESLint |
+| `pnpm format` / `format:check` | Prettier |
+
+发布物仅包含 `dist/`（`exports` 指向 `./dist/index.js` 与 `.d.ts`）。
+
+---
+
+## 编写插件时的检查清单
+
+- [ ] `name` / `version` 稳定；引擎按 `name` 注册与查找
+- [ ] 优先提供 `configSchema`，让非法配置在进业务逻辑前失败
+- [ ] 成功时在 `data` 中返回可被下游 `$ref` 的结构化数据，并声明 `resultSchema`
+- [ ] 业务失败：`return { success: false, message }`；不要 throw
+- [ ] 长任务：周期调用 `throwIfAborted` / `sleep(..., context)`
+- [ ] 日志：`getLogger(context)`，流式输出用 `append`
+- [ ] 需要副作用编排时再用 hooks；分清「Result 失败」与「异常」两条路径

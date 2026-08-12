@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { apiBaseUrl, getTestDevopsWsUrl } from '../config/env';
+import { Field } from '../shared/ui/form';
+import { CodeEditor } from '../shared/ui/code-editor';
 import '../App.css';
 
 interface IntegrationTestResult {
@@ -112,6 +114,38 @@ const TEST_ACTIONS: TestAction[] = [
 
 function formatTimestamp(date: Date): string {
   return date.toLocaleString('zh-CN', { hour12: false });
+}
+
+function CodeEditorDemo() {
+  const [jsonText, setJsonText] = useState('{\n  "hello": "world",\n  "count": 1\n}');
+  const [plainText, setPlainText] = useState('plain text editor');
+
+  return (
+    <section className="test-page" style={{ marginTop: '2rem' }}>
+      <header className="test-page-header">
+        <h1>CodeEditor 演示</h1>
+        <p>JSON 高亮 + lint、纯文本、只读模式；点击 label 可聚焦编辑器</p>
+      </header>
+      <div className="test-page-body" style={{ display: 'block', padding: '1rem' }}>
+        <div className="space-y-6 max-w-2xl">
+          <Field label="JSON（可编辑，含语法 lint）">
+            <CodeEditor language="json" value={jsonText} onChange={setJsonText} minHeight="10rem" />
+          </Field>
+          <Field label="纯文本">
+            <CodeEditor
+              language="plain"
+              value={plainText}
+              onChange={setPlainText}
+              minHeight="6rem"
+            />
+          </Field>
+          <Field label="只读 JSON">
+            <CodeEditor language="json" value={jsonText} readOnly minHeight="8rem" />
+          </Field>
+        </div>
+      </div>
+    </section>
+  );
 }
 
 function createLogEntry(
@@ -251,128 +285,131 @@ export default function Test() {
   const isWebSocketOutput = hasOutput && state.outputMode === 'websocket';
 
   return (
-    <section className="test-page">
-      <header className="test-page-header">
-        <h1>Core Engine 集成测试</h1>
-        <p>从左侧选择测试项，在右侧查看响应结果或 WebSocket 实时日志</p>
-      </header>
+    <>
+      <section className="test-page">
+        <header className="test-page-header">
+          <h1>Core Engine 集成测试</h1>
+          <p>从左侧选择测试项，在右侧查看响应结果或 WebSocket 实时日志</p>
+        </header>
 
-      <div className="test-page-body">
-        <aside className="test-sidebar">
-          <h2>测试列表</h2>
-          <ul className="test-actions">
-            {TEST_ACTIONS.map((action) => (
-              <li key={action.id}>
-                <button
-                  type="button"
-                  className={`test-action-btn${activeId === action.id ? ' is-active' : ''}`}
-                  disabled={isLoading}
-                  onClick={() => runTest(action)}
-                >
-                  <span className="test-action-label">{action.label}</span>
-                  <span className="test-action-desc">{action.description}</span>
-                </button>
-              </li>
-            ))}
-          </ul>
-        </aside>
+        <div className="test-page-body">
+          <aside className="test-sidebar">
+            <h2>测试列表</h2>
+            <ul className="test-actions">
+              {TEST_ACTIONS.map((action) => (
+                <li key={action.id}>
+                  <button
+                    type="button"
+                    className={`test-action-btn${activeId === action.id ? ' is-active' : ''}`}
+                    disabled={isLoading}
+                    onClick={() => runTest(action)}
+                  >
+                    <span className="test-action-label">{action.label}</span>
+                    <span className="test-action-desc">{action.description}</span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </aside>
 
-        <main className="test-output">
-          <div className="test-output-toolbar">
-            <h2>响应输出</h2>
-            {hasOutput && (
-              <span className="test-output-time">
-                {isWebSocketOutput ? '开始于' : '执行于'} {state.ranAt}
-              </span>
-            )}
-          </div>
+          <main className="test-output">
+            <div className="test-output-toolbar">
+              <h2>响应输出</h2>
+              {hasOutput && (
+                <span className="test-output-time">
+                  {isWebSocketOutput ? '开始于' : '执行于'} {state.ranAt}
+                </span>
+              )}
+            </div>
 
-          <div className="test-output-panel">
-            {state.status === 'idle' && (
-              <p className="test-output-placeholder">点击左侧按钮开始测试</p>
-            )}
+            <div className="test-output-panel">
+              {state.status === 'idle' && (
+                <p className="test-output-placeholder">点击左侧按钮开始测试</p>
+              )}
 
-            {state.status === 'loading' && state.outputMode === 'http' && (
-              <p className="test-output-loading">运行中...</p>
-            )}
+              {state.status === 'loading' && state.outputMode === 'http' && (
+                <p className="test-output-loading">运行中...</p>
+              )}
 
-            {state.status === 'loading' && state.outputMode === 'websocket' && (
-              <div className="test-log-stream">
-                <ul className="test-log-list">
-                  {state.logs.map((log) => (
-                    <li key={log.id} className={`test-log-entry test-log-entry--${log.kind}`}>
-                      <div className="test-log-meta">
-                        <span className="test-log-time">{log.timestamp}</span>
-                        <span className="test-log-badge">{log.eventType ?? log.kind}</span>
-                      </div>
-                      <pre className="test-log-body">
-                        <code>{JSON.stringify(log.payload, null, 2)}</code>
-                      </pre>
-                    </li>
-                  ))}
-                </ul>
-                <p className="test-output-loading test-log-stream-status">运行中...</p>
-              </div>
-            )}
+              {state.status === 'loading' && state.outputMode === 'websocket' && (
+                <div className="test-log-stream">
+                  <ul className="test-log-list">
+                    {state.logs.map((log) => (
+                      <li key={log.id} className={`test-log-entry test-log-entry--${log.kind}`}>
+                        <div className="test-log-meta">
+                          <span className="test-log-time">{log.timestamp}</span>
+                          <span className="test-log-badge">{log.eventType ?? log.kind}</span>
+                        </div>
+                        <pre className="test-log-body">
+                          <code>{JSON.stringify(log.payload, null, 2)}</code>
+                        </pre>
+                      </li>
+                    ))}
+                  </ul>
+                  <p className="test-output-loading test-log-stream-status">运行中...</p>
+                </div>
+              )}
 
-            {state.status === 'error' && state.outputMode === 'http' && (
-              <pre className="test-output-error">
-                <code>{JSON.stringify({ error: state.message }, null, 2)}</code>
-              </pre>
-            )}
-
-            {state.status === 'success' && state.outputMode === 'http' && (
-              <pre
-                className={`test-output-json${state.data.success ? ' is-success' : ' is-failure'}`}
-              >
-                <code>{JSON.stringify(state.data, null, 2)}</code>
-              </pre>
-            )}
-
-            {state.status === 'error' && state.outputMode === 'websocket' && (
-              <div className="test-log-stream">
-                <ul className="test-log-list">
-                  {state.logs.map((log) => (
-                    <li key={log.id} className={`test-log-entry test-log-entry--${log.kind}`}>
-                      <div className="test-log-meta">
-                        <span className="test-log-time">{log.timestamp}</span>
-                        <span className="test-log-badge">{log.eventType ?? log.kind}</span>
-                      </div>
-                      <pre className="test-log-body">
-                        <code>{JSON.stringify(log.payload, null, 2)}</code>
-                      </pre>
-                    </li>
-                  ))}
-                </ul>
-                <pre className="test-output-error test-log-final">
+              {state.status === 'error' && state.outputMode === 'http' && (
+                <pre className="test-output-error">
                   <code>{JSON.stringify({ error: state.message }, null, 2)}</code>
                 </pre>
-              </div>
-            )}
+              )}
 
-            {state.status === 'success' && state.outputMode === 'websocket' && (
-              <div className="test-log-stream">
-                <ul className="test-log-list">
-                  {state.logs.map((log) => (
-                    <li key={log.id} className={`test-log-entry test-log-entry--${log.kind}`}>
-                      <div className="test-log-meta">
-                        <span className="test-log-time">{log.timestamp}</span>
-                        <span className="test-log-badge">{log.eventType ?? log.kind}</span>
-                      </div>
-                      <pre className="test-log-body">
-                        <code>{JSON.stringify(log.payload, null, 2)}</code>
-                      </pre>
-                    </li>
-                  ))}
-                </ul>
-                <pre className="test-output-json is-success test-log-final">
-                  <code>{JSON.stringify(state.result, null, 2)}</code>
+              {state.status === 'success' && state.outputMode === 'http' && (
+                <pre
+                  className={`test-output-json${state.data.success ? ' is-success' : ' is-failure'}`}
+                >
+                  <code>{JSON.stringify(state.data, null, 2)}</code>
                 </pre>
-              </div>
-            )}
-          </div>
-        </main>
-      </div>
-    </section>
+              )}
+
+              {state.status === 'error' && state.outputMode === 'websocket' && (
+                <div className="test-log-stream">
+                  <ul className="test-log-list">
+                    {state.logs.map((log) => (
+                      <li key={log.id} className={`test-log-entry test-log-entry--${log.kind}`}>
+                        <div className="test-log-meta">
+                          <span className="test-log-time">{log.timestamp}</span>
+                          <span className="test-log-badge">{log.eventType ?? log.kind}</span>
+                        </div>
+                        <pre className="test-log-body">
+                          <code>{JSON.stringify(log.payload, null, 2)}</code>
+                        </pre>
+                      </li>
+                    ))}
+                  </ul>
+                  <pre className="test-output-error test-log-final">
+                    <code>{JSON.stringify({ error: state.message }, null, 2)}</code>
+                  </pre>
+                </div>
+              )}
+
+              {state.status === 'success' && state.outputMode === 'websocket' && (
+                <div className="test-log-stream">
+                  <ul className="test-log-list">
+                    {state.logs.map((log) => (
+                      <li key={log.id} className={`test-log-entry test-log-entry--${log.kind}`}>
+                        <div className="test-log-meta">
+                          <span className="test-log-time">{log.timestamp}</span>
+                          <span className="test-log-badge">{log.eventType ?? log.kind}</span>
+                        </div>
+                        <pre className="test-log-body">
+                          <code>{JSON.stringify(log.payload, null, 2)}</code>
+                        </pre>
+                      </li>
+                    ))}
+                  </ul>
+                  <pre className="test-output-json is-success test-log-final">
+                    <code>{JSON.stringify(state.result, null, 2)}</code>
+                  </pre>
+                </div>
+              )}
+            </div>
+          </main>
+        </div>
+      </section>
+      <CodeEditorDemo />
+    </>
   );
 }

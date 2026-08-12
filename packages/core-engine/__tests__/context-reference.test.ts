@@ -5,9 +5,11 @@ import {
   createWorkflowExecutor,
   toPreviousResultsData,
   isContextRef,
+  isWorkflowStateRef,
   extractContextReferences,
   resolveConfigReferences,
   validateWorkflowContextReferences,
+  WORKFLOW_STATE_REF_ID,
   WorkflowValidationError,
   type WorkflowDefinition,
   type ExecutionResult,
@@ -268,6 +270,84 @@ describe('validateWorkflowContextReferences', () => {
       ),
     );
   });
+
+  it('accepts workflow state refs on any step when stateSchema declared', () => {
+    assert.doesNotThrow(() =>
+      validateWorkflowContextReferences({
+        id: 'w',
+        name: 'w',
+        stateSchema: {
+          type: 'object',
+          properties: { count: { type: 'number' } },
+          additionalProperties: false,
+        },
+        steps: [
+          {
+            id: 'solo',
+            name: 'Solo',
+            plugin: 'p',
+            config: { n: { $ref: { fromStepId: WORKFLOW_STATE_REF_ID, path: ['count'] } } },
+          },
+        ],
+      }),
+    );
+  });
+
+  it('rejects workflow state refs when stateSchema missing', () => {
+    assert.throws(
+      () =>
+        validateWorkflowContextReferences({
+          id: 'w',
+          name: 'w',
+          steps: [
+            {
+              id: 'solo',
+              name: 'Solo',
+              plugin: 'p',
+              config: { n: { $ref: { fromStepId: WORKFLOW_STATE_REF_ID, path: [] } } },
+            },
+          ],
+        }),
+      WorkflowValidationError,
+    );
+  });
+});
+
+describe('workflow state $ref resolution', () => {
+  it('isWorkflowStateRef detects sentinel', () => {
+    assert.equal(
+      isWorkflowStateRef({ $ref: { fromStepId: WORKFLOW_STATE_REF_ID, path: ['x'] } }),
+      true,
+    );
+    assert.equal(isWorkflowStateRef({ $ref: { fromStepId: 'a', path: [] } }), false);
+  });
+
+  it('resolves path from runState option', () => {
+    const resolved = resolveConfigReferences(
+      {
+        n: { $ref: { fromStepId: WORKFLOW_STATE_REF_ID, path: ['count'] } },
+        whole: { $ref: { fromStepId: WORKFLOW_STATE_REF_ID, path: [] } },
+      },
+      {},
+      'step-x',
+      { runState: { count: 7, flag: true } },
+    );
+    assert.deepEqual(resolved, { n: 7, whole: { count: 7, flag: true } });
+  });
+
+  it('fails when runState missing', () => {
+    assert.throws(
+      () =>
+        resolveConfigReferences(
+          { n: { $ref: { fromStepId: WORKFLOW_STATE_REF_ID, path: ['count'] } } },
+          {},
+          'step-x',
+        ),
+      (err: unknown) =>
+        err instanceof Error &&
+        (err as { kind?: string }).kind === StepFailureKinds.CONFIG_RESOLUTION,
+    );
+  });
 });
 
 describe('executeStep config resolution', () => {
@@ -330,5 +410,42 @@ describe('executeStep config resolution', () => {
 
     assert.equal(result.status, StepStatuses.FAILED);
     assert.equal(result.failureKind, StepFailureKinds.CONFIG_RESOLUTION);
+  });
+
+  it('injects workflow state into plugin config without ancestor dependency', async () => {
+    let received: unknown;
+    const pluginExecutor: PluginExecutor = async (_name, config) => {
+      received = config;
+      return { success: true, data: { got: config } };
+    };
+
+    const executor = createWorkflowExecutor({ pluginExecutor });
+    const result = await executor.executeWorkflow(
+      `${TEST_RUN_ID}-state`,
+      {
+        id: 'state-ref',
+        name: 'state-ref',
+        stateSchema: {
+          type: 'object',
+          properties: { count: { type: 'number' } },
+          additionalProperties: false,
+        },
+        steps: [
+          {
+            id: 'reader',
+            name: 'Reader',
+            plugin: 'p',
+            config: {
+              n: { $ref: { fromStepId: WORKFLOW_STATE_REF_ID, path: ['count'] } },
+            },
+          },
+        ],
+      },
+      {},
+      { initialState: { count: 42 } },
+    );
+
+    assert.equal(result.success, true);
+    assert.deepEqual(received, { n: 42 });
   });
 });

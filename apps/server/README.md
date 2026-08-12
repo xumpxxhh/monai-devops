@@ -1,436 +1,330 @@
-# Server（apps/server）
+# apps/server
 
-`apps/server` 是 `monai-devops` 的后端服务，基于 NestJS，负责：
+NestJS HTTP / WebSocket 服务：把 `@monai-devops/core-engine` 接到 PostgreSQL 持久化、REST API 与实时事件推流，并托管工作流 CRUD、插件元数据与试运行。
 
-- 注册并管理插件（Plugin）
-- 管理工作流（Workflow）定义
-- 提交/查询/控制运行实例（Run）
-- 通过 HTTP + WebSocket/SSE 提供实时状态与日志
-- 暴露资源与统计信息，便于前端或外部系统接入
+本应用是 monai-devops 的后端入口；前端与其它客户端通过全局前缀（如 `/api`）访问。
 
----
+## 职责边界
 
-## 1. 功能概览
+| 层                   | 职责                                                         |
+| -------------------- | ------------------------------------------------------------ |
+| **HTTP / WS**        | 校验入参、鉴权占位（当前无登录）、返回序列化 DTO             |
+| **RunManager**       | 受理 Run、落库、订阅引擎事件、推流、取消/暂停/恢复           |
+| **WorkflowsService** | 工作流持久化、导入（reference/copy）、触发运行、校验         |
+| **EngineService**    | 进程内唯一 `createEngine` 实例；插件注册、资源池、观察者扇出 |
+| **Prisma**           | `Workflow` / `WorkflowImport` / `Run` / `RunEvent`           |
 
-### 核心能力
+引擎负责 DAG 执行与资源调度；server **不重写编排逻辑**，只做：校验 → 落表 → 调引擎 → 事件持久化与推流。
 
-- **工作流管理**：创建、更新、校验、删除、触发执行。
-- **运行管理**：提交运行、查询详情、事件回放、暂停/恢复/取消、删除历史。
-- **插件能力**：查看插件元数据、导出插件配置 schema、插件 dry-run（SSE 流式返回日志）。
-- **实时通道**：
-  - `runs` WebSocket：订阅单个 run 的事件流。
-  - `test-devops` WebSocket：直接通过消息执行 workflow 并自动订阅结果。
-- **观测能力**：健康检查、系统信息（部署环境）、运行统计、资源队列状态。
+## 技术栈
 
-### 当前实现特性（重要）
+- NestJS 11 + Express + `WsAdapter`（原生 `ws`）
+- Prisma 6 + PostgreSQL
+- `@monai-devops/core-engine` / `@monai-devops/plugin-sdk`
+- 工作区插件（由 `plugins.config.json` + `sync-plugin-registry` 生成注册表）
+- `class-validator` / `class-transformer`（全局 `ValidationPipe`）
+- `zod-to-json-schema`（插件 schema 暴露给前端）
 
-- **存储层为 PostgreSQL + Prisma**（持久化）：
-  - workflow → `PrismaWorkflowRepository`（`workflows` 表）
-  - run / events → `PrismaRunRepository`（`runs` + `run_events` 表）
-- 缺少 `DATABASE_URL` 时启动会直接失败（fail-fast）。
-- 部署环境由 `APP_ENV` 标识，经 `GET .../system/info` 暴露（见 §4、§8.1）。
-- 无内置种子 workflow，首次使用需通过 API 创建。
+## 快速开始
 
----
+### 前置
 
-## 2. 项目结构（apps/server）
-
-```txt
-src/
-  engine/          # core-engine 封装与生命周期管理
-  workflows/       # 工作流 CRUD + 触发运行（含 dto/）
-  runs/            # 运行状态机、事件流、WebSocket（含 dto/、Prisma 仓储）
-  plugins/         # 插件信息、配置 schema、dry-run
-  resources/       # 资源与队列状态
-  stats/           # 聚合统计
-  health/          # 健康检查
-  system/          # 系统信息（APP_ENV → GET /system/info）
-  prisma/          # PrismaService / PrismaModule
-  test-devops/     # DevOps 联调入口（HTTP + WS）
-  common/          # DTO、校验、序列化、异常过滤器、storage 启动护栏
-  preload-env.ts   # 环境文件加载（MONAI_ENV_FILE / .env.local / .env）
-  **/*.spec.ts     # 单元测试（与源码同目录）
-test/              # e2e 测试（仅此目录）
-prisma/            # schema + migrations
-plugins.config.json
-```
-
-仓库根目录另有 `docker-compose.yml`，用于本地 PostgreSQL。
-
----
-
-## 3. 前置要求
-
-- Node.js `>= 20`
-- pnpm（仓库根目录 `packageManager` 当前为 `pnpm@10.18.2`）
-- Docker（本地开发启动 PostgreSQL 推荐）
-
-在仓库根目录安装依赖：
+1. Node.js `>= 20`，仓库根目录已 `pnpm install`
+2. **团队公共 PostgreSQL** 可用，库名 `monai_devops` / `monai_devops_test`；在 `.env` / `.env.test` 配置 `DATABASE_URL`（见 [docs/ops/postgres-shared.md](../../docs/ops/postgres-shared.md)）
+3. 在 `apps/server` 复制环境文件：
 
 ```bash
-pnpm install
+# 日常开发
+cp .env.example .env
+# 按需改 DATABASE_URL / GLOBAL_API_PREFIX 等
 ```
 
----
-
-## 4. 环境变量
-
-日常开发加载 `.env.local`、`.env`（若环境变量已存在则不覆盖）。  
-`pnpm dev:test` 通过 `MONAI_ENV_FILE=.env.test` 强制加载 `.env.test`（覆盖其中键，含 `DATABASE_URL`）。  
-Jest（unit / e2e）只使用 `.env.test`，且**强制**库名以 `_test` 结尾。
-
-> `GLOBAL_API_PREFIX`、`DATABASE_URL` 均为**必填项**，未配置会在启动时直接退出。
-
-| 变量名               | 是否必填 | 默认值      | 说明                                                                                                                          |
-| -------------------- | -------- | ----------- | ----------------------------------------------------------------------------------------------------------------------------- |
-| `GLOBAL_API_PREFIX`  | 是       | 无          | 全局 API 前缀，例如 `api`。影响 HTTP、WS 路径。                                                                               |
-| `APP_ENV`            | 否       | `local-dev` | 部署环境标识，经 `GET .../system/info` 返回。合法值见下。非法值会报错。                                                       |
-| `DATABASE_URL`       | 是       | 无          | PostgreSQL 连接串。开发库示例见下；测试库见 `.env.test`。                                                                     |
-| `PORT`               | 否       | `3000`      | HTTP 服务端口。                                                                                                               |
-| `MAX_PARALLEL_STEPS` | 否       | `2`         | 引擎内单个 workflow 的默认并行步数上限。                                                                                      |
-| `RESOURCE_POOL_SIZE` | 否       | `5`         | 引擎默认资源池容量。                                                                                                          |
-| `MAX_ACTIVE_RUNS`    | 否       | `50`        | 活跃 run 上限（超过返回 429）。                                                                                               |
-| `RUN_HISTORY_LIMIT`  | 否       | `500`       | 单个 run 事件条数上限（超限时优先裁剪日志类事件）。                                                                           |
-| `MONAI_ENV_FILE`     | 否       | 无          | 若设置（如 `.env.test`），优先加载该文件并 **override**；否则 `.env.local` → `.env`。`pnpm dev:test` 会自动设为 `.env.test`。 |
-
-`APP_ENV` 合法值与中文标签（`appEnvLabel`）：
-
-| 值            | 标签     |
-| ------------- | -------- |
-| `local-dev`   | 本地开发 |
-| `online-dev`  | 线上开发 |
-| `local-test`  | 本地测试 |
-| `online-test` | 线上测试 |
-| `production`  | 生产     |
-
-示例（`apps/server/.env` 或 `.env.local`，日常开发库）：
-
-```env
-GLOBAL_API_PREFIX=api
-APP_ENV=local-dev
-PORT=3000
-MAX_PARALLEL_STEPS=2
-RESOURCE_POOL_SIZE=5
-MAX_ACTIVE_RUNS=50
-RUN_HISTORY_LIMIT=500
-DATABASE_URL=postgresql://monai:monai@localhost:5432/monai_devops
-```
-
-测试 / `dev:test` 使用已提交的 `.env.test`（指向 `monai_devops_test`，并含 `APP_ENV=local-test`、`GLOBAL_API_PREFIX=api/v1/devops`）。**不要**靠手改 `.env` 在开发库与测试库之间切换。
-
-也可直接复制开发模板：
-
-```bash
-cp apps/server/.env.example apps/server/.env
-```
-
----
-
-## 5. 数据库（PostgreSQL）
-
-本地推荐用仓库根目录的 Compose（会创建开发库，并在**首次**初始化 volume 时建测试库）：
-
-```bash
-# 在仓库根目录
-docker compose up -d
-```
-
-默认账号 / 库：
-
-- user / password：`monai` / `monai`
-- 开发库：`monai_devops`
-- 测试库：`monai_devops_test`
-- port：`5432`
-
-若本地 volume 是旧的、只有开发库，需一次性手动建测试库：
-
-```bash
-docker compose exec postgres psql -U monai -c "CREATE DATABASE monai_devops_test;"
-```
-
-在 `apps/server` 生成客户端并对两个库同步 schema：
+### 数据库
 
 ```bash
 cd apps/server
 pnpm db:generate
-pnpm db:migrate          # 开发库 monai_devops（prisma migrate）
-pnpm db:migrate:test     # 测试库 monai_devops_test（db push + GIN 索引）
-# 可选：打开 Prisma Studio（默认连当前 .env 的库）
-pnpm db:studio
+pnpm db:migrate:dev    # 开发库迁移
+# 或 pnpm db:migrate   # deploy（CI / 固定环境）
 ```
 
-> `db:migrate:test` 使用 `prisma db push`（而非 `migrate deploy`），因为现有 migration 目录中 `schema_sync` 时间戳早于 `init`，在空库上 `migrate deploy` 会失败。测试库只需与当前 schema 一致即可。
-
-**规则**：Jest 只能连 `*_test` 库；开发进程可用 `pnpm dev`（开发库）或 `pnpm dev:test`（测试库）。集成测会清空测试库表，勿把需长期保留的数据放进测试库。
-
----
-
-## 6. 启动与构建
-
-建议在**仓库根目录**执行（与 `pnpm dev` 对称）：
+测试库（`.env.test` → `monai_devops_test`）：
 
 ```bash
-# 全栈：server（开发库）+ web
-pnpm dev
+pnpm db:migrate:test
+```
 
-# 全栈：server（测试库 monai_devops_test）+ web
-pnpm dev:test
+开发库与测试库均为**团队共享**实例；`migrate dev` 与并行跑 e2e 前请与同事协调，详见 [docs/ops/postgres-shared.md](../../docs/ops/postgres-shared.md)。
 
-# 仅 server（开发库 / 测试库）
+### 启动
+
+```bash
+# 仓库根
 pnpm dev:server
-pnpm dev:server:test
 
-# 仅 web
-pnpm dev:web
+# 或在 apps/server
+pnpm dev                 # 读 .env.local / .env
+pnpm dev:test            # 强制用 .env.test（MONAI_ENV_FILE）
 ```
 
-也可在 `apps/server` 目录只起后端：
+默认监听 `PORT`（3000）。启动时 **必须** 设置 `GLOBAL_API_PREFIX`，否则进程退出。所有 HTTP / WS 路径都挂在该前缀下，例如前缀 `api` 时：
 
-```bash
-pnpm dev        # → monai_devops
-pnpm dev:test   # → monai_devops_test
-pnpm build
-pnpm start      # nest start（非 watch）
-pnpm start:prod
-```
+- HTTP：`http://localhost:3000/api/...`
+- Run WS：`ws://localhost:3000/api/runs/ws`
 
-其它常用脚本（仍在 `apps/server`）：
-
-```bash
-pnpm lint / pnpm lint:fix
-pnpm format / pnpm format:check
-pnpm test:watch
-pnpm test:debug
-```
-
-> `prebuild` 会在构建前自动执行插件同步（等同根目录 `pnpm sync:plugins`）。
-
-启动前请确认：PostgreSQL 已就绪、对应库的 schema 已同步。server 启动日志会打印 `Using database: <name>`。
+健康检查：`GET /{prefix}/healthz`
 
 ---
 
-## 7. 插件注册机制
+## 架构一览
 
-- `src/plugins/plugin-registry.ts` 为**自动生成文件**，由根脚本同步：
-  - 根目录执行：`pnpm sync:plugins`
-- `apps/server/package.json` 中 `prebuild` 会自动触发同步脚本。
-- 当前 `apps/server/plugins.config.json` 中启用：
-  - `test-plugin`
-  - `model-call-plugin`
-  - `muti-result-plugin`
-  - `print-plugin`
+```
+Client (web / curl / WS)
+        │
+        ▼
+ Nest Controllers / RunsGateway
+        │
+        ├── WorkflowsService ──► WorkflowRepository (Prisma)
+        ├── RunManagerService ──► RunRepository (Prisma)
+        │         │                    ▲
+        │         │  onEvent（串行链）   │ appendEvent / update
+        │         ▼                    │
+        └── EngineService ── createEngine (core-engine)
+                  │
+                  ├── registeredPlugins（自动生成）
+                  ├── resolveWorkflow(importId) ← WorkflowsService 注入
+                  └── embeddedRunHooks ← RunManager 注入
+```
 
-如新增/删除插件，请先更新插件配置并执行同步，再启动服务。
+要点：
+
+- **引擎事件不阻塞调度**：`RunManager` 用 per-run 的 `eventChains` 异步落库；`onEvent` 不向引擎回传 Promise。
+- **嵌套子 run 不落独立 `Run` 行**：`childRunId → rootRunId` 映射后，子事件写入并推流到顶层 run；可观测性靠事件里的 `parent` / `workflow:iteration:*`。
+- **`GET /runs/:runId/children` 恒返回空数组**（兼容旧路由）。
 
 ---
 
-## 8. API 一览
+## 模块与目录
 
-以下示例默认：
+```
+apps/server/
+├── src/
+│   ├── main.ts / preload-env.ts / app.module.ts
+│   ├── engine/           # EngineService（全局）
+│   ├── workflows/        # CRUD、导入、触发运行
+│   ├── runs/             # Run 受理、控制、WS Gateway、Prisma 仓储
+│   ├── plugins/          # 列表 / JSON Schema / SSE dry-run
+│   ├── resources/        # 引擎资源池与等待队列只读视图
+│   ├── stats/            # 概览指标
+│   ├── health/           # healthz
+│   ├── system/           # APP_ENV 信息
+│   ├── test-devops/      # 内置集成探测（开发用）
+│   ├── prisma/           # PrismaService
+│   └── common/           # 校验、序列化、分页、异常过滤、DB URL 断言
+├── prisma/schema.prisma
+├── plugins.config.json   # 启用哪些工作区插件
+├── .env.example / .env.test
+└── test/                 # e2e / jest setup
+```
 
-- `GLOBAL_API_PREFIX=api`（日常 `pnpm dev`）
-- 服务地址为 `http://localhost:3000`
+`src/plugins/plugin-registry.ts` 为 **自动生成文件**，勿手改。变更启用列表后：
 
-即基础前缀为：`/api`
+```bash
+# 仓库根
+pnpm sync:plugins
+# 或任意次 pnpm build（prebuild 会跑 sync）
+```
 
-使用 `.env.test` / `pnpm dev:test` / Jest 时，前缀为 `api/v1/devops`，路径形如 `/api/v1/devops/healthz`、`ws://localhost:3000/api/v1/devops/runs/ws`。
+---
 
-HTTP 入参由全局 `ValidationPipe` + 各模块 `dto/` 校验。
+## 环境变量
 
-### 8.1 健康与基础
+| 变量                 | 必填          | 默认        | 说明                                                                         |
+| -------------------- | ------------- | ----------- | ---------------------------------------------------------------------------- |
+| `GLOBAL_API_PREFIX`  | ✅            | —           | HTTP/WS 全局前缀（如 `api` 或 `api/v1/devops`）                              |
+| `DATABASE_URL`       | ✅（非 test） | —           | PostgreSQL 连接串                                                            |
+| `APP_ENV`            |               | `local-dev` | `local-dev` \| `online-dev` \| `local-test` \| `online-test` \| `production` |
+| `PORT`               |               | `3000`      | 监听端口                                                                     |
+| `MAX_PARALLEL_STEPS` |               | `2`         | 单个 workflow 内默认并行步骤上限                                             |
+| `RESOURCE_POOL_SIZE` |               | `5`         | 引擎 `default` 资源池槽位数                                                  |
+| `MAX_NESTING_DEPTH`  |               | `3`         | 子工作流嵌套深度上限                                                         |
+| `MAX_ACTIVE_RUNS`    |               | `50`        | 活跃 Run 上限（queued/running/pausing/paused）；超出 `429`                   |
+| `RUN_HISTORY_LIMIT`  |               | `500`       | 单 Run 事件条数上限（超限优先裁剪 `plugin:log`）                             |
+| `MONAI_ENV_FILE`     |               | —           | 指定 env 文件并 **覆盖** 其中键（`dev:test` 使用）                           |
 
-- `GET /api/healthz`：健康检查，返回 `{ "status": "ok", "engineReady": boolean }`
-- `GET /api/system/info`：系统信息（部署环境），例如：
+加载顺序（`preload-env`）：
+
+1. 若设了 `MONAI_ENV_FILE` → 只加载该文件（`override: true`）
+2. 否则 → `.env.local` → `.env`（不覆盖已有 `process.env`）
+
+`ConfigModule` 仍会再读 `.env.local` / `.env`；**日常开发连 `monai_devops`，测试用 `.env.test` / `pnpm dev:test`，不要靠手改 `.env` 切库。**
+
+---
+
+## 数据模型（Prisma）
+
+| 表                 | 作用                                                                             |
+| ------------------ | -------------------------------------------------------------------------------- |
+| `workflows`        | 工作流定义 JSON；`owner_workflow_id` 非空表示 **私有拷贝**（不进公开列表）       |
+| `workflow_imports` | 父工作流导入子工作流：`mode` = `reference` \| `copy`，`id` 即步骤里的 `importId` |
+| `runs`             | 一次顶层执行：快照、状态、计数、结果、可选 `parent_run_id`                       |
+| `run_events`       | 事件流（`run_id` + `event_index` 唯一）                                          |
+
+Run 状态：`queued` → `running` / `pausing` / `paused` → `finished` \| `failed` \| `cancelled`；校验失败可为 `rejected`。进行中的 Run 不可删除。
+
+---
+
+## HTTP API
+
+以下路径均相对于 `/{GLOBAL_API_PREFIX}`。分页默认 `page=1`、`pageSize=20`（最大 100）。
+
+### 系统 / 健康
+
+| 方法  | 路径              | 说明                                 |
+| ----- | ----------------- | ------------------------------------ |
+| `GET` | `/`               | 占位 hello                           |
+| `GET` | `/healthz`        | `{ status, engineReady }`            |
+| `GET` | `/system/info`    | `{ appEnv, appEnvLabel }`            |
+| `GET` | `/stats/overview` | 活跃/成功/失败 Run、插件数、资源队列 |
+| `GET` | `/test-devops`    | 内置集成探测                         |
+
+### 工作流
+
+| 方法     | 路径                     | 说明                                             |
+| -------- | ------------------------ | ------------------------------------------------ |
+| `GET`    | `/step-kinds`            | 内置步骤形态（`set_state` / `workflow` 等）      |
+| `GET`    | `/workflows`             | 列表（默认仅公开；`search` / 分页）              |
+| `POST`   | `/workflows`             | 创建（自动补全缺失 id）                          |
+| `POST`   | `/workflows/validate`    | 只校验不落库                                     |
+| `GET`    | `/workflows/:id`         | 详情                                             |
+| `PUT`    | `/workflows/:id`         | 更新（同步 import 的 `stepId`）                  |
+| `DELETE` | `/workflows/:id`         | 删除；仍被引用则 `409 WORKFLOW_STILL_REFERENCED` |
+| `POST`   | `/workflows/:id/run`     | 用已存定义触发 Run                               |
+| `GET`    | `/workflows/:id/imports` | 导入列表                                         |
+| `POST`   | `/workflows/:id/imports` | 创建导入：`{ childWorkflowId, mode, stepId? }`   |
+
+导入规则摘要：
+
+- `reference`：步骤通过 `importId` 指向已有公开工作流
+- `copy`：复制一份私有子工作流（`ownerWorkflowId = 父 id`），再建立 import
+- 不可导入私有拷贝、不可导入自身；同一来源重复导入会 `400`
+
+保存/更新时会跑完整校验：基础字段、步骤名唯一、DAG、`$ref`、step kinds、嵌套深度、以及（有 imports 时）`importId` 必须落在本工作流导入记录中。
+
+### Run
+
+| 方法     | 路径                    | 说明                                              |
+| -------- | ----------------------- | ------------------------------------------------- |
+| `GET`    | `/runs`                 | 列表（`status` / `workflowId` / `search` / 分页） |
+| `POST`   | `/runs`                 | body 带完整 `workflow` 草稿直接受理               |
+| `GET`    | `/runs/:runId`          | 详情（合并引擎侧 live 控制态）                    |
+| `GET`    | `/runs/:runId/events`   | 已持久化事件                                      |
+| `GET`    | `/runs/:runId/children` | 兼容接口，恒 `{ children: [] }`                   |
+| `POST`   | `/runs/:runId/cancel`   | `{ mode?: 'best-effort' \| 'hard' }`              |
+| `POST`   | `/runs/:runId/pause`    | `{ waitInFlight?, abortInFlight? }`               |
+| `POST`   | `/runs/:runId/resume`   | 恢复                                              |
+| `DELETE` | `/runs/:runId`          | 仅终态可删                                        |
+
+`POST /runs` / `POST /workflows/:id/run` 可选字段：`priority`、`traceId`、`initialState` 等。活跃数达 `MAX_ACTIVE_RUNS` 时返回 `429` + `MAX_ACTIVE_RUNS_EXCEEDED`。
+
+受理成功立即返回 `{ runId, status: 'queued' }`，执行在后台进行。
+
+### 插件
+
+| 方法   | 路径                           | 说明                                          |
+| ------ | ------------------------------ | --------------------------------------------- |
+| `GET`  | `/plugins`                     | 已注册插件摘要                                |
+| `GET`  | `/plugins/config-schemas`      | 全部 config JSON Schema                       |
+| `GET`  | `/plugins/result-schemas`      | 全部 result JSON Schema                       |
+| `GET`  | `/plugins/:name`               | 单个插件                                      |
+| `GET`  | `/plugins/:name/config-schema` |                                               |
+| `GET`  | `/plugins/:name/result-schema` |                                               |
+| `POST` | `/plugins/:name/dry-run`       | **SSE**：试运行单插件（config 中禁止 `$ref`） |
+
+SSE 消息形态：`{ type: 'log', event }` / `{ type: 'done', result }` / `{ type: 'error', message }`。
+
+### 资源
+
+| 方法  | 路径               | 说明                   |
+| ----- | ------------------ | ---------------------- |
+| `GET` | `/resources`       | 当前资源槽位列表       |
+| `GET` | `/resources/queue` | 按 type 的等待队列状态 |
+
+---
+
+## WebSocket：Run 事件流
+
+- 路径：`/{GLOBAL_API_PREFIX}/runs/ws`
+- 适配器：`@nestjs/platform-ws`（非 Socket.IO）
+
+### 客户端 → 服务端
 
 ```json
-{ "appEnv": "local-dev", "appEnvLabel": "本地开发" }
+{ "type": "subscribe", "runId": "<id>", "fromEventIndex": 0 }
+{ "type": "unsubscribe", "runId": "<id>" }
+{ "type": "run", "workflow": { /* WorkflowDefinition 草稿 */ } }
 ```
 
-（取值来自 `APP_ENV`，见 §4）
+`run`：内部 `submitRun` 后自动 `subscribe` 该 run。
 
-- `GET /api/`：基础探活（返回 `Hello World!`）
-
-### 8.2 Workflows
-
-- `GET /api/workflows?search=&page=1&pageSize=20`
-- `POST /api/workflows`
-- `POST /api/workflows/validate`
-- `GET /api/workflows/:id`
-- `PUT /api/workflows/:id`
-- `DELETE /api/workflows/:id`
-- `POST /api/workflows/:id/run`（触发运行）
-
-创建 workflow 示例：
-
-```bash
-curl -X POST "http://localhost:3000/api/workflows" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "id": "demo-workflow",
-    "name": "Demo Workflow",
-    "steps": [
-      {
-        "id": "step-1",
-        "name": "Run Unit Test",
-        "plugin": "test-plugin",
-        "config": { "type": "unit" }
-      }
-    ]
-  }'
-```
-
-### 8.3 Runs
-
-- `GET /api/runs?status=&workflowId=&search=&page=1&pageSize=20`
-  - `status` 可选：`queued` \| `running` \| `paused` \| `pausing` \| `finished` \| `failed` \| `rejected` \| `cancelled`
-- `POST /api/runs`（内联 workflow 提交；可选 `priority`、`traceId`、`failFast`、`maxParallelSteps`）
-- `GET /api/runs/:runId`
-- `GET /api/runs/:runId/events`
-- `POST /api/runs/:runId/cancel`（`{ "mode": "best-effort" | "hard" }`）
-- `POST /api/runs/:runId/pause`（`{ "waitInFlight": true, "abortInFlight": false }`）
-- `POST /api/runs/:runId/resume`
-- `DELETE /api/runs/:runId`（仅允许删除终态 run）
-
-`POST /api/workflows/:id/run` 同样支持可选字段：`priority`、`traceId`、`failFast`、`maxParallelSteps`。
-
-内联提交 run 示例：
-
-```bash
-curl -X POST "http://localhost:3000/api/runs" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "workflow": {
-      "id": "inline-workflow",
-      "name": "Inline Workflow",
-      "steps": [
-        {
-          "id": "inline-step",
-          "name": "Inline Step",
-          "plugin": "test-plugin",
-          "config": { "type": "integration" }
-        }
-      ]
-    },
-    "priority": 1,
-    "traceId": "trace-demo-001"
-  }'
-```
-
-### 8.4 Plugins
-
-- `GET /api/plugins`
-- `GET /api/plugins/config-schemas`
-- `GET /api/plugins/:name/config-schema`
-- `GET /api/plugins/result-schemas`
-- `GET /api/plugins/:name/result-schema`
-- `GET /api/plugins/:name`
-- `POST /api/plugins/:name/dry-run`（SSE）
-
-`GET /api/plugins` / `GET /api/plugins/:name` 响应含 `hasResultSchema`（是否声明了 `resultSchema`）。
-
-`GET /api/plugins/:name/result-schema`：无插件或未声明 `resultSchema` 时返回 404（文案：`插件不存在或未声明 resultSchema`）。
-
-插件 dry-run（SSE）示例：
-
-```bash
-curl -N -X POST "http://localhost:3000/api/plugins/test-plugin/dry-run" \
-  -H "Content-Type: application/json" \
-  -d '{ "config": { "type": "unit" } }'
-```
-
-SSE 事件数据类型：
-
-- `log`：插件日志事件
-- `done`：执行完成结果
-- `error`：执行失败信息
-
-> dry-run **不支持** config 中的上游步骤引用（`$ref`）；含引用时同步返回 400。完整工作流运行会由 core-engine 解析引用。
-
-### 8.5 Resources / Stats / Test-DevOps
-
-- `GET /api/resources`：资源列表
-- `GET /api/resources/queue`：资源等待队列
-- `GET /api/stats/overview`：聚合统计（活跃/完成/失败/successRate/pluginCount/queue）
-- `GET /api/test-devops`：同步跑内置 integration workflow，大致返回
-  `{ "success": boolean, "message": string, "workflowId": "integration-closed-loop" }`
-  （走 engine 直跑，不经 RunManager 持久化列表）
-
----
-
-## 9. WebSocket 协议
-
-### 9.1 Runs WS
-
-- 路径：`ws://localhost:3000/api/runs/ws`
-
-客户端可发送：
-
-- `{"type":"subscribe","runId":"<run-id>","fromEventIndex":0}`（`fromEventIndex` 可选，默认 `0`，用于事件回放起点）
-- `{"type":"unsubscribe","runId":"<run-id>"}`
-- `{"type":"run","workflow":{...}}`
-
-服务端消息：
-
-- `event`：`{ type, runId, event }`
-- `done`：`{ type, runId, result }`
-- `error`：`{ type, runId?, message }`
-
-### 9.2 Test-DevOps WS
-
-- 路径：`ws://localhost:3000/api/test-devops/ws`
-- 客户端发送：`{"type":"run","workflow":{...}}`
-- 服务端回放/推送 run 事件与完成结果（同 `runs` 流格式）
-
----
-
-## 10. 错误处理约定
-
-全局使用 `AllExceptionsFilter` 统一错误返回格式：
+### 服务端 → 客户端
 
 ```json
-{
-  "statusCode": 400,
-  "message": "错误描述",
-  "error": "ErrorName",
-  "code": "OPTIONAL_CODE",
-  "details": {}
-}
+{ "type": "event", "runId": "...", "event": { /* 序列化生命周期事件 */ } }
+{ "type": "done", "runId": "...", "result": { /* WorkflowRunResult */ } }
+{ "type": "error", "runId?": "...", "message": "..." }
 ```
 
-典型场景：
-
-- Workflow 校验失败：`400` + `WORKFLOW_VALIDATION_ERROR`
-- 活跃 run 达上限：`429` + `MAX_ACTIVE_RUNS_EXCEEDED`
-- 资源不存在：`404`
-- 状态冲突（如非运行态暂停）：`409`
-- 请求体/查询参数不合规：`400`（ValidationPipe）
+订阅时会从 `fromEventIndex` 回放已存事件；若 Run 已终态且有 `result`，会再发一条 `done`。
 
 ---
 
-## 11. 测试命令
+## 错误与校验
 
-在 `apps/server` 目录（需已执行 `pnpm db:migrate:test`）：
+全局 `AllExceptionsFilter`：
 
-```bash
-# 单测（src 旁 co-located *.spec.ts；自动加载 .env.test）
-pnpm test
+- `WorkflowValidationError` → `400`，`code: WORKFLOW_VALIDATION_ERROR`
+- `HttpException` → 原状态码；可带业务 `code`（如 `WORKFLOW_STILL_REFERENCED`、`MAX_ACTIVE_RUNS_EXCEEDED`）
+- 其它 `Error` → `500`
 
-# e2e（仅 test/；强制 monai_devops_test）
-pnpm test:e2e
-
-# 覆盖率
-pnpm test:cov
-```
-
-Prisma 集成测试（`prisma-run.repository.spec.ts`）在设置了指向 `*_test` 库的 `DATABASE_URL` 且库表已迁移时才会执行；否则会 skip 或因护栏失败。Jest 误连开发库会直接抛错，不会执行 `deleteMany`。
+全局 `ValidationPipe`：`whitelist` + `forbidNonWhitelisted` + `transform`。
 
 ---
 
-## 12. 已知限制与后续建议
+## 插件接入
 
-- **多实例部署**：任意实例可读 run 状态，但正在执行的 run 仍绑定提交时命中的进程；跨实例 WS 实时推送尚未打通。
-- 后续可优先补充：
-  - 鉴权与权限控制（`created_by` 字段已预留）
-  - API 限流策略
-  - 可观测性（日志、指标、链路追踪）
-  - 数据保留 / 归档策略（`RUN_RETENTION_DAYS` 等）
+1. 在 `plugins/` 下实现插件包（依赖 `plugin-sdk`）
+2. 把包名写入 `apps/server/plugins.config.json` 的 `plugins` 数组
+3. 确保 `apps/server/package.json` 有对应 `workspace:*` 依赖
+4. 运行 `pnpm sync:plugins`（或任意 `build`），更新 `plugin-registry.ts`
+5. 重启 server；`EngineService` 启动时 `createEngine({ plugins: registeredPlugins })`
+
+当前默认启用：`test-plugin`、`model-call-plugin`、`muti-result-plugin`、`print-plugin`、`embedding-plugin`。
+
+---
+
+## 脚本
+
+| 脚本                                 | 作用                                |
+| ------------------------------------ | ----------------------------------- |
+| `pnpm dev`                           | `nest start --watch`                |
+| `pnpm dev:test`                      | 使用 `.env.test` 启动               |
+| `pnpm build`                         | 先 sync 插件注册表，再 `nest build` |
+| `pnpm start:prod`                    | `node dist/src/main`                |
+| `pnpm test` / `test:e2e`             | Jest 单元 / e2e                     |
+| `pnpm check-types`                   | `tsc --noEmit`                      |
+| `pnpm lint` / `format`               | ESLint / Prettier                   |
+| `pnpm db:generate`                   | Prisma Client                       |
+| `pnpm db:migrate` / `db:migrate:dev` | 迁移                                |
+| `pnpm db:migrate:test`               | 测试库迁移                          |
+| `pnpm db:studio`                     | Prisma Studio                       |
+
+---
+
+## 设计备忘
+
+- **一份进程一个引擎**：`EngineModule` 全局；销毁时 `engine.destroy()`。
+- **工作流 id 规范化**：草稿可缺 id；`normalizeWorkflowIds` 在保存/提交前补齐，并尽量保留已有 step id。
+- **事件序列化**：引擎事件经 `serialize-workflow-event` 去掉不可 JSON 化字段后再入库与推流；流式 `plugin:log` 可合并（见 `merge-stream-log-event`）。
+- **查询详情时**：DB 记录与 `engine.getRunStatus` 合并，以便看到 `cancelling` / `pausing` 等瞬时态。
+- **无认证**：当前所有接口开放；生产前需自行加网关或守卫。

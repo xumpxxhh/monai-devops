@@ -1,0 +1,35 @@
+---
+description: 前端画面突变交互须补适当过渡；沿用 index.css keyframes + Radix data-state
+globs: apps/web/**/*.{tsx,css}
+alwaysApply: false
+---
+
+# UI 过渡（画面突变）
+
+实现或改动会**瞬间改变可见状态**的交互时，必须补上合适的打开/关闭（或展开/收起）过渡，避免硬切。
+
+## 何时必须考虑
+
+- 遮罩 / Modal / Drawer / 浮层 / 下拉菜单的出现与消失
+- 侧栏、折叠面板、可展开区块的展开与收起
+- 内容区因切换导致的明显位移、显隐、尺寸跳变（若观感突兀）
+
+瞬时反馈（按钮 active、纯颜色 hover）可不强制；**整块 UI 挂载/卸载或大位移**则必须有过渡。
+
+## 实现约定（apps/web）
+
+1. **优先复用**已有带动画的共享组件（如 `Modal`、`Drawer`），不要在业务页各自再造一套开关动画。
+2. **新增动画**沿用 [`apps/web/src/index.css`](apps/web/src/index.css)：`@keyframes` + 工具类；Radix 类组件用 `data-state` 挂接，保证**关闭动画播完再卸载**（用 animation，勿只靠会立刻卸载的 transition）。
+3. **时长与缓动**：打开约 180–220ms、`ease-out`；关闭略同或略短、`ease-in`；与现有 `overlay-*` / `modal-content-*` / `drawer-content-*` / `toast-in` 保持同量级。
+4. **Transform 注意**：居中弹层等已有 `translate` 时，把完整 transform 写进 keyframes，避免与 Tailwind 定位类冲突。
+5. **勿默认引入** `tailwindcss-animate` 等新依赖；项目已有 `prefers-reduced-motion: reduce` 全局关闭动画，无需重复造轮子。
+
+## 对照
+
+```tsx
+// ❌ 遮罩/面板无动画类，开关瞬间出现/消失
+<Dialog.Overlay className="fixed inset-0 bg-ink/30 z-50" />
+
+// ✅ 同时挂 in/out，由 data-state 触发（见 index.css）
+<Dialog.Overlay className="fixed inset-0 bg-ink/30 z-50 overlay-in overlay-out" />
+```

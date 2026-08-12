@@ -17,8 +17,6 @@
     "test": "turbo run test",
     "create:plugin": "node scripts/create-plugin.mjs",
     "sync:plugins": "node scripts/sync-plugin-registry.mjs",
-    "db:up": "docker compose up -d",
-    "db:down": "docker compose down",
     "prepare": "husky"
   },
   "devDependencies": {
@@ -38,15 +36,6 @@
     "prettier": "^3.6.2",
     "typescript": "catalog:",
     "typescript-eslint": "^8.55.0"
-  },
-  "lint-staged": {
-    "*.{ts,tsx}": [
-      "eslint",
-      "prettier --check"
-    ],
-    "*.{json,md,yml,yaml,css}": [
-      "prettier --check"
-    ]
   },
   "packageManager": "pnpm@10.18.2",
   "engines": {

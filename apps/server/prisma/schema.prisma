@@ -24,6 +24,7 @@ model Run {
   createdBy        BigInt?   @map("created_by")
   source           String?   @default("api")
   metadata         Json      @default("{}")
+  parentRunId      String?   @map("parent_run_id")
   createdAt        DateTime  @default(now()) @map("created_at")
   updatedAt        DateTime  @updatedAt @map("updated_at")
   startedAt        DateTime? @map("started_at")
@@ -33,6 +34,7 @@ model Run {
   @@index([isActive, createdAt])
   @@index([workflowId])
   @@index([workflowName])
+  @@index([parentRunId])
   @@map("runs")
 }
 
@@ -50,12 +52,37 @@ model RunEvent {
 }
 
 model Workflow {
-  id         String   @id
-  name       String   @unique
-  definition Json
-  createdBy  BigInt?  @map("created_by")
-  createdAt  DateTime @default(now()) @map("created_at")
-  updatedAt  DateTime @updatedAt @map("updated_at")
+  id              String   @id
+  name            String   @unique
+  definition      Json
+  /** 非空表示私有拷贝，仅所属父工作流可管理，不进公开列表 */
+  ownerWorkflowId String?  @map("owner_workflow_id")
+  createdBy       BigInt?  @map("created_by")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
 
+  ownerWorkflow   Workflow?  @relation("PrivateCopyOwner", fields: [ownerWorkflowId], references: [id], onDelete: Cascade)
+  privateCopies   Workflow[] @relation("PrivateCopyOwner")
+
+  importsAsParent WorkflowImport[] @relation("ImportsFromParent")
+  importsAsChild  WorkflowImport[] @relation("ImportsToChild")
+
+  @@index([ownerWorkflowId])
   @@map("workflows")
+}
+
+model WorkflowImport {
+  id               String   @id
+  parentWorkflowId String   @map("parent_workflow_id")
+  childWorkflowId  String   @map("child_workflow_id")
+  stepId           String   @default("") @map("step_id")
+  mode             String
+  createdAt        DateTime @default(now()) @map("created_at")
+
+  parentWorkflow Workflow @relation("ImportsFromParent", fields: [parentWorkflowId], references: [id], onDelete: Cascade)
+  childWorkflow  Workflow @relation("ImportsToChild", fields: [childWorkflowId], references: [id], onDelete: Cascade)
+
+  @@index([parentWorkflowId])
+  @@index([childWorkflowId])
+  @@map("workflow_imports")
 }

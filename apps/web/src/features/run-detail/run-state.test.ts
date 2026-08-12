@@ -69,9 +69,106 @@ describe('run-state reducer', () => {
     state = applyRunEvent(state, {
       type: 'workflow:finished',
       meta: { workflowId: 'wf-1' },
-      result: { success: true, workflowId: 'wf-1', results: [] },
+      result: { success: true, status: 'success', workflowId: 'wf-1', results: [] },
     });
     expect(state.status).toBe('finished');
+  });
+
+  it('does not pollute top-level steps with parent-scoped events', () => {
+    let state = createInitialRunState('parent-run', {
+      id: 'wf-parent',
+      name: 'Parent',
+      steps: [
+        { id: 'call-child', name: 'Call', kind: 'workflow', dependsOn: [] },
+        { id: 'after', name: 'After', plugin: 'test-plugin', dependsOn: ['call-child'] },
+      ],
+    });
+
+    state = applyRunEvent(state, {
+      type: 'step:finished',
+      workflowRunId: 'child-run',
+      meta: { workflowId: 'wf-child' },
+      parent: { runId: 'parent-run', stepId: 'call-child', iteration: 0 },
+      step: { id: 'inner-step', name: 'Inner', plugin: 'test-plugin' },
+      result: { status: 'completed', success: true, stepId: 'inner-step' },
+    });
+
+    expect(state.steps['inner-step']).toBeUndefined();
+    expect(state.counts.total).toBe(2);
+    expect(state.steps['call-child'].nestedLogs?.[0]?.length).toBeGreaterThan(0);
+
+    const nestedLog = state.logs.find((l) => l.nesting?.parentStepId === 'call-child');
+    expect(nestedLog?.nesting).toMatchObject({
+      parentStepId: 'call-child',
+      parentStepName: 'Call',
+      iteration: 0,
+    });
+    expect(nestedLog?.message).not.toContain('[nested');
+  });
+
+  it('does not create orphan DAG nodes for nested step:queued missing parent', () => {
+    let state = createInitialRunState('parent-run', {
+      id: 'wf-parent',
+      name: 'Parent',
+      steps: [{ id: 'call-child', name: 'Call', kind: 'workflow', dependsOn: [] }],
+    });
+
+    state = applyRunEvent(state, {
+      type: 'step:queued',
+      workflowRunId: 'child-run-xyz',
+      meta: { workflowId: 'wf-child' },
+      step: { id: 'child-s1', name: '步骤 1', plugin: 'embedding-plugin' },
+      resourceType: 'runner',
+      priority: 0,
+    });
+
+    expect(state.steps['child-s1']).toBeUndefined();
+    expect(state.counts.total).toBe(1);
+    expect(state.steps['call-child'].status).toBe('idle');
+    // 无 parent 字段时不强行造 nesting 分组，仅记普通日志
+    expect(state.logs.some((l) => l.message === 'step:queued')).toBe(true);
+    expect(state.logs.every((l) => !l.message.includes('[nested'))).toBe(true);
+  });
+
+  it('tracks workflow iteration start/finished on parent workflow step', () => {
+    let state = createInitialRunState('parent-run', {
+      id: 'wf-parent',
+      name: 'Parent',
+      steps: [{ id: 'call-child', name: 'Call', kind: 'workflow', dependsOn: [] }],
+    });
+
+    state = applyRunEvent(state, {
+      type: 'workflow:iteration:start',
+      workflowRunId: 'parent-run',
+      meta: { workflowId: 'wf-parent' },
+      step: { id: 'call-child', name: 'Call', kind: 'workflow' },
+      iteration: 0,
+    });
+    expect(state.steps['call-child'].iterations?.[0]).toMatchObject({
+      index: 0,
+      status: 'running',
+    });
+    expect(state.counts.total).toBe(1);
+
+    state = applyRunEvent(state, {
+      type: 'workflow:iteration:finished',
+      workflowRunId: 'parent-run',
+      meta: { workflowId: 'wf-parent' },
+      step: { id: 'call-child', name: 'Call', kind: 'workflow' },
+      iteration: 0,
+      childResult: {
+        childRunId: 'child-run-0',
+        success: true,
+        status: 'success',
+        state: { done: true },
+      },
+    });
+    expect(state.steps['call-child'].iterations?.[0]).toMatchObject({
+      index: 0,
+      status: 'completed',
+      childRunId: 'child-run-0',
+      state: { done: true },
+    });
   });
 
   it('converts steps and edges to flow data', () => {

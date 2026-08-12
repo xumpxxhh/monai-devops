@@ -20,10 +20,16 @@ const TERMINAL_STATUSES: ReadonlySet<RunControlStatus> = new Set([
   'failed',
 ]);
 
+export type PauseRequestedListener = (options: PauseRunOptions) => void | Promise<void>;
+export type ResumeRequestedListener = () => void | Promise<void>;
+export type CancelRequestedListener = (options: CancelRunOptions) => void | Promise<void>;
+
 export class RunHandle {
   private status: RunControlStatus = 'running';
   private abortReason: AbortSchedulingReason = 'none';
   private readonly inFlightStepIds = new Set<string>();
+  /** 已级联暂停的嵌套 workflow 步骤：不阻塞 pausing → paused */
+  private readonly nestedPausedStepIds = new Set<string>();
   private totalSteps = 0;
   private completedSteps = 0;
   private runMeta: WorkflowRunMeta | undefined;
@@ -35,11 +41,67 @@ export class RunHandle {
   private stepAbortControllers = new Map<string, AbortController>();
   private cancelMode: RunControlMode = 'best-effort';
   private pauseAbortInFlight = false;
+  private readonly pauseListeners = new Set<PauseRequestedListener>();
+  private readonly resumeListeners = new Set<ResumeRequestedListener>();
+  private readonly cancelListeners = new Set<CancelRequestedListener>();
 
   constructor(readonly workflowRunId: string) {
     this.completionPromise = new Promise<void>((resolve) => {
       this.resolveCompletion = resolve;
     });
+  }
+
+  /** 订阅 pause 请求（供 workflow 步骤级联到活跃子 run） */
+  onPauseRequested(listener: PauseRequestedListener): () => void {
+    this.pauseListeners.add(listener);
+    return () => {
+      this.pauseListeners.delete(listener);
+    };
+  }
+
+  /** 订阅 resume 请求 */
+  onResumeRequested(listener: ResumeRequestedListener): () => void {
+    this.resumeListeners.add(listener);
+    return () => {
+      this.resumeListeners.delete(listener);
+    };
+  }
+
+  /**
+   * 订阅 cancel 请求（级联 cancel 子 run）。
+   * 设计文档仅点名 pause/resume 订阅接口；cancel 级联同属 §5.4，故一并提供。
+   */
+  onCancelRequested(listener: CancelRequestedListener): () => void {
+    this.cancelListeners.add(listener);
+    return () => {
+      this.cancelListeners.delete(listener);
+    };
+  }
+
+  /** 标记嵌套子 run 已暂停，允许父 run 在步骤仍 in-flight 时进入 paused */
+  markNestedPaused(stepId: string): void {
+    if (!this.inFlightStepIds.has(stepId)) return;
+    this.nestedPausedStepIds.add(stepId);
+    this.checkPausingToPaused();
+  }
+
+  clearNestedPaused(stepId: string): void {
+    this.nestedPausedStepIds.delete(stepId);
+  }
+
+  private async notifyListeners<T>(
+    listeners: ReadonlySet<(arg: T) => void | Promise<void>>,
+    arg: T,
+  ): Promise<void> {
+    const tasks = [...listeners].map((listener) => Promise.resolve(listener(arg)));
+    await Promise.all(tasks);
+  }
+
+  private async notifyVoidListeners(
+    listeners: ReadonlySet<() => void | Promise<void>>,
+  ): Promise<void> {
+    const tasks = [...listeners].map((listener) => Promise.resolve(listener()));
+    await Promise.all(tasks);
   }
 
   setRunMeta(meta: WorkflowRunMeta): void {
@@ -100,6 +162,7 @@ export class RunHandle {
   untrackInFlight(stepId: string): void {
     this.inFlightStepIds.delete(stepId);
     this.stepAbortControllers.delete(stepId);
+    this.nestedPausedStepIds.delete(stepId);
   }
 
   getInFlightSteps(): string[] {
@@ -143,12 +206,12 @@ export class RunHandle {
   }
 
   requestCancel(options: CancelRunOptions = {}): Promise<RunControlResult> {
-    return this.runControlOp(() => {
+    return this.runControlOp(async () => {
       const previousStatus = this.status;
       if (TERMINAL_STATUSES.has(previousStatus)) {
         return {
           workflowRunId: this.workflowRunId,
-          action: 'cancel',
+          action: 'cancel' as const,
           previousStatus,
           currentStatus: previousStatus,
           mode: options.mode ?? 'best-effort',
@@ -169,9 +232,11 @@ export class RunHandle {
         }
       }
 
+      await this.notifyListeners(this.cancelListeners, options);
+
       return {
         workflowRunId: this.workflowRunId,
-        action: 'cancel',
+        action: 'cancel' as const,
         previousStatus,
         currentStatus: this.status,
         mode: this.cancelMode,
@@ -183,12 +248,12 @@ export class RunHandle {
   requestPause(options: PauseRunOptions = {}): Promise<RunControlResult> {
     const abortInFlight = options.abortInFlight ?? false;
     const waitInFlight = abortInFlight ? true : (options.waitInFlight ?? true);
-    return this.runControlOp(() => {
+    return this.runControlOp(async () => {
       const previousStatus = this.status;
       if (TERMINAL_STATUSES.has(previousStatus) || previousStatus === 'cancelling') {
         return {
           workflowRunId: this.workflowRunId,
-          action: 'pause',
+          action: 'pause' as const,
           previousStatus,
           currentStatus: previousStatus,
           inFlightSteps: this.getInFlightSteps(),
@@ -197,7 +262,7 @@ export class RunHandle {
       if (previousStatus === 'paused' || previousStatus === 'pausing') {
         return {
           workflowRunId: this.workflowRunId,
-          action: 'pause',
+          action: 'pause' as const,
           previousStatus,
           currentStatus: previousStatus,
           inFlightSteps: this.getInFlightSteps(),
@@ -211,16 +276,23 @@ export class RunHandle {
         }
       }
 
-      if (waitInFlight && this.inFlightStepIds.size > 0) {
+      const blockingInFlight = [...this.inFlightStepIds].filter(
+        (id) => !this.nestedPausedStepIds.has(id),
+      );
+      if (waitInFlight && blockingInFlight.length > 0) {
         this.status = 'pausing';
       } else {
         this.status = 'paused';
         this.notifyPaused();
       }
 
+      await this.notifyListeners(this.pauseListeners, options);
+      // 级联暂停后子 run 可能已 markNestedPaused，再检查一次 pausing → paused
+      this.checkPausingToPaused();
+
       return {
         workflowRunId: this.workflowRunId,
-        action: 'pause',
+        action: 'pause' as const,
         previousStatus,
         currentStatus: this.status,
         inFlightSteps: this.getInFlightSteps(),
@@ -229,7 +301,7 @@ export class RunHandle {
   }
 
   requestResume(): Promise<RunControlResult> {
-    return this.runControlOp(() => {
+    return this.runControlOp(async () => {
       const previousStatus = this.status;
       if (
         TERMINAL_STATUSES.has(previousStatus) ||
@@ -238,7 +310,7 @@ export class RunHandle {
       ) {
         return {
           workflowRunId: this.workflowRunId,
-          action: 'resume',
+          action: 'resume' as const,
           previousStatus,
           currentStatus: previousStatus,
           inFlightSteps: this.getInFlightSteps(),
@@ -253,9 +325,11 @@ export class RunHandle {
         resolve();
       }
 
+      await this.notifyVoidListeners(this.resumeListeners);
+
       return {
         workflowRunId: this.workflowRunId,
-        action: 'resume',
+        action: 'resume' as const,
         previousStatus,
         currentStatus: this.status,
         inFlightSteps: this.getInFlightSteps(),
@@ -317,7 +391,9 @@ export class RunHandle {
   }
 
   checkPausingToPaused(): void {
-    if (this.status === 'pausing' && this.inFlightStepIds.size === 0) {
+    if (this.status !== 'pausing') return;
+    const blocking = [...this.inFlightStepIds].filter((id) => !this.nestedPausedStepIds.has(id));
+    if (blocking.length === 0) {
       this.status = 'paused';
       this.notifyPaused();
     }
