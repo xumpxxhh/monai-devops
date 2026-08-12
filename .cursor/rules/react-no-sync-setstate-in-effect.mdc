@@ -1,0 +1,34 @@
+---
+description: React 禁止在 Effect 函数体同步 setState（级联渲染）；优先渲染期推导/调整
+globs: apps/web/**/*.{tsx,ts}
+alwaysApply: false
+---
+
+# React：勿在 Effect 内同步 setState
+
+来源：Compiler / `eslint-plugin-react-hooks` 的 `set-state-in-effect`；见 [You Might Not Need an Effect](https://react.dev/learn/you-might-not-need-an-effect)。
+
+## 根因
+
+Effect（含 layout/insertion）在 **commit 之后**跑；函数体里**同步** `setState` → 再开一轮 render（cascading renders），伤性能，还可能 paint 前闪中间态。
+
+Effect 只对接**外部系统**（DOM / 订阅 / 网络 / 非 React 库）：用 React 状态更新外部，或在订阅**回调**里 `setState`。React 内部「props/state 变了 → 改另一份 state」不属于 Effect。
+
+```tsx
+// ❌
+useEffect(() => { setX(computeFrom(propsOrState)); }, [propsOrState]);
+```
+
+## 改法（优先级）
+
+1. **渲染期算** — 能从现有 props/state 推出的勿再存 state。
+2. **换 `key`** — 换实体需清空全部本地 state 时，给子树不同 `key` 卸载重建。
+3. **渲染期调部分 state** — 保留部分 state、依赖变时改另一部分：render 里比「上一轮存的值」再 `setState`（[prev-render 模式](https://react.dev/reference/react/useState#storing-information-from-previous-renders)）；须 `prev !== next` 防死循环；只改**本组件** state。
+4. **事件里改** — 用户操作写在事件处理器，勿事后 Effect 追赶。
+5. **真外部源** — 可变 store 用 `useSyncExternalStore`；请求等在 **promise/订阅回调**里 `setState`（可），勿在 effect 入口同步写。
+
+## Effect 里何时可 setState
+
+值在 render 时拿不到、来自外部时：异步/订阅回调（`fetch`、listener、定时器等）；可选：从 ref 读的布局测量再写入。
+
+判别：是「追 props/state」还是「外部事件到了」？前者不要 Effect。
