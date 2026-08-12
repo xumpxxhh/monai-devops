@@ -1,5 +1,12 @@
 # apps/web 开发日志
 
+## 2026-08-12
+
+- **变更**：导入/复制 `definitionToDraft` 时同步重映射 config/patch 内 `$ref.fromStepId` 为 clientRef（与 dependsOn 一致），避免上游引用仍指向旧 step id
+- **文件**：`src/features/workflows/workflow-import-utils.ts`, `src/features/workflows/workflow-import-utils.test.ts`, `scripts/fixtures/import-workflow-sample.json`
+- **变更**：工作流列表增加「导入 JSON」：解析本地 WorkflowDefinition、预检插件、跳过子工作流引用步骤并警告，经 validate/create 落库后跳转编辑器；抽取 `workflow-import-utils` 供复制与导入共用
+- **文件**：`src/features/workflows/workflow-import-utils.ts`, `src/features/workflows/workflow-import-utils.test.ts`, `src/features/workflows/ImportWorkflowJsonModal.tsx`, `src/features/workflows/WorkflowsListPage.tsx`
+
 ## 2026-08-11
 
 - **变更**：CSS 变量主题系统 — index.css 定义 :root token（brand/surfaces/text/lines/status），支持 `data-theme='mint'` 双主题切换；ThemeSwitcher 组件挂载到 Topbar/FullscreenLayout；index.html 内联脚本防闪烁预置主题；code-editor-theme、flow-layout、RunDetailPage 硬编码色值迁移为 `var(--*)` token；清理 Vite 脚手架残留（hero.png/react.svg/vite.svg/icons.svg）；页面标题改为 MONAI DevOps；favicon 与 drawn.png 更新

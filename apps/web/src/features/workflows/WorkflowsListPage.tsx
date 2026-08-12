@@ -1,61 +1,36 @@
-import { Fragment, useCallback, useEffect, useState } from 'react';
+import {
+  Fragment,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ChangeEvent,
+} from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import {
   faChevronRight,
   faEllipsisVertical,
+  faFileImport,
   faPenToSquare,
   faPlay,
   faPlus,
 } from '@fortawesome/free-solid-svg-icons';
-import {
-  getStepKind,
-  isPluginStep,
-  isSetStateStep,
-  isWorkflowRefStep,
-  StepKinds,
-  type WorkflowDefinition,
-  type WorkflowStep,
-} from '@monai-devops/core-engine';
-import { workflowsApi, type WorkflowDraft } from '../../shared/api/workflows';
+import type { WorkflowDefinition } from '@monai-devops/core-engine';
+import { workflowsApi } from '../../shared/api/workflows';
 import { DropdownMenu } from '../../shared/ui/DropdownMenu';
 import { EmptyState } from '../../shared/ui/EmptyState';
 import { Input } from '../../shared/ui/form';
 import { Modal } from '../../shared/ui/Modal';
 import type { WorkflowImportRecord, WorkflowRecord } from '../../shared/types';
-
-function cloneStepToDraft(step: WorkflowStep, clientRef: string, refByStepId: Map<string, string>) {
-  const base = {
-    clientRef,
-    name: step.name,
-    dependsOn: step.dependsOn?.map((dep) => refByStepId.get(dep) ?? dep),
-    priority: step.priority,
-    condition: step.condition,
-  };
-
-  if (isSetStateStep(step)) {
-    return { ...base, kind: StepKinds.SET_STATE, patch: structuredClone(step.patch) };
-  }
-  if (isWorkflowRefStep(step)) {
-    // 副本工作流尚未有自己的 imports；跳过 workflow 步骤，避免无效 importId
-    return null;
-  }
-  if (isPluginStep(step)) {
-    return {
-      ...base,
-      kind: StepKinds.PLUGIN,
-      plugin: step.plugin,
-      config: structuredClone(step.config),
-    };
-  }
-  return {
-    ...base,
-    kind: StepKinds.PLUGIN,
-    plugin: '',
-    config: {},
-  };
-}
+import { ImportWorkflowJsonModal } from './ImportWorkflowJsonModal';
+import {
+  definitionToDraft,
+  parseWorkflowJson,
+  WorkflowJsonParseError,
+} from './workflow-import-utils';
 
 function WorkflowImportsContent({ parentId }: { parentId: string }) {
   const navigate = useNavigate();
@@ -175,6 +150,14 @@ export default function WorkflowsListPage() {
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [expandedIds, setExpandedIds] = useState<Set<string>>(() => new Set());
   const [mountedIds, setMountedIds] = useState<Set<string>>(() => new Set());
+  const [importDefinition, setImportDefinition] = useState<WorkflowDefinition | null>(null);
+  const [importModalOpen, setImportModalOpen] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const existingWorkflowNames = useMemo(
+    () => new Set(workflows.map((w) => w.definition.name)),
+    [workflows],
+  );
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -203,32 +186,46 @@ export default function WorkflowsListPage() {
   };
 
   const handleCopy = async (wf: WorkflowDefinition) => {
-    const refByStepId = new Map(wf.steps.map((step, i) => [step.id, `copy-${i}`]));
-    const steps = wf.steps
-      .map((step, i) => cloneStepToDraft(step, `copy-${i}`, refByStepId))
-      .filter((step): step is NonNullable<typeof step> => step !== null);
+    const { draft, skippedWorkflowStepCount } = definitionToDraft(wf);
 
-    if (steps.length === 0) {
+    if (draft.steps.length === 0) {
       toast.warning('副本中没有可复制的步骤（workflow 引用步骤需重新导入）');
       return;
     }
 
-    const skippedWorkflow = wf.steps.some((s) => getStepKind(s) === StepKinds.WORKFLOW);
-    const copy: WorkflowDraft = {
-      name: `${wf.name} (副本)`,
-      ...(wf.stateSchema
-        ? { stateSchema: structuredClone(wf.stateSchema) as Record<string, unknown> }
-        : {}),
-      steps,
-    };
+    draft.name = `${wf.name} (副本)`;
     try {
-      await workflowsApi.create(copy);
+      await workflowsApi.create(draft);
       toast.success(
-        skippedWorkflow ? '工作流已复制（子工作流引用步骤已跳过，请重新导入）' : '工作流已复制',
+        skippedWorkflowStepCount > 0
+          ? '工作流已复制（子工作流引用步骤已跳过，请重新导入）'
+          : '工作流已复制',
       );
       await load();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : '复制工作流失败');
+    }
+  };
+
+  const handleImportFileChange = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) return;
+
+    try {
+      const text = await file.text();
+      const definition = parseWorkflowJson(text);
+      setImportDefinition(definition);
+      setImportModalOpen(true);
+    } catch (e) {
+      toast.error(e instanceof WorkflowJsonParseError ? e.message : '读取 JSON 文件失败');
+    }
+  };
+
+  const handleImportModalOpenChange = (open: boolean) => {
+    setImportModalOpen(open);
+    if (!open) {
+      setImportDefinition(null);
     }
   };
 
@@ -291,9 +288,24 @@ export default function WorkflowsListPage() {
             onChange={(e) => setSearch(e.target.value)}
             aria-label="搜索工作流"
           />
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".json,application/json"
+            className="hidden"
+            onChange={(e) => void handleImportFileChange(e)}
+          />
+          <button
+            type="button"
+            className="text-nowrap inline-flex items-center gap-2 h-9 px-4 rounded-ctrl border border-line bg-surface text-sm font-medium hover:bg-raised"
+            onClick={() => fileInputRef.current?.click()}
+          >
+            <FontAwesomeIcon icon={faFileImport} />
+            导入 JSON
+          </button>
           <Link
             to="/workflows/new"
-            className="inline-flex w-32 items-center gap-2 h-9 px-4 rounded-ctrl bg-brand text-white text-sm font-medium hover:bg-brand-hover"
+            className="text-nowrap inline-flex w-32 items-center gap-2 h-9 px-4 rounded-ctrl bg-brand text-white text-sm font-medium hover:bg-brand-hover"
           >
             <FontAwesomeIcon icon={faPlus} />
             新建
@@ -418,6 +430,13 @@ export default function WorkflowsListPage() {
           </table>
         </div>
       )}
+
+      <ImportWorkflowJsonModal
+        open={importModalOpen}
+        onOpenChange={handleImportModalOpenChange}
+        definition={importDefinition}
+        existingNames={existingWorkflowNames}
+      />
 
       <Modal
         open={!!deleteId}
