@@ -1,5 +1,10 @@
 # apps/web 开发日志
 
+## 2026-08-11
+
+- **变更**：CSS 变量主题系统 — index.css 定义 :root token（brand/surfaces/text/lines/status），支持 `data-theme='mint'` 双主题切换；ThemeSwitcher 组件挂载到 Topbar/FullscreenLayout；index.html 内联脚本防闪烁预置主题；code-editor-theme、flow-layout、RunDetailPage 硬编码色值迁移为 `var(--*)` token；清理 Vite 脚手架残留（hero.png/react.svg/vite.svg/icons.svg）；页面标题改为 MONAI DevOps；favicon 与 drawn.png 更新
+- **文件**：`index.html`, `src/main.tsx`, `src/index.css`, `tailwind.config.js`, `src/shared/theme/*`, `src/layouts/*`, `src/shared/ui/code-editor/code-editor-theme.ts`, `src/shared/dag/flow-layout.ts`, `src/features/run-detail/RunDetailPage.tsx`, `public/favicon.svg`, `public/drawn.png`
+
 ## 2026-08-05
 
 - **变更**：JSON Schema 表单增强 — object/array 用 CodeEditor 编辑、boolean 用 Switch 替代 Checkbox、引用类型兼容性校验（`resolveSchemaAtPath` + `areJsonTypesCompatible` + `validateContextRefType`）、enum 值保持原始类型、`literalFallbackForProp`；编辑器面板适配 state ref — SetState 字段从 stateSchema 选择+路径用 Cascader、WorkflowRef 用 Modal+JsonSchemaForm 编辑 inputState 与循环配置、引用源增加工作流 State；`useLayoutEffect` 修复 setNodes 回调中 setState 时机问题；透传 `referenceSources` 到插件表单校验；新增 `@radix-ui/react-switch` 依赖与 Switch 组件

@@ -82,7 +82,7 @@ export function Sidebar({ recentRuns = [] }: SidebarProps) {
                 >
                   <span className={`w-2 h-2 shrink-0 rounded-full mt-1.5 ${meta.dot}`} />
                   <span className="min-w-0 flex-1">
-                    <span className="block truncate text-ink">{displayName}</span>
+                    <span className="block truncate text-[12px] text-ink">{displayName}</span>
                     <span className="block truncate text-xs text-faint mt-0.5">
                       {formatRelativeRunTime(when)}
                       <span className="mx-1">·</span>

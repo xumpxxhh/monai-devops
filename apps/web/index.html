@@ -4,7 +4,36 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>web</title>
+    <title>MONAI DevOps</title>
+    <script>
+      (function () {
+        var themes = {
+          violet: {
+            '--brand-rgb': '109 94 246',
+            '--brand': 'rgb(109 94 246)',
+            '--brand-hover-rgb': '88 72 224',
+            '--brand-hover': 'rgb(88 72 224)',
+            '--brand-soft': 'rgb(109 94 246 / 0.1)',
+          },
+          mint: {
+            '--brand-rgb': '45 156 151',
+            '--brand': 'rgb(45 156 151)',
+            '--brand-hover-rgb': '36 130 126',
+            '--brand-hover': 'rgb(36 130 126)',
+            '--brand-soft': 'rgb(178 224 223 / 0.55)',
+          },
+        };
+        var t = 'violet';
+        try {
+          var stored = localStorage.getItem('monai-web-theme');
+          if (stored === 'mint') t = 'mint';
+        } catch (e) {}
+        var root = document.documentElement;
+        root.setAttribute('data-theme', t);
+        var vars = themes[t];
+        for (var k in vars) root.style.setProperty(k, vars[k]);
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

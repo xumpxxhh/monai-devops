@@ -74,11 +74,11 @@ export default function RunsListPage() {
     <div>
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-xl font-semibold">运行列表</h1>
-        <div className="flex items-center gap-3">
+        <div className="w-96 flex items-center gap-3">
           <Input
             type="search"
             placeholder="搜索 runId / 工作流…"
-            className="w-64 bg-surface"
+            className="bg-surface"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             aria-label="搜索运行"

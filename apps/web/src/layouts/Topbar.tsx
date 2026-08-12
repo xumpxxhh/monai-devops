@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faCube, faPlus } from '@fortawesome/free-solid-svg-icons';
 import { systemApi } from '../shared/api/misc';
+import { ThemeSwitcher } from '../shared/theme/ThemeSwitcher';
 import { WsPill } from '../shared/ws/WsPill';
 import type { WsConnectionStatus } from '../shared/api/workflow-run-client';
 
@@ -38,6 +39,7 @@ export function Topbar({ breadcrumb, wsStatus = 'disconnected' }: TopbarProps) {
             env: <span className="font-mono text-ink">{envLabel}</span>
           </span>
         )}
+        <ThemeSwitcher />
         <WsPill status={wsStatus} />
         <Link
           to="/workflows/new"

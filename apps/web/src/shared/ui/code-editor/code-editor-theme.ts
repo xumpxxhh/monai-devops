@@ -1,35 +1,35 @@
 import { EditorView } from '@codemirror/view';
 
-/** Control Room 浅色主题，色值对齐 tailwind.config.js */
+/** Control Room 浅色主题，色值对齐 index.css :root token */
 export const controlRoomEditorTheme = EditorView.theme(
   {
     '&': {
-      backgroundColor: '#F3F5FA',
-      color: '#1A2030',
+      backgroundColor: 'var(--panel)',
+      color: 'var(--ink)',
       fontSize: '12px',
       fontFamily: 'var(--mono)',
     },
     '.cm-content': {
-      caretColor: '#6D5EF6',
+      caretColor: 'var(--brand)',
       padding: '8px 0',
     },
     '.cm-cursor, .cm-dropCursor': {
-      borderLeftColor: '#6D5EF6',
+      borderLeftColor: 'var(--brand)',
     },
     '&.cm-focused .cm-selectionBackground, .cm-selectionBackground, .cm-content ::selection': {
-      backgroundColor: 'rgba(109, 94, 246, 0.22) !important',
+      backgroundColor: 'rgb(var(--brand-rgb) / 0.22) !important',
     },
     '.cm-gutters': {
-      backgroundColor: '#F3F5FA',
-      color: '#98A2B4',
+      backgroundColor: 'var(--panel)',
+      color: 'var(--faint)',
       border: 'none',
-      borderRight: '1px solid #E4E8F1',
+      borderRight: '1px solid var(--line)',
     },
     '.cm-activeLineGutter': {
-      backgroundColor: 'rgba(109, 94, 246, 0.06)',
+      backgroundColor: 'rgb(var(--brand-rgb) / 0.06)',
     },
     '.cm-activeLine': {
-      backgroundColor: 'rgba(109, 94, 246, 0.04)',
+      backgroundColor: 'rgb(var(--brand-rgb) / 0.04)',
     },
     '.cm-line': {
       padding: '0 4px 0 2px',
@@ -38,30 +38,30 @@ export const controlRoomEditorTheme = EditorView.theme(
       outline: 'none',
     },
     '.cm-matchingBracket, .cm-nonmatchingBracket': {
-      backgroundColor: 'rgba(109, 94, 246, 0.12)',
+      backgroundColor: 'rgb(var(--brand-rgb) / 0.12)',
     },
     '.cm-tooltip': {
-      backgroundColor: '#FFFFFF',
-      border: '1px solid #E4E8F1',
+      backgroundColor: 'var(--surface)',
+      border: '1px solid var(--line)',
       borderRadius: '9px',
-      color: '#1A2030',
+      color: 'var(--ink)',
     },
     '.cm-tooltip-lint': {
-      backgroundColor: '#FFFFFF',
+      backgroundColor: 'var(--surface)',
     },
     '.cm-diagnostic': {
       padding: '4px 8px',
     },
     '.cm-diagnostic-error': {
-      borderLeft: '3px solid #E11D48',
+      borderLeft: '3px solid var(--failed)',
     },
     '.cm-lintRange-error': {
-      backgroundImage: `url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='6' height='3'><path d='m0 3 l2 -2 l1 0 l2 2 l1 0' stroke='%23E11D48' fill='none' stroke-width='1'/></svg>")`,
+      backgroundImage: 'var(--lint-error-wave)',
     },
     '.cm-foldPlaceholder': {
-      backgroundColor: 'rgba(109, 94, 246, 0.10)',
+      backgroundColor: 'rgb(var(--brand-rgb) / 0.10)',
       border: 'none',
-      color: '#6D5EF6',
+      color: 'var(--brand)',
     },
   },
   { dark: false },
@@ -69,12 +69,12 @@ export const controlRoomEditorTheme = EditorView.theme(
 
 /** JSON 等语言的语法高亮配色 */
 export const controlRoomHighlightStyle = EditorView.baseTheme({
-  '& .tok-string': { color: '#16A34A' },
-  '& .tok-number': { color: '#0EA5E9' },
-  '& .tok-bool': { color: '#6D5EF6' },
-  '& .tok-null': { color: '#98A2B4' },
-  '& .tok-propertyName': { color: '#5C667A' },
-  '& .tok-punctuation': { color: '#98A2B4' },
-  '& .tok-keyword': { color: '#6D5EF6' },
-  '& .tok-comment': { color: '#98A2B4', fontStyle: 'italic' },
+  '& .tok-string': { color: 'var(--completed)' },
+  '& .tok-number': { color: 'var(--running)' },
+  '& .tok-bool': { color: 'var(--brand)' },
+  '& .tok-null': { color: 'var(--faint)' },
+  '& .tok-propertyName': { color: 'var(--muted)' },
+  '& .tok-punctuation': { color: 'var(--faint)' },
+  '& .tok-keyword': { color: 'var(--brand)' },
+  '& .tok-comment': { color: 'var(--faint)', fontStyle: 'italic' },
 });

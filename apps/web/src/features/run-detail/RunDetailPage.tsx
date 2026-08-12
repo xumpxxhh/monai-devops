@@ -295,9 +295,11 @@ function RunDagPanel({
         return {
           ...edge,
           animated: isActive,
-          style: isActive ? { stroke: '#0EA5E9', strokeWidth: 2 } : directedEdgeOptions.style,
+          style: isActive
+            ? { stroke: 'var(--running)', strokeWidth: 2 }
+            : directedEdgeOptions.style,
           markerEnd: isActive
-            ? { ...directedEdgeOptions.markerEnd, color: '#0EA5E9' }
+            ? { ...directedEdgeOptions.markerEnd, color: 'var(--running)' }
             : directedEdgeOptions.markerEnd,
         };
       });
@@ -570,7 +572,7 @@ export default function RunDetailPage() {
           return (
             <div
               key={segment.key + segment.lines[0]?.id}
-              className="my-1 rounded-ctrl bg-[#E3E8F4] border border-line overflow-hidden"
+              className="my-1 rounded-ctrl bg-raised border border-line overflow-hidden"
             >
               <button
                 type="button"
