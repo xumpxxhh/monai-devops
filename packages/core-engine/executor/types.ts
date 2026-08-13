@@ -123,6 +123,11 @@ export interface ExecutionContext extends PluginContext {
   artifacts?: Record<string, unknown>;
   /** run 级默认调度优先级，步骤 priority 可覆盖 */
   priority?: number;
+  /**
+   * Run 级共享工作区绝对路径（由宿主注入，如 CI checkout 目录）。
+   * 未注入时相关插件应自行失败并提示。
+   */
+  workspaceDir?: string;
 }
 
 /**

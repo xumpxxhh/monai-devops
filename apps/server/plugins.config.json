@@ -4,6 +4,9 @@
     "model-call-plugin",
     "muti-result-plugin",
     "print-plugin",
-    "embedding-plugin"
+    "embedding-plugin",
+    "git-checkout-plugin",
+    "shell-exec-plugin",
+    "file-inject-plugin"
   ]
 }

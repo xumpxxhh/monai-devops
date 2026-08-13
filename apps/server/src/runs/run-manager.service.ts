@@ -27,6 +27,7 @@ import {
   type WorkflowDraft,
 } from '../common/validation/normalize-workflow-ids.js';
 import { EngineService } from '../engine/engine.service.js';
+import { WorkspaceService } from '../workspace/workspace.service.js';
 import { RunStreamService } from './run-stream.service.js';
 import {
   type RunCounts,
@@ -105,6 +106,7 @@ export class RunManagerService implements OnModuleInit {
     @Inject(RUN_REPOSITORY) private readonly runRepository: RunRepository,
     private readonly runStream: RunStreamService,
     private readonly config: ConfigService,
+    private readonly workspace: WorkspaceService,
   ) {}
 
   onModuleInit(): void {
@@ -401,13 +403,17 @@ export class RunManagerService implements OnModuleInit {
       return;
     }
 
+    let workspaceDir: string | undefined;
     try {
+      workspaceDir = await this.workspace.createWorkspace(runId);
+
       const result = await this.engineService.runWorkflow(
         runId,
         workflow,
         {
           traceId: context.traceId,
           priority: context.priority,
+          workspaceDir,
         },
         context.initialState !== undefined ? { initialState: context.initialState } : undefined,
       );
@@ -438,6 +444,10 @@ export class RunManagerService implements OnModuleInit {
         finishedAt: new Date(),
       });
       this.runStream.fanOut(runId, { type: 'error', message });
+    } finally {
+      if (workspaceDir !== undefined) {
+        await this.workspace.cleanupWorkspace(runId);
+      }
     }
   }
 

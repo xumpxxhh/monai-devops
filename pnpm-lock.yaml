@@ -68,6 +68,12 @@ importers:
       '@monai-devops/embedding-plugin':
         specifier: workspace:*
         version: link:../../plugins/embedding-plugin
+      '@monai-devops/file-inject-plugin':
+        specifier: workspace:*
+        version: link:../../plugins/file-inject-plugin
+      '@monai-devops/git-checkout-plugin':
+        specifier: workspace:*
+        version: link:../../plugins/git-checkout-plugin
       '@monai-devops/model-call-plugin':
         specifier: workspace:*
         version: link:../../plugins/model-call-plugin
@@ -80,6 +86,9 @@ importers:
       '@monai-devops/print-plugin':
         specifier: workspace:*
         version: link:../../plugins/print-plugin
+      '@monai-devops/shell-exec-plugin':
+        specifier: workspace:*
+        version: link:../../plugins/shell-exec-plugin
       '@monai-devops/test-plugin':
         specifier: workspace:*
         version: link:../../plugins/test-plugin
@@ -353,6 +362,32 @@ importers:
         specifier: ~5.9.3
         version: 5.9.3
 
+  plugins/file-inject-plugin:
+    dependencies:
+      '@monai-devops/plugin-sdk':
+        specifier: workspace:*
+        version: link:../../packages/plugin-sdk
+    devDependencies:
+      '@types/node':
+        specifier: ^24.0.0
+        version: 24.12.4
+      typescript:
+        specifier: ~5.9.3
+        version: 5.9.3
+
+  plugins/git-checkout-plugin:
+    dependencies:
+      '@monai-devops/plugin-sdk':
+        specifier: workspace:*
+        version: link:../../packages/plugin-sdk
+    devDependencies:
+      '@types/node':
+        specifier: ^24.0.0
+        version: 24.12.4
+      typescript:
+        specifier: ~5.9.3
+        version: 5.9.3
+
   plugins/model-call-plugin:
     dependencies:
       '@langchain/openai':
@@ -385,6 +420,19 @@ importers:
         specifier: workspace:*
         version: link:../../packages/plugin-sdk
     devDependencies:
+      typescript:
+        specifier: ~5.9.3
+        version: 5.9.3
+
+  plugins/shell-exec-plugin:
+    dependencies:
+      '@monai-devops/plugin-sdk':
+        specifier: workspace:*
+        version: link:../../packages/plugin-sdk
+    devDependencies:
+      '@types/node':
+        specifier: ^24.0.0
+        version: 24.12.4
       typescript:
         specifier: ~5.9.3
         version: 5.9.3

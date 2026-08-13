@@ -119,6 +119,10 @@ describe('RunManagerService nested event routing', () => {
       runRepository as unknown as RunRepository,
       runStream as unknown as RunStreamService,
       config as unknown as ConfigService,
+      {
+        createWorkspace: jest.fn(async () => '/tmp/monai-ci-runs/test'),
+        cleanupWorkspace: jest.fn(async () => undefined),
+      } as unknown as import('../workspace/workspace.service.js').WorkspaceService,
     );
     service.onModuleInit();
 

@@ -7,7 +7,7 @@
   "license": "UNLICENSED",
   "scripts": {
     "prebuild": "node ../../scripts/sync-plugin-registry.mjs",
-    "build": "nest build",
+    "build": "prisma generate && nest build",
     "check-types": "tsc --noEmit",
     "format": "prettier --write . --ignore-path ../../.prettierignore",
     "format:check": "prettier --check . --ignore-path ../../.prettierignore",
@@ -49,7 +49,10 @@
     "rxjs": "^7.8.1",
     "ws": "^8.21.0",
     "zod-to-json-schema": "^3.24.0",
-    "@monai-devops/embedding-plugin": "workspace:*"
+    "@monai-devops/embedding-plugin": "workspace:*",
+    "@monai-devops/git-checkout-plugin": "workspace:*",
+    "@monai-devops/shell-exec-plugin": "workspace:*",
+    "@monai-devops/file-inject-plugin": "workspace:*"
   },
   "devDependencies": {
     "@jest/globals": "30.4.1",

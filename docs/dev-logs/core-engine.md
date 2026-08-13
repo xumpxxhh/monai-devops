@@ -1,5 +1,10 @@
 # @monai-devops/core-engine 开发日志
 
+## 2026-08-12
+
+- **变更**：ExecutionContext / WorkflowContextKeys 新增可选 `workspaceDir`，供宿主注入 Run 级共享工作区路径（CI PoC）
+- **文件**：`executor/types.ts`, `context-keys.ts`
+
 ## 2026-08-05
 
 - **变更**：新增 `WORKFLOW_STATE_REF_ID` 工作流 state 引用机制 — `resolveConfigReferences` 支持 `runState` 解析、`validateWorkflowContextReferences` 校验 `stateSchema` 声明、`isWorkflowStateRef` 检测哨兵值

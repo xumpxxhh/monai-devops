@@ -17,4 +17,6 @@ export const WorkflowContextKeys = {
   signal: 'signal',
   /** 当前 run state（只读感知；插件可选消费） */
   state: 'state',
+  /** Run 级共享工作区绝对路径（宿主可选注入） */
+  workspaceDir: 'workspaceDir',
 } as const;

@@ -73,6 +73,9 @@ monai-devops/
 | `muti-result-plugin` | 多层嵌套结果（便于 `$ref` 演示） |
 | `model-call-plugin`  | 大模型调用                       |
 | `embedding-plugin`   | Embedding 调用                   |
+| `git-checkout-plugin` | 克隆仓库到 Run 工作区（CI PoC） |
+| `shell-exec-plugin` | 在工作区内执行 shell 命令（CI PoC） |
+| `file-inject-plugin` | 按相对路径写入文件（CI PoC）     |
 
 部分插件依赖外部环境变量（如 `OPENAI_API_KEY`、`EMBEDDING_API_KEY`）；Turbo 已配置透传。
 

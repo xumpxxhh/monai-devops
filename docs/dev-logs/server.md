@@ -1,5 +1,10 @@
 # apps/server 开发日志
 
+## 2026-08-12
+
+- **变更**：新增 WorkspaceService（按 runId 创建/清理临时工作区），RunManager 在 executeRun 注入 `workspaceDir` 并在 finally 清理；支持 `CI_WORKSPACE_ROOT`
+- **文件**：`src/workspace/workspace.service.ts`, `src/workspace/workspace.module.ts`, `src/runs/run-manager.service.ts`, `src/app.module.ts`, `.env.example`
+
 ## 2026-08-10
 
 - **变更**：数据库改为团队公共 Postgres（共享 `monai_devops` / `monai_devops_test`）；移除仓库 compose，补充迁数据与协作说明

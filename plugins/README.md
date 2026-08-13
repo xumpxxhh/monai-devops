@@ -552,6 +552,9 @@ pnpm --filter @monai-devops/core-engine test
 | `model-call-plugin`  | 调用大模型并流式输出   | 环境变量、AbortSignal、流式 `append`       |
 | `muti-result-plugin` | 生成多层嵌套结果       | 复杂 `resultSchema`、前端字段树            |
 | `embedding-plugin`   | Embedding 调用（示例） | 第三方 SDK 集成、API Key 配置              |
+| `git-checkout-plugin` | 克隆仓库到 workspaceDir | `child_process` + 取消信号 + 流式日志     |
+| `shell-exec-plugin` | 工作区内执行命令         | cwd 逃逸校验、超时与取消                   |
+| `file-inject-plugin` | 按相对路径写入文件       | `workspaceDir` + 路径逃逸校验              |
 
 建议从 `test-plugin` 入手，再按需参考其他插件。
 

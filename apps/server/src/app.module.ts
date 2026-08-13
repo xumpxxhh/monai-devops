@@ -12,6 +12,7 @@ import { StatsModule } from './stats/stats.module.js';
 import { SystemModule } from './system/system.module.js';
 import { TestDevopsModule } from './test-devops/test-devops.module.js';
 import { WorkflowsModule } from './workflows/workflows.module.js';
+import { WorkspaceModule } from './workspace/workspace.module.js';
 
 assertDatabaseUrl();
 
@@ -22,6 +23,7 @@ assertDatabaseUrl();
       envFilePath: ['.env.local', '.env'],
     }),
     PrismaModule,
+    WorkspaceModule,
     EngineModule,
     WorkflowsModule,
     PluginsModule,
