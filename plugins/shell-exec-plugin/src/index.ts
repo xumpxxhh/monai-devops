@@ -1,4 +1,3 @@
-import { spawn } from 'node:child_process';
 import { resolve, sep } from 'node:path';
 import { getContext } from '@monai-devops/plugin-sdk';
 import {
@@ -11,6 +10,14 @@ import {
   z,
 } from '@monai-devops/plugin-sdk';
 import type { PluginContext, PluginResult } from '@monai-devops/plugin-sdk';
+import {
+  buildDockerRunInvocation,
+  resolveDockerImage,
+  resolveDockerNetwork,
+  resolveProcessIds,
+  type DockerNetworkMode,
+} from './docker-sandbox.js';
+import { mergeSignals, runCommand, runShellCommand } from './run-command.js';
 
 const DEFAULT_TIMEOUT_MS = 10 * 60 * 1000;
 
@@ -20,6 +27,12 @@ const configSchema = z.object({
   cwd: z.string().optional(),
   /** 单步超时（毫秒），默认 10 分钟 */
   timeoutMs: z.number().int().positive().default(DEFAULT_TIMEOUT_MS),
+  /** none=与 server 同机同权限；docker=在容器内执行（需宿主机可用 docker CLI） */
+  sandbox: z.enum(['none', 'docker']).default('none'),
+  /** sandbox=docker 时使用的镜像；省略则读 SANDBOX_DOCKER_IMAGE 或 node:20-bookworm */
+  dockerImage: z.string().min(1).optional(),
+  /** sandbox=docker 时的网络模式；省略则读 SANDBOX_DOCKER_NETWORK 或 bridge */
+  dockerNetwork: z.enum(['none', 'bridge', 'host']).optional(),
 });
 
 function getWorkspaceDir(context: PluginContext): string | undefined {
@@ -38,19 +51,72 @@ function resolveSafeCwd(workspaceDir: string, relativeCwd?: string): string | { 
   return target;
 }
 
-function mergeSignals(signals: AbortSignal[]): AbortSignal {
-  const defined = signals.filter(Boolean);
-  if (defined.length === 0) {
-    return new AbortController().signal;
+async function executeInDockerSandbox(
+  config: z.infer<typeof configSchema>,
+  context: PluginContext,
+  workspaceDir: string,
+  cwd: string,
+  signal: AbortSignal,
+): Promise<PluginResult> {
+  const log = getLogger(context);
+  const image = resolveDockerImage(config.dockerImage);
+  const network = resolveDockerNetwork(config.dockerNetwork as DockerNetworkMode | undefined);
+  const { uid, gid } = resolveProcessIds();
+
+  let invocation;
+  try {
+    invocation = buildDockerRunInvocation({
+      workspaceDir,
+      cwd,
+      command: config.command,
+      image,
+      network,
+      uid,
+      gid,
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return {
+      success: false,
+      code: PluginFailureCodes.PLUGIN_CONFIG_INVALID,
+      message,
+    };
   }
-  if (defined.length === 1) {
-    return defined[0]!;
+
+  log.info('Docker sandbox 执行', {
+    image,
+    network,
+    cwd,
+    dockerArgs: invocation.args.join(' '),
+  });
+  log.append(`$ docker ${invocation.args.join(' ')}\n`, 'stdout');
+
+  const exitCode = await runCommand({
+    command: invocation.command,
+    args: invocation.args,
+    signal,
+    onStdout: (chunk) => log.append(chunk, 'stdout'),
+    onStderr: (chunk) => log.append(chunk, 'stderr'),
+  });
+
+  if (exitCode !== 0) {
+    return {
+      success: false,
+      code: PluginFailureCodes.PLUGIN_EXECUTION_ERROR,
+      message: `Docker sandbox 命令退出码 ${exitCode}`,
+      data: { exitCode, command: config.command, cwd, sandbox: 'docker', image, network },
+    };
   }
-  return AbortSignal.any(defined);
+
+  return {
+    success: true,
+    message: 'Docker sandbox 命令执行成功',
+    data: { exitCode: 0, command: config.command, cwd, sandbox: 'docker', image, network },
+  };
 }
 
 /**
- * shell-exec-plugin：在 Run 级 workspaceDir 内执行 shell 命令（非隔离，仅 PoC）
+ * shell-exec-plugin：在 Run 级 workspaceDir 内执行 shell 命令
  */
 async function executeShellExecPlugin(
   config: z.infer<typeof configSchema>,
@@ -84,55 +150,36 @@ async function executeShellExecPlugin(
     [workflowSignal, timeoutController.signal].filter((s): s is AbortSignal => Boolean(s)),
   );
 
+  const cancelledMessage = () => (timeoutController.signal.aborted ? '命令执行超时' : '命令已取消');
+
   log.info('开始执行命令', {
     command: config.command,
     cwd,
     timeoutMs: config.timeoutMs,
+    sandbox: config.sandbox,
   });
   log.append(`$ ${config.command}\n`, 'stdout');
 
   try {
     throwIfAborted(context);
 
-    const exitCode = await new Promise<number | null>((resolvePromise, reject) => {
-      const child = spawn(config.command, {
-        cwd,
-        shell: true,
-        signal,
-        windowsHide: true,
-        env: process.env,
-      });
-
-      child.stdout?.on('data', (buf: Buffer) => {
-        log.append(buf.toString('utf8'), 'stdout');
-      });
-      child.stderr?.on('data', (buf: Buffer) => {
-        log.append(buf.toString('utf8'), 'stderr');
-      });
-
-      child.on('error', (error) => {
-        if (signal.aborted || (error as NodeJS.ErrnoException).name === 'AbortError') {
-          reject(
-            new PluginCancelledError(
-              timeoutController.signal.aborted ? '命令执行超时' : '命令已取消',
-            ),
-          );
-          return;
+    if (config.sandbox === 'docker') {
+      try {
+        return await executeInDockerSandbox(config, context, workspaceDir, cwd, signal);
+      } catch (error) {
+        if (error instanceof PluginCancelledError) {
+          throw new PluginCancelledError(cancelledMessage());
         }
-        reject(error);
-      });
+        throw error;
+      }
+    }
 
-      child.on('close', (code) => {
-        if (signal.aborted) {
-          reject(
-            new PluginCancelledError(
-              timeoutController.signal.aborted ? '命令执行超时' : '命令已取消',
-            ),
-          );
-          return;
-        }
-        resolvePromise(code);
-      });
+    const exitCode = await runShellCommand({
+      command: config.command,
+      cwd,
+      signal,
+      onStdout: (chunk) => log.append(chunk, 'stdout'),
+      onStderr: (chunk) => log.append(chunk, 'stderr'),
     });
 
     if (exitCode !== 0) {
@@ -140,7 +187,7 @@ async function executeShellExecPlugin(
         success: false,
         code: PluginFailureCodes.PLUGIN_EXECUTION_ERROR,
         message: `命令退出码 ${exitCode}`,
-        data: { exitCode, command: config.command, cwd },
+        data: { exitCode, command: config.command, cwd, sandbox: 'none' },
       };
     }
 
@@ -148,11 +195,11 @@ async function executeShellExecPlugin(
     return {
       success: true,
       message: '命令执行成功',
-      data: { exitCode: 0, command: config.command, cwd },
+      data: { exitCode: 0, command: config.command, cwd, sandbox: 'none' },
     };
   } catch (error) {
     if (error instanceof PluginCancelledError) {
-      throw error;
+      throw new PluginCancelledError(cancelledMessage());
     }
     const message = error instanceof Error ? error.message : String(error);
     log.append(`shell-exec 失败: ${message}\n`, 'stderr');
@@ -170,12 +217,15 @@ export const shellExecPlugin = createPlugin({
   name: 'shell-exec-plugin',
   version: '1.0.0',
   description:
-    '在 Run 级共享工作区执行 shell 命令（CI PoC；与 server 同机同权限，勿接入不受信任输入）',
+    '在 Run 级共享工作区执行 shell 命令；可选 Docker sandbox（CI PoC；none 模式与 server 同机同权限）',
   configSchema,
   resultSchema: z.object({
     exitCode: z.number().nullable(),
     command: z.string(),
     cwd: z.string(),
+    sandbox: z.enum(['none', 'docker']),
+    image: z.string().optional(),
+    network: z.enum(['none', 'bridge', 'host']).optional(),
   }),
   execute: executeShellExecPlugin,
   hooks: {
