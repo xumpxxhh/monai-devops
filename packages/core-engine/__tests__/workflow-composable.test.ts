@@ -793,6 +793,10 @@ describe('observability: parent + iteration events', () => {
     };
 
     const run = await executor.executeWorkflow(parentRunId, parent);
+    assert.deepEqual(
+      events.map((event) => event.sequence),
+      events.map((_, index) => index + 1),
+    );
     assert.equal(run.success, true);
 
     const iterStarts = events.filter((e) => e.type === WorkflowEventTypes.WORKFLOW_ITERATION_START);

@@ -6,6 +6,7 @@
 import type { PluginConfig, PluginContext, PluginResult, ZodType } from '@monai-devops/plugin-sdk';
 import type { SkipReason, StepFailureKind, StepStatus } from '../errors.js';
 import type { WorkflowObserver, WorkflowRunMeta } from '../observer/index.js';
+import type { ExecutionIdentity } from './execution-identity.js';
 
 /**
  * JSON Schema 对象（前端表单构建器 / 手填产出，持久化与传输形态）。
@@ -123,6 +124,8 @@ export interface ExecutionContext extends PluginContext {
   artifacts?: Record<string, unknown>;
   /** run 级默认调度优先级，步骤 priority 可覆盖 */
   priority?: number;
+  /** 当前步骤执行身份；由 executor 注入，供观察和审计使用。 */
+  execution?: ExecutionIdentity;
 }
 
 /**
@@ -130,6 +133,8 @@ export interface ExecutionContext extends PluginContext {
  */
 export interface ExecutionResult {
   stepId: string;
+  /** 可选以兼容历史结果；新执行由 executor 注入。 */
+  execution?: ExecutionIdentity;
   status: StepStatus;
   success: boolean;
   result?: unknown;

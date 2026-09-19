@@ -13,6 +13,7 @@ import type {
   WorkflowStep,
 } from '../executor/types.js';
 import type { PluginLogEntry } from '@monai-devops/plugin-sdk';
+import type { ExecutionIdentity } from '../executor/execution-identity.js';
 import { WorkflowEventTypes } from './event-types.js';
 
 /**
@@ -47,7 +48,8 @@ export interface WorkflowIterationChildResultSummary {
   state?: unknown;
 }
 
-type WithOptionalParent<T> = T & { parent?: WorkflowEventParent };
+type WithOptionalParent<T> = WithSequence<T> & { parent?: WorkflowEventParent };
+type WithSequence<T> = T & { sequence?: number };
 
 /**
  * 工作流生命周期事件（discriminated union）
@@ -104,6 +106,7 @@ export type WorkflowLifecycleEvent =
       workflowRunId: string;
       meta: WorkflowRunMeta;
       step: WorkflowStep;
+      execution?: ExecutionIdentity;
       resourceType: string;
       priority: number;
     }>
@@ -112,12 +115,14 @@ export type WorkflowLifecycleEvent =
       workflowRunId: string;
       meta: WorkflowRunMeta;
       step: WorkflowStep;
+      execution?: ExecutionIdentity;
     }>
   | WithOptionalParent<{
       type: typeof WorkflowEventTypes.STEP_FINISHED;
       workflowRunId: string;
       meta: WorkflowRunMeta;
       step: WorkflowStep;
+      execution?: ExecutionIdentity;
       result: ExecutionResult;
     }>
   | WithOptionalParent<{

@@ -4,6 +4,7 @@
  */
 
 export { WorkflowEventTypes, type WorkflowEventType } from './event-types.js';
+export type { ExecutionIdentity } from '../executor/execution-identity.js';
 export type {
   WorkflowEventParent,
   WorkflowIterationChildResultSummary,

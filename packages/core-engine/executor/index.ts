@@ -78,6 +78,7 @@ import {
 import { deriveChildRunId } from './child-run-id.js';
 import { defaultStateFromSchema, parseState } from './state-schema.js';
 import { validateStepKinds } from './step-kind-validation.js';
+import { createExecutionIdentity } from './execution-identity.js';
 
 export type {
   AbortSchedulingReason,
@@ -107,6 +108,7 @@ export type {
   WorkflowRunStatus,
   WorkflowStep,
 } from './types.js';
+export { createExecutionIdentity, type ExecutionIdentity } from './execution-identity.js';
 
 export {
   getStepKind,
@@ -537,11 +539,28 @@ export function createWorkflowExecutor(options: ExecutorOptions = {}) {
   const registry = new RunRegistry();
   /** 子 run id → 父挂靠信息；emit 时统一注入 parent */
   const eventParents = new Map<string, WorkflowEventParent>();
+  const eventSequences = new Map<string, number>();
+
+  function rootRunId(workflowRunId: string): string {
+    let current = workflowRunId;
+    const visited = new Set<string>();
+    while (!visited.has(current)) {
+      visited.add(current);
+      const parent = eventParents.get(current);
+      if (!parent) return current;
+      current = parent.runId;
+    }
+    return current;
+  }
 
   /** 向 WorkflowObserver 派发事件；onEvent 支持 async，此处 await 保证顺序 */
   async function emit(event: WorkflowLifecycleEvent): Promise<void> {
     const parent = eventParents.get(event.workflowRunId);
-    const enriched = parent && event.parent === undefined ? { ...event, parent } : event;
+    const root = rootRunId(event.workflowRunId);
+    const sequence = (eventSequences.get(root) ?? 0) + 1;
+    eventSequences.set(root, sequence);
+    const withParent = parent && event.parent === undefined ? { ...event, parent } : event;
+    const enriched = { ...withParent, sequence };
     await observer?.onEvent?.(enriched as WorkflowLifecycleEvent);
   }
 
@@ -557,6 +576,9 @@ export function createWorkflowExecutor(options: ExecutorOptions = {}) {
     meta: WorkflowRunMeta | undefined,
     completeOptions?: StepCompleteOptions,
   ): Promise<void> {
+    if (context.execution && !executionResult.execution) {
+      executionResult.execution = context.execution;
+    }
     onStepComplete?.(step, executionResult, context, completeOptions);
     if (meta) {
       await emit(
@@ -564,6 +586,7 @@ export function createWorkflowExecutor(options: ExecutorOptions = {}) {
           type: WorkflowEventTypes.STEP_FINISHED,
           meta,
           step,
+          execution: executionResult.execution,
           result: executionResult,
         }),
       );
@@ -644,6 +667,7 @@ export function createWorkflowExecutor(options: ExecutorOptions = {}) {
               type: WorkflowEventTypes.STEP_QUEUED,
               meta,
               step,
+              execution: context.execution,
               resourceType: info.resourceType,
               priority: info.priority,
             }),
@@ -656,6 +680,7 @@ export function createWorkflowExecutor(options: ExecutorOptions = {}) {
             type: WorkflowEventTypes.STEP_START,
             meta,
             step,
+            execution: context.execution,
           }),
         );
       }
@@ -1388,6 +1413,7 @@ export function createWorkflowExecutor(options: ExecutorOptions = {}) {
       /** 单步包装：track in-flight、执行、传播依赖、更新进度 */
       const runStep = async (stepId: string) => {
         const step = graph.stepById.get(stepId)!;
+        const execution = createExecutionIdentity(workflowRunId, step.id);
         const signal = handle.trackInFlight(stepId);
         try {
           const executionContext: ExecutionContext = {
@@ -1395,6 +1421,7 @@ export function createWorkflowExecutor(options: ExecutorOptions = {}) {
             workflowId: workflow.id,
             stepId: step.id,
             previousResults: toPreviousResults(results),
+            execution,
             previousResultsData: toPreviousResultsData(results),
             ...(runState ? { [WorkflowContextKeys.state]: runState.current } : {}),
           };
@@ -1549,6 +1576,9 @@ export function createWorkflowExecutor(options: ExecutorOptions = {}) {
     } finally {
       // Run 结束即从活跃表移除；终态写入 RunRegistry 缓存供 getRunStatus 查询
       registry.unregister(workflowRunId);
+      if (!eventParents.has(workflowRunId)) {
+        eventSequences.delete(workflowRunId);
+      }
     }
   }
 

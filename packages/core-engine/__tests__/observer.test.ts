@@ -73,6 +73,10 @@ describe('WorkflowObserver', () => {
         WorkflowEventTypes.WORKFLOW_FINISHED,
       ],
     );
+    assert.deepEqual(
+      events.map((event) => event.sequence),
+      events.map((_, index) => index + 1),
+    );
     assert.equal(
       events[0]?.type === WorkflowEventTypes.WORKFLOW_START && events[0].workflowRunId.length > 0,
       true,
@@ -82,6 +86,14 @@ describe('WorkflowObserver', () => {
       finished?.type === WorkflowEventTypes.STEP_FINISHED && finished.result.status,
       StepStatuses.COMPLETED,
     );
+    assert.deepEqual(
+      finished?.type === WorkflowEventTypes.STEP_FINISHED ? finished.execution : undefined,
+      { jobId: `${TEST_RUN_ID}/s1`, attemptId: `${TEST_RUN_ID}/s1/attempt-0`, attempt: 0 },
+    );
+    if (finished?.type === WorkflowEventTypes.STEP_FINISHED) {
+      assert.deepEqual(finished.result.execution, finished.execution);
+    }
+
   });
 
   it('uses workflowRunId first param and traceId from context', async () => {
@@ -145,6 +157,14 @@ describe('WorkflowObserver', () => {
       bFinished?.type === WorkflowEventTypes.STEP_FINISHED && bFinished.result.skipReason,
       SkipReasons.CONDITION_NOT_MET,
     );
+    if (bFinished?.type === WorkflowEventTypes.STEP_FINISHED) {
+      assert.deepEqual(bFinished.execution, {
+        jobId: `${TEST_RUN_ID}/b`,
+        attemptId: `${TEST_RUN_ID}/b/attempt-0`,
+        attempt: 0,
+      });
+      assert.deepEqual(bFinished.result.execution, bFinished.execution);
+    }
   });
 
   it('emits step:finished failed on plugin failure', async () => {
@@ -169,6 +189,14 @@ describe('WorkflowObserver', () => {
       stepFinished?.type === WorkflowEventTypes.STEP_FINISHED && stepFinished.result.status,
       StepStatuses.FAILED,
     );
+    if (stepFinished?.type === WorkflowEventTypes.STEP_FINISHED) {
+      assert.deepEqual(stepFinished.execution, {
+        jobId: `${TEST_RUN_ID}/s1`,
+        attemptId: `${TEST_RUN_ID}/s1/attempt-0`,
+        attempt: 0,
+      });
+      assert.deepEqual(stepFinished.result.execution, stepFinished.execution);
+    }
     assert.equal(events.at(-1)?.type, WorkflowEventTypes.WORKFLOW_FINISHED);
   });
 
