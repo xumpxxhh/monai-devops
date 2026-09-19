@@ -46,6 +46,7 @@ interface ExecutionContext {
 
 interface ExecutionResult {
   execution?: ExecutionIdentity;
+}
 ## 3.1 事件顺序（已实现的兼容性小切片）
 
 为便于同一 Run 内的观测、调试和后续持久化映射，生命周期事件增加可选的内存序列号 `sequence`：
@@ -57,7 +58,6 @@ interface ExecutionResult {
 - 字段保持可选，旧事件消费者无需升级。
 
 这只是观测层的顺序标识，不代表可靠持久化游标；是否将其映射为持久化事件偏移量，仍待后续评审。
-}
 ```
 
 事件中的步骤生命周期也增加可选 `execution`：
