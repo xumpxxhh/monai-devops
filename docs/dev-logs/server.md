@@ -1,5 +1,10 @@
 # apps/server 开发日志
 
+## 2026-08-14
+
+- **变更**：`.env.example` 补充 `SANDBOX_DOCKER_IMAGE` / `SANDBOX_DOCKER_NETWORK` 说明（供 shell-exec docker sandbox 默认值）
+- **文件**：`.env.example`
+
 ## 2026-08-12
 
 - **变更**：新增 WorkspaceService（按 runId 创建/清理临时工作区），RunManager 在 executeRun 注入 `workspaceDir` 并在 finally 清理；支持 `CI_WORKSPACE_ROOT`
