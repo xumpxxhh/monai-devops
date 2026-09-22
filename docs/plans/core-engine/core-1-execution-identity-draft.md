@@ -11,6 +11,7 @@
 - 直接调用内部 `executeStep` 且未传入身份时继续兼容旧行为，不由内核补造身份。
 - `execution` 和 `sequence` 均保持可选，避免破坏历史 JSON、事件消费者和手工构造对象。
 - `sequence` 仅保证单个顶层 Run 生命周期内唯一且递增；嵌套 Run 共用该序列空间，Run 完成后释放状态。
+- `sequence` 与数据库 `eventIndex` 保持独立：前者属于源执行事件，后者只表示持久化行顺序。连续流日志压缩后保留首个 `sequence`，并以可选 `sequenceEnd` 标记覆盖范围。
 - 本切片不引入持久化 Attempt、重试、checkpoint、lease 或远程 Executor 协议；这些议题进入后续 RFC。
 
 ## 1. 目标
@@ -68,7 +69,7 @@ interface ExecutionResult {
 - Run 结束后清理序列状态，不引入数据库字段，也不替代未来可能的 `eventIndex`/offset；
 - 字段保持可选，旧事件消费者无需升级。
 
-这只是观测层的顺序标识，不代表可靠持久化游标；是否将其映射为持久化事件偏移量，仍待后续评审。
+这只是观测层的顺序标识，不代表可靠持久化游标。服务端将其原样保存在事件 payload 中，但不映射为数据库 `eventIndex`：事件裁剪和连续流日志合并都会使两者不再一一对应。合并后的流日志保留首个 `sequence`，并使用可选 `sequenceEnd` 表示包含的源事件范围。
 
 事件中的步骤生命周期也增加可选 `execution`：
 
@@ -127,7 +128,6 @@ const execution = createExecutionIdentity(workflowRunId, step.id, 0);
 
 该切片完成后，Core-1 的下一步才评审：
 
-- `event sequence/offset` 是否需要独立于数据库 `eventIndex`；
 - `Attempt` 是否需要正式成为持久化对象；
 - 重试时如何复用 `jobId`、递增 `attempt`；
 - checkpoint 和 lease 应绑定到 Job 还是 Attempt；

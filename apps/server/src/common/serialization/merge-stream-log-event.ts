@@ -52,4 +52,8 @@ export function mergeStreamLogInto(
   if (incomingLog.timestamp !== undefined) {
     targetLog.timestamp = incomingLog.timestamp;
   }
+
+  if (target.sequence !== undefined && incoming.sequence !== undefined) {
+    target.sequenceEnd = incoming.sequenceEnd ?? incoming.sequence;
+  }
 }

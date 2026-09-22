@@ -9,6 +9,7 @@ function streamLog(
   stepId: string,
   message: string,
   stream: 'stdout' | 'stderr' = 'stdout',
+  sequence?: number,
 ): SerializedWorkflowLifecycleEvent {
   return {
     type: 'plugin:log',
@@ -16,6 +17,7 @@ function streamLog(
     meta: { workflowId: 'wf-1' },
     step: { id: stepId, name: stepId, plugin: 'test-plugin' },
     log: { level: 'info', message, timestamp: Date.now(), stream },
+    ...(sequence !== undefined ? { sequence } : {}),
   };
 }
 
@@ -59,11 +61,13 @@ describe('run-event-merge', () => {
   describe('applyAppendRunEvent', () => {
     it('merges consecutive stream logs', () => {
       const events: SerializedWorkflowLifecycleEvent[] = [];
-      applyAppendRunEvent(events, streamLog('s1', 'line1\n'), 10);
-      applyAppendRunEvent(events, streamLog('s1', 'line2\n'), 10);
+      applyAppendRunEvent(events, streamLog('s1', 'line1\n', 'stdout', 2), 10);
+      applyAppendRunEvent(events, streamLog('s1', 'line2\n', 'stdout', 3), 10);
 
       expect(events).toHaveLength(1);
       expect((events[0]?.log as { message: string }).message).toBe('line1\nline2\n');
+      expect(events[0]?.sequence).toBe(2);
+      expect(events[0]?.sequenceEnd).toBe(3);
     });
 
     it('trims after push when over limit', () => {
