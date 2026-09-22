@@ -1236,6 +1236,7 @@ export function createWorkflowExecutor(options: ExecutorOptions = {}) {
 
   /** 为补发 step:finished 等场景构造最小 ExecutionContext */
   function buildStepContext(
+    workflowRunId: string,
     step: WorkflowStep,
     workflowId: string,
     runContext: Partial<ExecutionContext>,
@@ -1244,6 +1245,7 @@ export function createWorkflowExecutor(options: ExecutorOptions = {}) {
       ...runContext,
       workflowId,
       stepId: step.id,
+      execution: createExecutionIdentity(workflowRunId, step.id),
     } as ExecutionContext;
   }
 
@@ -1279,7 +1281,7 @@ export function createWorkflowExecutor(options: ExecutorOptions = {}) {
           workflowRunId,
           dependent,
           skipped,
-          buildStepContext(dependent, workflowId, runContext),
+          buildStepContext(workflowRunId, dependent, workflowId, runContext),
           meta,
         );
         await propagateDependents(
@@ -1522,7 +1524,7 @@ export function createWorkflowExecutor(options: ExecutorOptions = {}) {
               workflowRunId,
               step,
               skipped,
-              buildStepContext(step, workflow.id, runContext),
+              buildStepContext(workflowRunId, step, workflow.id, runContext),
               runMeta,
             );
           }
@@ -1537,7 +1539,7 @@ export function createWorkflowExecutor(options: ExecutorOptions = {}) {
               workflowRunId,
               step,
               skipped,
-              buildStepContext(step, workflow.id, runContext),
+              buildStepContext(workflowRunId, step, workflow.id, runContext),
               runMeta,
             );
           }

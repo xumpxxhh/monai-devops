@@ -1,8 +1,17 @@
-# Core-1：执行身份最小切片（待评审）
+# Core-1：执行身份最小切片（已评审）
 
-> **文档状态：待评审（Draft）**
+> **文档状态：已评审（Accepted for current slice）**
 >
 > 本文是 [Core-0 语义盘点](./execution-semantics-inventory-draft.md) 的第一个实现切片提案。目标是先建立稳定的 Job/Attempt 身份，不引入数据库迁移、不改变调度顺序，也不改变旧事件的必填字段。
+
+### 评审结论
+
+- `ExecutionIdentity` 是内核生成、调用方按整体消费的 opaque identity；当前不承诺从字符串反解析组成部分。
+- 所有经 `executeWorkflow` 管理的步骤都必须获得身份，包括条件跳过、依赖失败、取消或 fail-fast 前尚未调度的步骤。
+- 直接调用内部 `executeStep` 且未传入身份时继续兼容旧行为，不由内核补造身份。
+- `execution` 和 `sequence` 均保持可选，避免破坏历史 JSON、事件消费者和手工构造对象。
+- `sequence` 仅保证单个顶层 Run 生命周期内唯一且递增；嵌套 Run 共用该序列空间，Run 完成后释放状态。
+- 本切片不引入持久化 Attempt、重试、checkpoint、lease 或远程 Executor 协议；这些议题进入后续 RFC。
 
 ## 1. 目标
 
@@ -47,7 +56,9 @@ interface ExecutionContext {
 interface ExecutionResult {
   execution?: ExecutionIdentity;
 }
-## 3.1 事件顺序（已实现的兼容性小切片）
+```
+
+### 2.1 事件顺序（已实现的兼容性小切片）
 
 为便于同一 Run 内的观测、调试和后续持久化映射，生命周期事件增加可选的内存序列号 `sequence`：
 
@@ -58,7 +69,6 @@ interface ExecutionResult {
 - 字段保持可选，旧事件消费者无需升级。
 
 这只是观测层的顺序标识，不代表可靠持久化游标；是否将其映射为持久化事件偏移量，仍待后续评审。
-```
 
 事件中的步骤生命周期也增加可选 `execution`：
 

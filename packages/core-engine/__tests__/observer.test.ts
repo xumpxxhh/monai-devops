@@ -93,7 +93,25 @@ describe('WorkflowObserver', () => {
     if (finished?.type === WorkflowEventTypes.STEP_FINISHED) {
       assert.deepEqual(finished.result.execution, finished.execution);
     }
+  });
 
+  it('restarts event sequence when a completed run id is reused', async () => {
+    const { events, observer } = collectEvents();
+    const executor = createWorkflowExecutor({ observer, pluginExecutor: mockExecutor() });
+    const workflow = {
+      id: 'wf-sequence-reset',
+      name: 'sequence-reset',
+      steps: [{ id: 's1', name: 'S1', plugin: 'p', config: {} }],
+    };
+
+    await executor.executeWorkflow(TEST_RUN_ID, workflow);
+    await executor.executeWorkflow(TEST_RUN_ID, workflow);
+
+    const starts = events.filter((event) => event.type === WorkflowEventTypes.WORKFLOW_START);
+    assert.deepEqual(
+      starts.map((event) => event.sequence),
+      [1, 1],
+    );
   });
 
   it('uses workflowRunId first param and traceId from context', async () => {
@@ -242,6 +260,17 @@ describe('WorkflowObserver', () => {
       cFinished?.type === WorkflowEventTypes.STEP_FINISHED && cFinished.result.skipReason,
       SkipReasons.DEPENDENCY_FAILED,
     );
+    for (const event of [bFinished, cFinished]) {
+      assert.equal(event?.type, WorkflowEventTypes.STEP_FINISHED);
+      if (event?.type === WorkflowEventTypes.STEP_FINISHED) {
+        assert.deepEqual(event.execution, {
+          jobId: `${TEST_RUN_ID}/${event.step.id}`,
+          attemptId: `${TEST_RUN_ID}/${event.step.id}/attempt-0`,
+          attempt: 0,
+        });
+        assert.deepEqual(event.result.execution, event.execution);
+      }
+    }
   });
 
   it('parallel steps emit two step:finished events', async () => {
