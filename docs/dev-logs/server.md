@@ -1,5 +1,13 @@
 # apps/server 开发日志
 
+## 2026-09-23
+
+- **变更**：新增 `execution_control_commands` 权威控制命令表；pause/resume/cancel 在调用进程内引擎前持久化，Executor 按 owner 能力轮询、原子认领并回写 applied/rejected，过期认领可恢复。
+- **兼容**：控制 API 保留既有 run status 字段并新增 `control.commandId/status/error`；同进程请求即时执行，其他进程提交的请求保持 pending 至 owner 消费。
+- **前端**：Run 详情页按 pending/applied/rejected 显示等待、成功或拒绝反馈，避免跨进程命令尚未消费时误报“已暂停/已继续”。
+- **验证**：Prisma 迁移已应用到本地开发库；76 项测试（含 PostgreSQL 集成）、server 类型检查和 lint 通过；本地 API pause/resume 命令均成功落库为 applied。
+- **文件**：`prisma/schema.prisma`, `prisma/migrations/20260923170000_execution_control_commands`, `src/execution/execution-control.service.ts`, `src/execution/prisma-execution.repository.ts`, `src/runs/run-manager.service.ts`
+
 ## 2026-08-10
 
 - **变更**：数据库改为团队公共 Postgres（共享 `monai_devops` / `monai_devops_test`）；移除仓库 compose，补充迁数据与协作说明

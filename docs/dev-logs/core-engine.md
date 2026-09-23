@@ -10,9 +10,10 @@
 - **变更**：接通顶层 step 事件与 Job/Attempt 权威状态，增加本地 lease owner、周期 heartbeat、终态清理和启动过期 lease 扫描；修复终态 Attempt 可因过期 lease 被误领的问题。
 - **变更**：新增引擎 `beforeStepExecute` 授权闸门；服务端在 `step:start` 和插件调用前同步取得数据库 lease，授权失败不执行插件。
 - **变更**：完成进程内 retry/new Attempt 闭环：步骤显式声明 retry policy，可重试失败保持 jobId 并递增 attempt；支持指数 backoff 上限，中间失败不污染 Run 步骤计数，server/web 全链路保留策略字段。
+- **变更**：完成跨进程 Run 控制闭环：pause/resume/cancel 先持久化为控制命令，由实际持有 RunHandle 的 Executor 轮询并原子认领；支持认领超时重领、queued Run 无 owner 取消，以及兼容旧客户端的即时控制响应。
 - **决策**：Job/Attempt 使用独立持久化表；未来 retry 保持 `jobId`、递增 `attempt`，checkpoint 归属 Job 并记录来源 Attempt，lease 绑定 Attempt，本地与远程 Executor 共用身份协议。嵌套执行在子 Run 存储模型明确前暂不投影。
 - **决策**：默认 `maxAttempts=1` 保持旧工作流行为；只有 infrastructure/internal 原因且步骤显式允许时重试，业务、配置、依赖和取消失败不重试。
-- **验证**：core-engine 141 项、server 非数据库 68 项、web 46 项测试通过；受影响范围类型检查、lint 和构建通过；本地 API retryPolicy 提交、执行、持久化与清理冒烟通过。
+- **验证**：core-engine 141 项、server 76 项（含 PostgreSQL 集成）、web 46 项测试通过；受影响范围类型检查、lint 和构建通过；本地 API retryPolicy 以及 pause/resume 控制命令提交、执行、持久化与清理冒烟通过。
 - **文件**：`executor/execution-identity.ts`, `executor/index.ts`, `executor/types.ts`, `observer/*`, `apps/server/src/common/serialization/*`, `apps/server/src/runs/run-event-merge*`, `docs/plans/core-engine/core-1-execution-identity-draft.md`
 
 ## 2026-08-05

@@ -1,6 +1,6 @@
 # Core-2：可靠调度与恢复基础（进行中）
 
-> **阶段状态：进行中（Runtime authorization implemented）**
+> **阶段状态：进行中（Cross-process control implemented）**
 
 ## 已落地基础
 
@@ -19,11 +19,16 @@
 - 每次重试保持 jobId、递增 attempt 并生成新 attemptId，所有 Attempt 事件和数据库历史均保留；
 - backoff 采用指数增长并受 `maxBackoffMs` 上限约束；中间失败不计入 Run 的最终步骤计数；
 - server 规范化与 web 编辑器导入/保存链路会保留 retryPolicy。
+- pause/resume/cancel 在调用本地执行器前先写入 PostgreSQL `execution_control_commands`；API 响应携带 commandId 与 pending/applied/rejected 状态；
+- 持有 RunHandle 的 Executor 周期读取命令并原子认领，非持有进程不会误消费；认领超时后允许重新领取，避免消费者崩溃导致命令永久悬挂；
+- 同进程控制仍即时执行；跨进程请求保持 pending，直到实际持有者消费；尚未启动的 queued Run 可在无内存 owner 时直接持久化取消；
+- pause/resume/cancel 的状态投影仍沿用原有 Run 状态与事件语义，旧客户端可忽略新增的 control 响应字段。
+- Web 控制栏区分 pending/applied/rejected，不会把仍在等待其他执行节点处理的请求误报为已经完成。
 
 ## 权威边界
 
 - PostgreSQL 是 Job、Attempt、lease 和 checkpoint 的权威状态；
-- 内存 RunHandle 仍负责当前进程内即时控制，但不能作为恢复依据；
+- 内存 RunHandle 负责实际控制当前执行；PostgreSQL 控制命令是跨进程请求、认领和完成状态的权威记录；
 - lease 绑定 Attempt，checkpoint 绑定 Job 并记录来源 Attempt；
 - 任何重试必须使用同一 jobId、新 attemptId 和显式 idempotency key。
 
@@ -33,10 +38,10 @@
 - 嵌套子执行暂不写 Job/Attempt 表，避免在子 Run 不独立落表时破坏外键和 `(runId, stepId)` 唯一性；
 - 当前进程内的可重试失败已经自动创建下一 Attempt；服务重启后扫描出的 timed_out Attempt 尚未自动恢复；
 - waiting/checkpoint 已有持久化契约，尚未接入实际唤醒协议。
+- 控制命令已经跨进程持久化，但当前仍由内嵌 Executor 轮询；远程 Executor 协议留到 Core-3。
 
 ## 下一闭环
 
-1. 将 pause/resume/cancel 写入跨进程控制命令并由 Executor 消费；
-2. 接入 waiting/checkpoint 的持久化唤醒；
-3. 为启动扫描出的 timed_out Attempt 执行恢复策略；
-4. 完成重复投递、失联和重启故障测试。
+1. 接入 waiting/checkpoint 的持久化唤醒；
+2. 为启动扫描出的 timed_out Attempt 执行恢复策略；
+3. 完成重复投递、失联和重启故障测试。

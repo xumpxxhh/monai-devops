@@ -46,6 +46,7 @@ import {
   type ExecutionRepository,
 } from '../execution/execution.repository.js';
 import { ExecutionLeaseService } from '../execution/execution-lease.service.js';
+import { ExecutionControlService } from '../execution/execution-control.service.js';
 
 export interface SubmitRunOptions {
   priority?: number;
@@ -118,6 +119,7 @@ export class RunManagerService implements OnModuleInit {
     private readonly config: ConfigService,
     @Inject(EXECUTION_REPOSITORY) private readonly executionRepository: ExecutionRepository,
     private readonly executionLeases: ExecutionLeaseService,
+    private readonly executionControls: ExecutionControlService,
   ) {}
 
   onModuleInit(): void {
@@ -310,45 +312,19 @@ export class RunManagerService implements OnModuleInit {
     }
 
     const mode = options.mode ?? 'best-effort';
-    const controlResult = await this.engineService.cancelRun(runId, mode);
-    this.logger.log(
-      `Run ${runId} cancel requested (${controlResult.previousStatus} -> ${controlResult.currentStatus}, mode=${mode})`,
-    );
-
-    if (controlResult.currentStatus === 'unknown' && record.status === 'queued') {
-      await this.runRepository.update(runId, {
-        status: 'cancelled',
-        cancelled: mode,
-        finishedAt: new Date(),
-      });
-      return { runId, status: 'cancelled' as const, cancelled: mode };
-    }
-
-    if (
-      controlResult.currentStatus === 'cancelling' ||
-      controlResult.currentStatus === 'cancelled'
-    ) {
-      if (controlResult.currentStatus === 'cancelling') {
-        await this.runRepository.update(runId, {
-          status: 'running',
-          cancelled: mode,
-        });
-      }
-      return {
-        runId,
-        status:
-          controlResult.currentStatus === 'cancelled'
-            ? ('cancelled' as const)
-            : ('running' as const),
-        cancelled: mode,
-        inFlightSteps: controlResult.inFlightSteps,
-      };
-    }
-
+    const control = await this.executionControls.request(runId, 'cancel', { mode });
+    const currentStatus = control.result?.currentStatus;
+    this.logger.log(`Run ${runId} cancel command ${control.commandId} is ${control.status}`);
     return {
       runId,
-      status: record.status,
-      cancelled: undefined,
+      status:
+        currentStatus === 'cancelled' ||
+        (record.status === 'queued' && control.status === 'applied')
+          ? ('cancelled' as const)
+          : record.status,
+      cancelled: mode,
+      inFlightSteps: control.result?.inFlightSteps,
+      control: { commandId: control.commandId, status: control.status, error: control.error },
     };
   }
 
@@ -362,14 +338,13 @@ export class RunManagerService implements OnModuleInit {
       throw new HttpException(`无法暂停状态为 ${record.status} 的 Run`, HttpStatus.CONFLICT);
     }
 
-    const result = await this.engineService.pauseRun(runId, options);
-    if (result.currentStatus === 'paused' || result.currentStatus === 'pausing') {
-      await this.runRepository.update(runId, {
-        status: result.currentStatus === 'paused' ? 'paused' : 'pausing',
-      });
-    }
-
-    return { runId, status: result.currentStatus, inFlightSteps: result.inFlightSteps };
+    const control = await this.executionControls.request(runId, 'pause', { ...options });
+    return {
+      runId,
+      status: control.result?.currentStatus ?? record.status,
+      inFlightSteps: control.result?.inFlightSteps,
+      control: { commandId: control.commandId, status: control.status, error: control.error },
+    };
   }
 
   async resumeRun(runId: string) {
@@ -382,12 +357,12 @@ export class RunManagerService implements OnModuleInit {
       throw new HttpException(`无法继续状态为 ${record.status} 的 Run`, HttpStatus.CONFLICT);
     }
 
-    const result = await this.engineService.resumeRun(runId);
-    if (result.currentStatus === 'running') {
-      await this.runRepository.update(runId, { status: 'running' });
-    }
-
-    return { runId, status: result.currentStatus };
+    const control = await this.executionControls.request(runId, 'resume');
+    return {
+      runId,
+      status: control.result?.currentStatus ?? record.status,
+      control: { commandId: control.commandId, status: control.status, error: control.error },
+    };
   }
 
   async deleteRun(runId: string): Promise<boolean> {

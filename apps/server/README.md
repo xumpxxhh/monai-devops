@@ -139,18 +139,20 @@ pnpm sync:plugins
 
 ## 环境变量
 
-| 变量                 | 必填          | 默认        | 说明                                                                         |
-| -------------------- | ------------- | ----------- | ---------------------------------------------------------------------------- |
-| `GLOBAL_API_PREFIX`  | ✅            | —           | HTTP/WS 全局前缀（如 `api` 或 `api/v1/devops`）                              |
-| `DATABASE_URL`       | ✅（非 test） | —           | PostgreSQL 连接串                                                            |
-| `APP_ENV`            |               | `local-dev` | `local-dev` \| `online-dev` \| `local-test` \| `online-test` \| `production` |
-| `PORT`               |               | `3000`      | 监听端口                                                                     |
-| `MAX_PARALLEL_STEPS` |               | `2`         | 单个 workflow 内默认并行步骤上限                                             |
-| `RESOURCE_POOL_SIZE` |               | `5`         | 引擎 `default` 资源池槽位数                                                  |
-| `MAX_NESTING_DEPTH`  |               | `3`         | 子工作流嵌套深度上限                                                         |
-| `MAX_ACTIVE_RUNS`    |               | `50`        | 活跃 Run 上限（queued/running/pausing/paused）；超出 `429`                   |
-| `RUN_HISTORY_LIMIT`  |               | `500`       | 单 Run 事件条数上限（超限优先裁剪 `plugin:log`）                             |
-| `MONAI_ENV_FILE`     |               | —           | 指定 env 文件并 **覆盖** 其中键（`dev:test` 使用）                           |
+| 变量                             | 必填          | 默认        | 说明                                                                         |
+| -------------------------------- | ------------- | ----------- | ---------------------------------------------------------------------------- |
+| `GLOBAL_API_PREFIX`              | ✅            | —           | HTTP/WS 全局前缀（如 `api` 或 `api/v1/devops`）                              |
+| `DATABASE_URL`                   | ✅（非 test） | —           | PostgreSQL 连接串                                                            |
+| `APP_ENV`                        |               | `local-dev` | `local-dev` \| `online-dev` \| `local-test` \| `online-test` \| `production` |
+| `PORT`                           |               | `3000`      | 监听端口                                                                     |
+| `MAX_PARALLEL_STEPS`             |               | `2`         | 单个 workflow 内默认并行步骤上限                                             |
+| `RESOURCE_POOL_SIZE`             |               | `5`         | 引擎 `default` 资源池槽位数                                                  |
+| `MAX_NESTING_DEPTH`              |               | `3`         | 子工作流嵌套深度上限                                                         |
+| `MAX_ACTIVE_RUNS`                |               | `50`        | 活跃 Run 上限（queued/running/pausing/paused）；超出 `429`                   |
+| `RUN_HISTORY_LIMIT`              |               | `500`       | 单 Run 事件条数上限（超限优先裁剪 `plugin:log`）                             |
+| `EXECUTION_CONTROL_POLL_MS`      |               | `500`       | Executor 轮询跨进程控制命令的间隔                                            |
+| `EXECUTION_CONTROL_CLAIM_TTL_MS` |               | `30000`     | 控制命令认领失效并允许其他消费者重领的时间                                   |
+| `MONAI_ENV_FILE`                 |               | —           | 指定 env 文件并 **覆盖** 其中键（`dev:test` 使用）                           |
 
 加载顺序（`preload-env`）：
 
@@ -163,12 +165,14 @@ pnpm sync:plugins
 
 ## 数据模型（Prisma）
 
-| 表                 | 作用                                                                             |
-| ------------------ | -------------------------------------------------------------------------------- |
-| `workflows`        | 工作流定义 JSON；`owner_workflow_id` 非空表示 **私有拷贝**（不进公开列表）       |
-| `workflow_imports` | 父工作流导入子工作流：`mode` = `reference` \| `copy`，`id` 即步骤里的 `importId` |
-| `runs`             | 一次顶层执行：快照、状态、计数、结果、可选 `parent_run_id`                       |
-| `run_events`       | 事件流（`run_id` + `event_index` 唯一）                                          |
+| 表                                      | 作用                                                                             |
+| --------------------------------------- | -------------------------------------------------------------------------------- |
+| `workflows`                             | 工作流定义 JSON；`owner_workflow_id` 非空表示 **私有拷贝**（不进公开列表）       |
+| `workflow_imports`                      | 父工作流导入子工作流：`mode` = `reference` \| `copy`，`id` 即步骤里的 `importId` |
+| `runs`                                  | 一次顶层执行：快照、状态、计数、结果、可选 `parent_run_id`                       |
+| `run_events`                            | 事件流（`run_id` + `event_index` 唯一）                                          |
+| `execution_jobs` / `execution_attempts` | Job、Attempt、lease、heartbeat 与 checkpoint 权威状态                            |
+| `execution_control_commands`            | pause/resume/cancel 跨进程命令、认领者与处理结果                                 |
 
 Run 状态：`queued` → `running` / `pausing` / `paused` → `finished` \| `failed` \| `cancelled`；校验失败可为 `rejected`。进行中的 Run 不可删除。
 
@@ -228,6 +232,8 @@ Run 状态：`queued` → `running` / `pausing` / `paused` → `finished` \| `fa
 `POST /runs` / `POST /workflows/:id/run` 可选字段：`priority`、`traceId`、`initialState` 等。活跃数达 `MAX_ACTIVE_RUNS` 时返回 `429` + `MAX_ACTIVE_RUNS_EXCEEDED`。
 
 受理成功立即返回 `{ runId, status: 'queued' }`，执行在后台进行。
+
+三个控制接口都会先持久化命令，并在响应中附带 `control: { commandId, status, error? }`。`status` 为 `pending` 表示命令正等待持有该 Run 的执行节点消费，`applied` 表示已执行，`rejected` 表示状态竞争或终态导致请求未生效。
 
 ### 插件
 

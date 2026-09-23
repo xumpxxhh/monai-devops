@@ -2,6 +2,12 @@ import type { WorkflowDraft } from './workflows';
 import { apiDelete, apiGet, apiPost } from './http';
 import type { PaginatedResponse, RunRecord, SerializedWorkflowLifecycleEvent } from '../types';
 
+export interface RunControlCommandResponse {
+  commandId: string;
+  status: 'pending' | 'applied' | 'rejected';
+  error?: string;
+}
+
 export const runsApi = {
   list(params?: {
     status?: string;
@@ -35,16 +41,21 @@ export const runsApi = {
       status: string;
       cancelled?: 'best-effort' | 'hard';
       inFlightSteps?: string[];
+      control: RunControlCommandResponse;
     }>(`/runs/${runId}/cancel`, options);
   },
   pause(runId: string, options?: { waitInFlight?: boolean; abortInFlight?: boolean }) {
-    return apiPost<{ runId: string; status: string; inFlightSteps?: string[] }>(
-      `/runs/${runId}/pause`,
-      options,
-    );
+    return apiPost<{
+      runId: string;
+      status: string;
+      inFlightSteps?: string[];
+      control: RunControlCommandResponse;
+    }>(`/runs/${runId}/pause`, options);
   },
   resume(runId: string) {
-    return apiPost<{ runId: string; status: string }>(`/runs/${runId}/resume`);
+    return apiPost<{ runId: string; status: string; control: RunControlCommandResponse }>(
+      `/runs/${runId}/resume`,
+    );
   },
   remove(runId: string) {
     return apiDelete<{ runId: string; deleted: boolean }>(`/runs/${runId}`);

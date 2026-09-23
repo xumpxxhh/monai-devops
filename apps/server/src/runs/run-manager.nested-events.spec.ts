@@ -135,6 +135,7 @@ describe('RunManagerService nested event routing', () => {
       config as unknown as ConfigService,
       executionRepository as unknown as ExecutionRepository,
       executionLeases as unknown as ExecutionLeaseService,
+      { request: jest.fn() } as never,
     );
     service.onModuleInit();
 

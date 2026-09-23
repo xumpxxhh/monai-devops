@@ -9,6 +9,7 @@ import { EXECUTION_REPOSITORY } from '../execution/execution.repository.js';
 import { PrismaExecutionRepository } from '../execution/prisma-execution.repository.js';
 import { ExecutionLeaseService } from '../execution/execution-lease.service.js';
 import { ExecutionRecoveryService } from '../execution/execution-recovery.service.js';
+import { ExecutionControlService } from '../execution/execution-control.service.js';
 
 @Global()
 @Module({
@@ -20,6 +21,7 @@ import { ExecutionRecoveryService } from '../execution/execution-recovery.servic
     { provide: EXECUTION_REPOSITORY, useExisting: PrismaExecutionRepository },
     ExecutionLeaseService,
     ExecutionRecoveryService,
+    ExecutionControlService,
     RunManagerService,
     RunStreamService,
     RunsGateway,

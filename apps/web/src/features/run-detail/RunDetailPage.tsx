@@ -440,8 +440,18 @@ export default function RunDetailPage() {
     try {
       const result = await runsApi.cancel(runId, { mode });
       setRecordStatus(result.status as RunStatus);
+      if (result.control.status === 'rejected') {
+        toast.error(result.control.error ?? '取消请求被执行节点拒绝');
+        return;
+      }
       if (result.cancelled) {
-        toast.success(mode === 'hard' ? '已请求强制取消' : '已请求取消(至当前步骤完成)');
+        toast.success(
+          result.control.status === 'pending'
+            ? '取消请求已提交，等待执行节点处理'
+            : mode === 'hard'
+              ? '已请求强制取消'
+              : '已请求取消(至当前步骤完成)',
+        );
       }
       if (result.status === 'cancelled') {
         setWsSubscribe(null);
@@ -459,7 +469,13 @@ export default function RunDetailPage() {
     try {
       const result = await runsApi.pause(runId);
       setRecordStatus(result.status as RunStatus);
-      toast.success('运行已暂停');
+      if (result.control.status === 'rejected') {
+        toast.error(result.control.error ?? '暂停请求被执行节点拒绝');
+      } else {
+        toast.success(
+          result.control.status === 'pending' ? '暂停请求已提交，等待执行节点处理' : '运行已暂停',
+        );
+      }
     } catch (e) {
       toast.error(e instanceof Error ? e.message : '暂停失败');
     } finally {
@@ -473,8 +489,14 @@ export default function RunDetailPage() {
     try {
       const result = await runsApi.resume(runId);
       setRecordStatus(result.status as RunStatus);
+      if (result.control.status === 'rejected') {
+        toast.error(result.control.error ?? '继续请求被执行节点拒绝');
+        return;
+      }
       setWsSubscribe((prev) => (prev?.runId === runId ? prev : { runId, fromEventIndex: 0 }));
-      toast.success('运行已继续');
+      toast.success(
+        result.control.status === 'pending' ? '继续请求已提交，等待执行节点处理' : '运行已继续',
+      );
     } catch (e) {
       toast.error(e instanceof Error ? e.message : '继续失败');
     } finally {

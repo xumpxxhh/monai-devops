@@ -4,6 +4,7 @@ import { PrismaService } from '../prisma/prisma.service.js';
 import { toInputJson } from '../prisma/prisma-json.js';
 import type {
   CreateExecutionJobInput,
+  ExecutionControlCommand,
   ExecutionRepository,
   RecoverableAttempt,
 } from './execution.repository.js';
@@ -139,5 +140,71 @@ export class PrismaExecutionRepository implements ExecutionRepository {
       leaseOwner: row.leaseOwner ?? undefined,
       leaseExpiresAt: row.leaseExpiresAt ?? undefined,
     }));
+  }
+
+  async enqueueControl(command: ExecutionControlCommand): Promise<void> {
+    await this.prisma.executionControlCommand.create({
+      data: {
+        commandId: command.commandId,
+        runId: command.runId,
+        type: command.type,
+        payload: toInputJson(command.payload),
+        status: command.status,
+        requestedAt: command.requestedAt,
+      },
+    });
+  }
+
+  async listClaimableControls(
+    staleBefore: Date,
+    limit: number,
+  ): Promise<ExecutionControlCommand[]> {
+    const rows = await this.prisma.executionControlCommand.findMany({
+      where: {
+        status: 'pending',
+        OR: [{ claimedAt: null }, { claimedAt: { lt: staleBefore } }],
+      },
+      orderBy: { requestedAt: 'asc' },
+      take: limit,
+    });
+    return rows.map((row) => ({
+      commandId: row.commandId,
+      runId: row.runId,
+      type: row.type as ExecutionControlCommand['type'],
+      payload: row.payload as Record<string, unknown>,
+      status: row.status as ExecutionControlCommand['status'],
+      claimedBy: row.claimedBy ?? undefined,
+      claimedAt: row.claimedAt ?? undefined,
+      requestedAt: row.requestedAt,
+    }));
+  }
+
+  async claimControl(commandId: string, ownerId: string, staleBefore: Date): Promise<boolean> {
+    const result = await this.prisma.executionControlCommand.updateMany({
+      where: {
+        commandId,
+        status: 'pending',
+        OR: [{ claimedAt: null }, { claimedAt: { lt: staleBefore } }],
+      },
+      data: { claimedBy: ownerId, claimedAt: new Date() },
+    });
+    return result.count === 1;
+  }
+
+  async completeControl(
+    commandId: string,
+    ownerId: string,
+    status: 'applied' | 'rejected',
+    error?: string,
+  ): Promise<boolean> {
+    const result = await this.prisma.executionControlCommand.updateMany({
+      where: { commandId, status: 'pending', claimedBy: ownerId },
+      data: {
+        status,
+        completedAt: new Date(),
+        error: error ?? null,
+      },
+    });
+    return result.count === 1;
   }
 }

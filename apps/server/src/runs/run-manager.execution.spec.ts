@@ -32,6 +32,7 @@ describe('RunManagerService execution projection', () => {
       { get: jest.fn() } as unknown as ConfigService,
       repository as unknown as ExecutionRepository,
       leases as unknown as ExecutionLeaseService,
+      { request: jest.fn() } as never,
     );
     const project = (
       service as unknown as {

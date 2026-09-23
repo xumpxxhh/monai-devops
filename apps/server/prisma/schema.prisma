@@ -8,35 +8,54 @@ datasource db {
 }
 
 model Run {
-  runId            String         @id @map("run_id")
-  workflowId       String         @map("workflow_id")
-  workflowName     String         @map("workflow_name")
+  runId            String                    @id @map("run_id")
+  workflowId       String                    @map("workflow_id")
+  workflowName     String                    @map("workflow_name")
   status           String
-  isActive         Boolean        @default(true) @map("is_active")
-  traceId          String?        @map("trace_id")
-  workflowSnapshot Json           @map("workflow_snapshot")
-  countsTotal      Int            @default(0) @map("counts_total")
-  countsCompleted  Int            @default(0) @map("counts_completed")
-  countsFailed     Int            @default(0) @map("counts_failed")
-  countsSkipped    Int            @default(0) @map("counts_skipped")
+  isActive         Boolean                   @default(true) @map("is_active")
+  traceId          String?                   @map("trace_id")
+  workflowSnapshot Json                      @map("workflow_snapshot")
+  countsTotal      Int                       @default(0) @map("counts_total")
+  countsCompleted  Int                       @default(0) @map("counts_completed")
+  countsFailed     Int                       @default(0) @map("counts_failed")
+  countsSkipped    Int                       @default(0) @map("counts_skipped")
   result           Json?
   cancelled        String?
-  createdBy        BigInt?        @map("created_by")
-  source           String?        @default("api")
-  metadata         Json           @default("{}")
-  parentRunId      String?        @map("parent_run_id")
-  createdAt        DateTime       @default(now()) @map("created_at")
-  updatedAt        DateTime       @updatedAt @map("updated_at")
-  startedAt        DateTime?      @map("started_at")
-  finishedAt       DateTime?      @map("finished_at")
+  createdBy        BigInt?                   @map("created_by")
+  source           String?                   @default("api")
+  metadata         Json                      @default("{}")
+  parentRunId      String?                   @map("parent_run_id")
+  createdAt        DateTime                  @default(now()) @map("created_at")
+  updatedAt        DateTime                  @updatedAt @map("updated_at")
+  startedAt        DateTime?                 @map("started_at")
+  finishedAt       DateTime?                 @map("finished_at")
   events           RunEvent[]
   executionJobs    ExecutionJob[]
+  controlCommands  ExecutionControlCommand[]
 
   @@index([isActive, createdAt])
   @@index([workflowId])
   @@index([workflowName])
   @@index([parentRunId])
   @@map("runs")
+}
+
+model ExecutionControlCommand {
+  commandId   String    @id @map("command_id")
+  runId       String    @map("run_id")
+  type        String
+  payload     Json      @default("{}")
+  status      String    @default("pending")
+  claimedBy   String?   @map("claimed_by")
+  claimedAt   DateTime? @map("claimed_at")
+  completedAt DateTime? @map("completed_at")
+  error       String?
+  requestedAt DateTime  @default(now()) @map("requested_at")
+  run         Run       @relation(fields: [runId], references: [runId], onDelete: Cascade)
+
+  @@index([status, requestedAt])
+  @@index([runId, requestedAt])
+  @@map("execution_control_commands")
 }
 
 model ExecutionJob {
