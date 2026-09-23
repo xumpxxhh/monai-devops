@@ -1,4 +1,4 @@
-# Core-1：执行身份与事件顺序（已完成）
+# Core-1a：执行身份与源事件顺序（已完成）
 
 > **文档状态：已完成（Completed）**
 >
@@ -14,14 +14,14 @@
 - `sequence` 与数据库 `eventIndex` 保持独立：前者属于源执行事件，后者只表示持久化行顺序。连续流日志压缩后保留首个 `sequence`，并以可选 `sequenceEnd` 标记覆盖范围。
 - 本切片不引入持久化 Attempt、重试、checkpoint、lease 或远程 Executor 协议；这些议题进入后续 RFC。
 
-### Core-1 收口决策
+### Core-1a 收口决策
 
 - 暂不增加统一 `ExecutionStatus`。控制状态、执行结果和服务端持久化状态继续分层，避免把 `paused`、`skipped`、业务失败等不同维度压成一个枚举。
 - Job/Attempt 在 Core-1 中以 `ExecutionIdentity` 正式存在，并随事件与结果持久化；在真正支持重试、恢复前不新增独立 Attempt 表。
 - 未来重试必须保持 `jobId` 不变、从 `attempt = 0` 递增，并为每次尝试生成新的 `attemptId`；是否重试由显式 retry policy、失败分类和幂等声明共同决定。
 - checkpoint 属于 Job 的可恢复进度，同时记录产生它的 `attemptId`；lease 绑定到 Attempt，因为执行权必须对应某次具体尝试。
 - 本地与远程 Executor 必须共享同一 ExecutionIdentity、事件顺序和结果协议；传输与租约机制留到 Core-3。
-- 上述重试、checkpoint 和 lease 的运行时实现进入 Core-2，不继续扩大 Core-1。
+- 上述重试、checkpoint 和 lease 的运行时实现进入 Core-2，不继续扩大 Core-1a。
 
 ## 1. 目标
 
@@ -135,9 +135,8 @@ const execution = createExecutionIdentity(workflowRunId, step.id, 0);
 
 ## 6. 后续连接点
 
-Core-1 已完成。下一阶段进入 Core-2，按以下顺序推进：
+Core-1a 已完成。按照共享内核实施基线，Core-1 仍需继续完成：
 
-1. 定义 retry policy、失败可重试分类、幂等声明和状态转换；
-2. 实现 Attempt 递增及每次尝试的事件边界；
-3. 定义 Job checkpoint 与 Attempt lease 契约；
-4. 增加故障注入、恢复和重复投递测试。
+1. Core-1b：事件版本、持久化 offset 与回放契约；
+2. Core-1c：失败原因、终态和取消原因标准化；
+3. Core-1 整体验收后，再进入可靠调度与恢复（Core-2）。
