@@ -4,6 +4,7 @@
 
 - **变更**：完成 Core-1a 执行身份与源事件顺序：为工作流步骤注入稳定的 Job/Attempt identity，覆盖成功、失败、跳过、取消及未调度路径；顶层与嵌套 Run 共用单调事件序列。
 - **变更**：明确内核 `sequence` 与数据库 `eventIndex` 独立；服务端合并连续流日志时以 `sequence`/`sequenceEnd` 保存源事件范围。
+- **变更**：完成 Core-1b 事件回放契约：新增 `eventVersion`、`occurredAt` 和持久化 `offset`，WebSocket 从真实 eventIndex 回放，修复事件裁剪后数组下标与 offset 错位。
 - **决策**：Job/Attempt 暂以事件和结果持久化，不新增独立表；未来 retry 保持 `jobId`、递增 `attempt`，checkpoint 归属 Job 并记录来源 Attempt，lease 绑定 Attempt，本地与远程 Executor 共用身份协议。
 - **验证**：core-engine 131 项测试通过；server 事件序列定向测试 15 项通过；受影响范围 lint、类型检查和构建通过。
 - **文件**：`executor/execution-identity.ts`, `executor/index.ts`, `executor/types.ts`, `observer/*`, `apps/server/src/common/serialization/*`, `apps/server/src/runs/run-event-merge*`, `docs/plans/core-engine/core-1-execution-identity-draft.md`

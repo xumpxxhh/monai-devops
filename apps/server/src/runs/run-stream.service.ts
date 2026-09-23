@@ -36,8 +36,9 @@ export class RunStreamService {
     }
     this.clientRuns.get(client)!.add(runId);
 
-    const startIndex = Math.max(0, Math.min(fromEventIndex, replay.length));
-    for (const event of replay.slice(startIndex)) {
+    for (const [index, event] of replay.entries()) {
+      const offset = event.offset ?? index;
+      if (offset < fromEventIndex) continue;
       this.send(client, { type: 'event', runId, event });
     }
   }

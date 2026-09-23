@@ -98,12 +98,15 @@ export class PrismaRunRepository implements RunRepository {
     return rows.map((row) => toRunRecord(row, row.events));
   }
 
-  async appendEvent(runId: string, event: RunRecord['events'][number]): Promise<void> {
+  async appendEvent(
+    runId: string,
+    event: RunRecord['events'][number],
+  ): Promise<number | undefined> {
     const limit = this.config.get<number>('RUN_HISTORY_LIMIT', 500);
 
-    await this.prisma.$transaction(async (tx) => {
+    return this.prisma.$transaction(async (tx) => {
       const run = await tx.run.findUnique({ where: { runId } });
-      if (!run) return;
+      if (!run) return undefined;
 
       const rows = await tx.runEvent.findMany({
         where: { runId },
@@ -112,7 +115,9 @@ export class PrismaRunRepository implements RunRepository {
       const events = rows.map((row) => structuredClone(row.payload) as RunRecord['events'][number]);
       const { action } = applyAppendRunEvent(events, structuredClone(event), limit);
       const latestPayload = events[events.length - 1];
-      if (!latestPayload) return;
+      if (!latestPayload) return undefined;
+
+      let persistedOffset: number;
 
       if (action === 'merge' && rows.length > 0) {
         const lastRow = rows[rows.length - 1]!;
@@ -120,12 +125,14 @@ export class PrismaRunRepository implements RunRepository {
           where: { id: lastRow.id },
           data: { payload: toInputJson(latestPayload) },
         });
+        persistedOffset = lastRow.eventIndex;
       } else {
         const lastRow = rows[rows.length - 1];
+        persistedOffset = lastRow ? lastRow.eventIndex + 1 : 0;
         await tx.runEvent.create({
           data: {
             runId,
-            eventIndex: lastRow ? lastRow.eventIndex + 1 : 0,
+            eventIndex: persistedOffset,
             type: String(latestPayload.type),
             payload: toInputJson(latestPayload),
           },
@@ -142,6 +149,7 @@ export class PrismaRunRepository implements RunRepository {
           where: { id: { in: deleteIds } },
         });
       }
+      return persistedOffset;
     });
   }
 

@@ -57,7 +57,7 @@ export interface RunRepository {
   findById(runId: string): Promise<RunRecord | undefined>;
   list(filter: RunListFilter): Promise<{ items: RunRecord[]; total: number }>;
   listByParentRunId(parentRunId: string): Promise<RunRecord[]>;
-  appendEvent(runId: string, event: SerializedWorkflowLifecycleEvent): Promise<void>;
+  appendEvent(runId: string, event: SerializedWorkflowLifecycleEvent): Promise<number | undefined>;
   delete(runId: string): Promise<boolean>;
   countActive(): Promise<number>;
   countByStatus(status: RunStatus): Promise<number>;

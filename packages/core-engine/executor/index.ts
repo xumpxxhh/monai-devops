@@ -560,7 +560,12 @@ export function createWorkflowExecutor(options: ExecutorOptions = {}) {
     const sequence = (eventSequences.get(root) ?? 0) + 1;
     eventSequences.set(root, sequence);
     const withParent = parent && event.parent === undefined ? { ...event, parent } : event;
-    const enriched = { ...withParent, sequence };
+    const enriched = {
+      ...withParent,
+      sequence,
+      eventVersion: 1,
+      occurredAt: new Date().toISOString(),
+    };
     await observer?.onEvent?.(enriched as WorkflowLifecycleEvent);
   }
 

@@ -490,11 +490,12 @@ export class RunManagerService implements OnModuleInit {
     const persistRunId = this.resolvePersistRunId(event);
     const nested = this.isNestedEngineEvent(event);
     const serialized = serializeWorkflowEvent(event);
-    await this.runRepository.appendEvent(persistRunId, serialized);
+    const offset = await this.runRepository.appendEvent(persistRunId, serialized);
+    const persistedEvent = offset === undefined ? serialized : { ...serialized, offset };
 
     // 嵌套子执行：只写入父事件流，不改父 Run 的 status/counts/result
     if (nested) {
-      this.runStream.fanOut(persistRunId, { type: 'event', event: serialized });
+      this.runStream.fanOut(persistRunId, { type: 'event', event: persistedEvent });
       return;
     }
 
@@ -544,7 +545,7 @@ export class RunManagerService implements OnModuleInit {
       this.clearChildMappingsForRoot(persistRunId);
       this.runStream.fanOut(persistRunId, { type: 'done', result: serializedResult });
     } else {
-      this.runStream.fanOut(persistRunId, { type: 'event', event: serialized });
+      this.runStream.fanOut(persistRunId, { type: 'event', event: persistedEvent });
     }
   }
 

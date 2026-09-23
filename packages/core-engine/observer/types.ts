@@ -48,8 +48,12 @@ export interface WorkflowIterationChildResultSummary {
   state?: unknown;
 }
 
-type WithOptionalParent<T> = WithSequence<T> & { parent?: WorkflowEventParent };
-type WithSequence<T> = T & { sequence?: number };
+type WithOptionalParent<T> = WithEventMetadata<T> & { parent?: WorkflowEventParent };
+type WithEventMetadata<T> = T & {
+  sequence?: number;
+  eventVersion?: number;
+  occurredAt?: string;
+};
 
 /**
  * 工作流生命周期事件（discriminated union）

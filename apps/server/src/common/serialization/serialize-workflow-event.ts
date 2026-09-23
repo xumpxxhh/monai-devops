@@ -28,6 +28,10 @@ export type SerializedWorkflowRunResult = Omit<WorkflowRunResult, 'results'> & {
 export type SerializedWorkflowLifecycleEvent = Record<string, unknown> & {
   sequence?: number;
   sequenceEnd?: number;
+  eventVersion?: number;
+  occurredAt?: string;
+  /** PostgreSQL RunEvent.eventIndex；仅在持久化或回放后存在。 */
+  offset?: number;
 };
 
 function serializeError(error: Error): SerializedError {

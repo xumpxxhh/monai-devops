@@ -77,6 +77,8 @@ describe('WorkflowObserver', () => {
       events.map((event) => event.sequence),
       events.map((_, index) => index + 1),
     );
+    assert.ok(events.every((event) => event.eventVersion === 1));
+    assert.ok(events.every((event) => !Number.isNaN(Date.parse(event.occurredAt ?? ''))));
     assert.equal(
       events[0]?.type === WorkflowEventTypes.WORKFLOW_START && events[0].workflowRunId.length > 0,
       true,

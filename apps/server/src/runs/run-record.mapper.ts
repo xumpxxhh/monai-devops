@@ -39,7 +39,10 @@ export function toRunRecord(run: Run, events: RunEvent[]): RunRecord {
     startedAt: run.startedAt ?? undefined,
     finishedAt: run.finishedAt ?? undefined,
     result: (run.result as SerializedWorkflowRunResult | null) ?? undefined,
-    events: events.map((event) => event.payload as SerializedWorkflowLifecycleEvent),
+    events: events.map((event) => ({
+      ...(event.payload as SerializedWorkflowLifecycleEvent),
+      offset: event.eventIndex,
+    })),
     cancelled: (run.cancelled as RunRecord['cancelled']) ?? undefined,
     createdBy: run.createdBy ?? undefined,
     source: run.source ?? undefined,
