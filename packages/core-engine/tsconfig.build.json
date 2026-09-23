@@ -10,6 +10,7 @@
     "scheduler/**/*.ts",
     "plugin/**/*.ts",
     "resource/**/*.ts",
+    "reliability/**/*.ts",
     "observer/**/*.ts",
     "utils/**/*.ts",
     "context-keys.ts",

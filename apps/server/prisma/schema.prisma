@@ -8,34 +8,74 @@ datasource db {
 }
 
 model Run {
-  runId            String    @id @map("run_id")
-  workflowId       String    @map("workflow_id")
-  workflowName     String    @map("workflow_name")
+  runId            String         @id @map("run_id")
+  workflowId       String         @map("workflow_id")
+  workflowName     String         @map("workflow_name")
   status           String
-  isActive         Boolean   @default(true) @map("is_active")
-  traceId          String?   @map("trace_id")
-  workflowSnapshot Json      @map("workflow_snapshot")
-  countsTotal      Int       @default(0) @map("counts_total")
-  countsCompleted  Int       @default(0) @map("counts_completed")
-  countsFailed     Int       @default(0) @map("counts_failed")
-  countsSkipped    Int       @default(0) @map("counts_skipped")
+  isActive         Boolean        @default(true) @map("is_active")
+  traceId          String?        @map("trace_id")
+  workflowSnapshot Json           @map("workflow_snapshot")
+  countsTotal      Int            @default(0) @map("counts_total")
+  countsCompleted  Int            @default(0) @map("counts_completed")
+  countsFailed     Int            @default(0) @map("counts_failed")
+  countsSkipped    Int            @default(0) @map("counts_skipped")
   result           Json?
   cancelled        String?
-  createdBy        BigInt?   @map("created_by")
-  source           String?   @default("api")
-  metadata         Json      @default("{}")
-  parentRunId      String?   @map("parent_run_id")
-  createdAt        DateTime  @default(now()) @map("created_at")
-  updatedAt        DateTime  @updatedAt @map("updated_at")
-  startedAt        DateTime? @map("started_at")
-  finishedAt       DateTime? @map("finished_at")
+  createdBy        BigInt?        @map("created_by")
+  source           String?        @default("api")
+  metadata         Json           @default("{}")
+  parentRunId      String?        @map("parent_run_id")
+  createdAt        DateTime       @default(now()) @map("created_at")
+  updatedAt        DateTime       @updatedAt @map("updated_at")
+  startedAt        DateTime?      @map("started_at")
+  finishedAt       DateTime?      @map("finished_at")
   events           RunEvent[]
+  executionJobs    ExecutionJob[]
 
   @@index([isActive, createdAt])
   @@index([workflowId])
   @@index([workflowName])
   @@index([parentRunId])
   @@map("runs")
+}
+
+model ExecutionJob {
+  jobId          String             @id @map("job_id")
+  runId          String             @map("run_id")
+  stepId         String             @map("step_id")
+  status         String
+  idempotencyKey String?            @map("idempotency_key")
+  retryPolicy    Json?              @map("retry_policy")
+  checkpoint     Json?
+  createdAt      DateTime           @default(now()) @map("created_at")
+  updatedAt      DateTime           @updatedAt @map("updated_at")
+  run            Run                @relation(fields: [runId], references: [runId], onDelete: Cascade)
+  attempts       ExecutionAttempt[]
+
+  @@unique([runId, stepId])
+  @@unique([runId, idempotencyKey])
+  @@index([runId, status])
+  @@map("execution_jobs")
+}
+
+model ExecutionAttempt {
+  attemptId      String       @id @map("attempt_id")
+  jobId          String       @map("job_id")
+  attempt        Int
+  status         String
+  leaseOwner     String?      @map("lease_owner")
+  leaseToken     String?      @map("lease_token")
+  leaseExpiresAt DateTime?    @map("lease_expires_at")
+  heartbeatAt    DateTime?    @map("heartbeat_at")
+  reason         Json?
+  createdAt      DateTime     @default(now()) @map("created_at")
+  startedAt      DateTime?    @map("started_at")
+  finishedAt     DateTime?    @map("finished_at")
+  job            ExecutionJob @relation(fields: [jobId], references: [jobId], onDelete: Cascade)
+
+  @@unique([jobId, attempt])
+  @@index([status, leaseExpiresAt])
+  @@map("execution_attempts")
 }
 
 model RunEvent {
@@ -55,14 +95,16 @@ model Workflow {
   id              String   @id
   name            String   @unique
   definition      Json
-  /** 非空表示私有拷贝，仅所属父工作流可管理，不进公开列表 */
+  /**
+   * 非空表示私有拷贝，仅所属父工作流可管理，不进公开列表
+   */
   ownerWorkflowId String?  @map("owner_workflow_id")
   createdBy       BigInt?  @map("created_by")
   createdAt       DateTime @default(now()) @map("created_at")
   updatedAt       DateTime @updatedAt @map("updated_at")
 
-  ownerWorkflow   Workflow?  @relation("PrivateCopyOwner", fields: [ownerWorkflowId], references: [id], onDelete: Cascade)
-  privateCopies   Workflow[] @relation("PrivateCopyOwner")
+  ownerWorkflow Workflow?  @relation("PrivateCopyOwner", fields: [ownerWorkflowId], references: [id], onDelete: Cascade)
+  privateCopies Workflow[] @relation("PrivateCopyOwner")
 
   importsAsParent WorkflowImport[] @relation("ImportsFromParent")
   importsAsChild  WorkflowImport[] @relation("ImportsToChild")

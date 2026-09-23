@@ -11,3 +11,4 @@ export * from './engine/index.js';
 export * from './context-keys.js';
 export * from './errors.js';
 export * from './observer/index.js';
+export * from './reliability/index.js';
