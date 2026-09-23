@@ -53,7 +53,10 @@ export class PrismaExecutionRepository implements ExecutionRepository {
         attemptId,
         OR: [
           { status: { in: [AttemptStatuses.QUEUED, AttemptStatuses.WAITING] } },
-          { leaseExpiresAt: { lt: now } },
+          {
+            status: { in: [AttemptStatuses.LEASED, AttemptStatuses.RUNNING] },
+            leaseExpiresAt: { lt: now },
+          },
         ],
       },
       data: {
@@ -86,12 +89,12 @@ export class PrismaExecutionRepository implements ExecutionRepository {
     reason?: unknown,
   ): Promise<boolean> {
     const now = new Date();
-    const terminal = [
-      AttemptStatuses.SUCCEEDED,
-      AttemptStatuses.FAILED,
-      AttemptStatuses.CANCELLED,
-      AttemptStatuses.TIMED_OUT,
-    ].includes(to as never);
+    const terminal =
+      to === AttemptStatuses.SKIPPED ||
+      to === AttemptStatuses.SUCCEEDED ||
+      to === AttemptStatuses.FAILED ||
+      to === AttemptStatuses.CANCELLED ||
+      to === AttemptStatuses.TIMED_OUT;
     const result = await this.prisma.executionAttempt.updateMany({
       where: { attemptId, status: from },
       data: {
@@ -102,6 +105,10 @@ export class PrismaExecutionRepository implements ExecutionRepository {
       },
     });
     return result.count === 1;
+  }
+
+  async setJobStatus(jobId: string, status: AttemptStatus): Promise<void> {
+    await this.prisma.executionJob.update({ where: { jobId }, data: { status } });
   }
 
   async saveCheckpoint(checkpoint: ExecutionCheckpoint): Promise<void> {

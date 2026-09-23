@@ -38,6 +38,7 @@ export interface ExecutionRepository {
     to: AttemptStatus,
     reason?: unknown,
   ): Promise<boolean>;
+  setJobStatus(jobId: string, status: AttemptStatus): Promise<void>;
   saveCheckpoint(checkpoint: ExecutionCheckpoint): Promise<void>;
   listRecoverable(now: Date): Promise<RecoverableAttempt[]>;
 }

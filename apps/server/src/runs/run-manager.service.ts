@@ -9,7 +9,9 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import {
+  AttemptStatuses,
   parseState,
+  SkipReasons,
   StepStatuses,
   WorkflowRunIdValidationError,
   WorkflowValidationError,
@@ -35,6 +37,11 @@ import {
   RUN_REPOSITORY,
 } from './runs.repository.js';
 import type { RunStatusSnapshot } from '@monai-devops/core-engine';
+import {
+  EXECUTION_REPOSITORY,
+  type ExecutionRepository,
+} from '../execution/execution.repository.js';
+import { ExecutionLeaseService } from '../execution/execution-lease.service.js';
 
 export interface SubmitRunOptions {
   priority?: number;
@@ -105,6 +112,8 @@ export class RunManagerService implements OnModuleInit {
     @Inject(RUN_REPOSITORY) private readonly runRepository: RunRepository,
     private readonly runStream: RunStreamService,
     private readonly config: ConfigService,
+    @Inject(EXECUTION_REPOSITORY) private readonly executionRepository: ExecutionRepository,
+    private readonly executionLeases: ExecutionLeaseService,
   ) {}
 
   onModuleInit(): void {
@@ -499,6 +508,8 @@ export class RunManagerService implements OnModuleInit {
       return;
     }
 
+    await this.projectExecutionState(event, persistRunId);
+
     if (event.type === 'workflow:start') {
       await this.runRepository.update(persistRunId, {
         status: 'running',
@@ -546,6 +557,67 @@ export class RunManagerService implements OnModuleInit {
       this.runStream.fanOut(persistRunId, { type: 'done', result: serializedResult });
     } else {
       this.runStream.fanOut(persistRunId, { type: 'event', event: persistedEvent });
+    }
+  }
+
+  private async projectExecutionState(
+    event: WorkflowLifecycleEvent,
+    persistRunId: string,
+  ): Promise<void> {
+    if (
+      event.type !== 'step:queued' &&
+      event.type !== 'step:start' &&
+      event.type !== 'step:finished'
+    ) {
+      return;
+    }
+    const execution =
+      event.execution ?? (event.type === 'step:finished' ? event.result.execution : undefined);
+    if (!execution) return;
+
+    await this.executionRepository.ensureJob({
+      execution,
+      runId: persistRunId,
+      stepId: event.step.id,
+      idempotencyKey: execution.jobId,
+      retryPolicy: { maxAttempts: 1, backoffMs: 0 },
+    });
+    await this.executionRepository.ensureAttempt(execution);
+
+    if (event.type === 'step:queued') {
+      await this.executionRepository.setJobStatus(execution.jobId, AttemptStatuses.QUEUED);
+      return;
+    }
+
+    if (event.type === 'step:start') {
+      await this.executionLeases.start(execution);
+      await this.executionRepository.setJobStatus(execution.jobId, AttemptStatuses.RUNNING);
+      return;
+    }
+
+    const terminalStatus =
+      event.result.status === StepStatuses.COMPLETED
+        ? AttemptStatuses.SUCCEEDED
+        : event.result.status === StepStatuses.FAILED
+          ? AttemptStatuses.FAILED
+          : event.result.skipReason === SkipReasons.USER_CANCELLED ||
+              event.result.skipReason === SkipReasons.PAUSE_INTERRUPTED
+            ? AttemptStatuses.CANCELLED
+            : AttemptStatuses.SKIPPED;
+    this.executionLeases.stop(execution.attemptId);
+
+    let transitioned = false;
+    for (const from of [AttemptStatuses.RUNNING, AttemptStatuses.LEASED, AttemptStatuses.QUEUED]) {
+      transitioned = await this.executionRepository.transitionAttempt(
+        execution.attemptId,
+        from,
+        terminalStatus,
+        event.result.reason ?? event.result.skipReason ?? event.result.failureKind,
+      );
+      if (transitioned) break;
+    }
+    if (transitioned) {
+      await this.executionRepository.setJobStatus(execution.jobId, terminalStatus);
     }
   }
 

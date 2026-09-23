@@ -13,6 +13,8 @@ import type { EngineService } from '../engine/engine.service.js';
 import { RunManagerService } from './run-manager.service.js';
 import type { RunStreamService } from './run-stream.service.js';
 import type { RunRecord, RunRepository } from './runs.repository.js';
+import type { ExecutionRepository } from '../execution/execution.repository.js';
+import type { ExecutionLeaseService } from '../execution/execution-lease.service.js';
 
 describe('RunManagerService nested event routing', () => {
   const rootRunId = 'root-run-1';
@@ -113,12 +115,25 @@ describe('RunManagerService nested event routing', () => {
     const config = {
       get: jest.fn((_key: string, fallback?: unknown) => fallback),
     };
+    const executionRepository = {
+      ensureJob: jest.fn(),
+      ensureAttempt: jest.fn(),
+      acquireLease: jest.fn(),
+      heartbeat: jest.fn(),
+      transitionAttempt: jest.fn(),
+      setJobStatus: jest.fn(),
+      saveCheckpoint: jest.fn(),
+      listRecoverable: jest.fn(),
+    };
+    const executionLeases = { start: jest.fn(), stop: jest.fn(), has: jest.fn() };
 
     service = new RunManagerService(
       engineService as unknown as EngineService,
       runRepository as unknown as RunRepository,
       runStream as unknown as RunStreamService,
       config as unknown as ConfigService,
+      executionRepository as unknown as ExecutionRepository,
+      executionLeases as unknown as ExecutionLeaseService,
     );
     service.onModuleInit();
 

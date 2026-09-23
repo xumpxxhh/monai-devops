@@ -15,10 +15,12 @@ describe('reliable execution contract', () => {
     assert.equal(canTransitionAttempt(AttemptStatuses.RUNNING, AttemptStatuses.WAITING), true);
     assert.equal(canTransitionAttempt(AttemptStatuses.WAITING, AttemptStatuses.LEASED), true);
     assert.equal(canTransitionAttempt(AttemptStatuses.RUNNING, AttemptStatuses.SUCCEEDED), true);
+    assert.equal(canTransitionAttempt(AttemptStatuses.QUEUED, AttemptStatuses.SKIPPED), true);
   });
 
   it('rejects transitions out of terminal states', () => {
     assert.equal(isAttemptTerminal(AttemptStatuses.FAILED), true);
+    assert.equal(isAttemptTerminal(AttemptStatuses.SKIPPED), true);
     assert.throws(
       () => assertAttemptTransition(AttemptStatuses.FAILED, AttemptStatuses.QUEUED),
       /Invalid attempt transition/,

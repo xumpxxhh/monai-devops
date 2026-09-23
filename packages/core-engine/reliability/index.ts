@@ -5,6 +5,7 @@ export const AttemptStatuses = {
   LEASED: 'leased',
   RUNNING: 'running',
   WAITING: 'waiting',
+  SKIPPED: 'skipped',
   SUCCEEDED: 'succeeded',
   FAILED: 'failed',
   CANCELLED: 'cancelled',
@@ -14,10 +15,11 @@ export const AttemptStatuses = {
 export type AttemptStatus = (typeof AttemptStatuses)[keyof typeof AttemptStatuses];
 
 const TRANSITIONS: Record<AttemptStatus, ReadonlySet<AttemptStatus>> = {
-  queued: new Set(['leased', 'cancelled']),
-  leased: new Set(['running', 'queued', 'cancelled', 'timed_out']),
-  running: new Set(['waiting', 'succeeded', 'failed', 'cancelled', 'timed_out']),
+  queued: new Set(['leased', 'skipped', 'cancelled']),
+  leased: new Set(['running', 'queued', 'skipped', 'cancelled', 'timed_out']),
+  running: new Set(['waiting', 'skipped', 'succeeded', 'failed', 'cancelled', 'timed_out']),
   waiting: new Set(['leased', 'cancelled', 'timed_out']),
+  skipped: new Set(),
   succeeded: new Set(),
   failed: new Set(),
   cancelled: new Set(),

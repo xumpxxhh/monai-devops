@@ -7,6 +7,8 @@ import { RunsController } from './runs.controller.js';
 import { RunsGateway } from './runs.gateway.js';
 import { EXECUTION_REPOSITORY } from '../execution/execution.repository.js';
 import { PrismaExecutionRepository } from '../execution/prisma-execution.repository.js';
+import { ExecutionLeaseService } from '../execution/execution-lease.service.js';
+import { ExecutionRecoveryService } from '../execution/execution-recovery.service.js';
 
 @Global()
 @Module({
@@ -16,6 +18,8 @@ import { PrismaExecutionRepository } from '../execution/prisma-execution.reposit
     PrismaExecutionRepository,
     { provide: RUN_REPOSITORY, useExisting: PrismaRunRepository },
     { provide: EXECUTION_REPOSITORY, useExisting: PrismaExecutionRepository },
+    ExecutionLeaseService,
+    ExecutionRecoveryService,
     RunManagerService,
     RunStreamService,
     RunsGateway,

@@ -1,0 +1,96 @@
+import { jest } from '@jest/globals';
+import { ConfigService } from '@nestjs/config';
+import {
+  AttemptStatuses,
+  SkipReasons,
+  StepStatuses,
+  type WorkflowLifecycleEvent,
+} from '@monai-devops/core-engine';
+import type { EngineService } from '../engine/engine.service.js';
+import type { ExecutionLeaseService } from '../execution/execution-lease.service.js';
+import type { ExecutionRepository } from '../execution/execution.repository.js';
+import { RunManagerService } from './run-manager.service.js';
+import type { RunStreamService } from './run-stream.service.js';
+import type { RunRepository } from './runs.repository.js';
+
+describe('RunManagerService execution projection', () => {
+  const execution = { jobId: 'run-1/step-1', attemptId: 'run-1/step-1/attempt-0', attempt: 0 };
+  const step = { id: 'step-1', name: 'Step 1', plugin: 'print', config: {} };
+
+  function createSubject() {
+    const repository = {
+      ensureJob: jest.fn(async () => undefined),
+      ensureAttempt: jest.fn(async () => undefined),
+      transitionAttempt: jest.fn(async (_attemptId: string, _from: string) => true),
+      setJobStatus: jest.fn(async () => undefined),
+    };
+    const leases = { start: jest.fn(async () => undefined), stop: jest.fn() };
+    const service = new RunManagerService(
+      {} as EngineService,
+      {} as RunRepository,
+      {} as RunStreamService,
+      { get: jest.fn() } as unknown as ConfigService,
+      repository as unknown as ExecutionRepository,
+      leases as unknown as ExecutionLeaseService,
+    );
+    const project = (
+      service as unknown as {
+        projectExecutionState(event: WorkflowLifecycleEvent, runId: string): Promise<void>;
+      }
+    ).projectExecutionState.bind(service);
+    return { project, repository, leases };
+  }
+
+  it('leases a started attempt and persists the running job state', async () => {
+    const { project, repository, leases } = createSubject();
+    await project(
+      {
+        type: 'step:start',
+        workflowRunId: 'run-1',
+        meta: { workflowId: 'workflow-1' },
+        step,
+        execution,
+      },
+      'run-1',
+    );
+
+    expect(repository.ensureJob).toHaveBeenCalledWith(
+      expect.objectContaining({ runId: 'run-1', idempotencyKey: execution.jobId }),
+    );
+    expect(leases.start).toHaveBeenCalledWith(execution);
+    expect(repository.setJobStatus).toHaveBeenCalledWith(execution.jobId, AttemptStatuses.RUNNING);
+  });
+
+  it('persists a never-started condition skip as a terminal skipped attempt', async () => {
+    const { project, repository, leases } = createSubject();
+    repository.transitionAttempt.mockImplementation(
+      async (_attemptId: string, from: string) => from === AttemptStatuses.QUEUED,
+    );
+    await project(
+      {
+        type: 'step:finished',
+        workflowRunId: 'run-1',
+        meta: { workflowId: 'workflow-1' },
+        step,
+        execution,
+        result: {
+          stepId: step.id,
+          execution,
+          status: StepStatuses.SKIPPED,
+          success: false,
+          skipReason: SkipReasons.CONDITION_NOT_MET,
+        },
+      },
+      'run-1',
+    );
+
+    expect(leases.stop).toHaveBeenCalledWith(execution.attemptId);
+    expect(repository.transitionAttempt).toHaveBeenLastCalledWith(
+      execution.attemptId,
+      AttemptStatuses.QUEUED,
+      AttemptStatuses.SKIPPED,
+      SkipReasons.CONDITION_NOT_MET,
+    );
+    expect(repository.setJobStatus).toHaveBeenCalledWith(execution.jobId, AttemptStatuses.SKIPPED);
+  });
+});
