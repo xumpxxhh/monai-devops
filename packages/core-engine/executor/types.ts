@@ -4,7 +4,13 @@
  */
 
 import type { PluginConfig, PluginContext, PluginResult, ZodType } from '@monai-devops/plugin-sdk';
-import type { SkipReason, StepFailureKind, StepStatus } from '../errors.js';
+import type {
+  ExecutionReason,
+  RunTerminalReasonCode,
+  SkipReason,
+  StepFailureKind,
+  StepStatus,
+} from '../errors.js';
 import type { WorkflowObserver, WorkflowRunMeta } from '../observer/index.js';
 import type { ExecutionIdentity } from './execution-identity.js';
 
@@ -142,6 +148,8 @@ export interface ExecutionResult {
   error?: Error;
   failureKind?: StepFailureKind;
   skipReason?: SkipReason;
+  /** 标准化原因；与旧 failureKind/skipReason 并存以保持兼容。 */
+  reason?: ExecutionReason;
 }
 
 export type WorkflowRunStatus = 'success' | 'failed' | 'cancelled';
@@ -193,6 +201,7 @@ export interface WorkflowRunResult {
   status: WorkflowRunStatus;
   workflowId: string;
   results: ExecutionResult[];
+  terminalReason?: RunTerminalReasonCode;
   /** 仅当 workflow.stateSchema 已声明时出现 */
   state?: unknown;
 }

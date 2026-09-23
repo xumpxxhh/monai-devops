@@ -5,8 +5,10 @@
 
 import { PluginFailureCodes, type PluginResult } from '@monai-devops/plugin-sdk';
 import {
+  ExecutionReasonCategories,
   StepFailureKinds,
   StepStatuses,
+  SkipReasons,
   type SkipReason,
   type StepFailureKind,
 } from '../errors.js';
@@ -28,6 +30,7 @@ export function buildSkippedResult(stepId: string, skipReason: SkipReason): Exec
     status: StepStatuses.SKIPPED,
     success: true,
     skipReason,
+    reason: skipReasonToExecutionReason(skipReason),
     result: { skipped: true, reason: skipReason },
   };
 }
@@ -46,6 +49,44 @@ export function buildFailedResult(stepId: string, input: FailedResultInput): Exe
     pluginResult: input.pluginResult,
     error: input.error,
     failureKind: input.failureKind,
+    reason: failureToExecutionReason(input.failureKind, input.error, input.pluginResult),
+  };
+}
+
+function skipReasonToExecutionReason(skipReason: SkipReason) {
+  const category =
+    skipReason === SkipReasons.CONDITION_NOT_MET
+      ? ExecutionReasonCategories.CONDITION
+      : skipReason === SkipReasons.DEPENDENCY_FAILED
+        ? ExecutionReasonCategories.DEPENDENCY
+        : skipReason === SkipReasons.USER_CANCELLED
+          ? ExecutionReasonCategories.CANCELLED
+          : skipReason === SkipReasons.PAUSE_INTERRUPTED
+            ? ExecutionReasonCategories.INTERRUPTED
+            : ExecutionReasonCategories.POLICY;
+  return { code: skipReason, category, retryable: false };
+}
+
+function failureToExecutionReason(
+  failureKind: StepFailureKind,
+  error: Error,
+  pluginResult?: PluginResult,
+) {
+  const category =
+    failureKind === StepFailureKinds.RESOURCE
+      ? ExecutionReasonCategories.INFRASTRUCTURE
+      : failureKind === StepFailureKinds.CONFIG_RESOLUTION
+        ? ExecutionReasonCategories.CONFIGURATION
+        : failureKind === StepFailureKinds.SUBWORKFLOW_FAILED
+          ? ExecutionReasonCategories.DEPENDENCY
+          : failureKind === StepFailureKinds.INTERNAL
+            ? ExecutionReasonCategories.INTERNAL
+            : ExecutionReasonCategories.BUSINESS;
+  return {
+    code: pluginResult?.code ?? failureKind,
+    category,
+    retryable: false,
+    message: pluginResult?.message ?? error.message,
   };
 }
 

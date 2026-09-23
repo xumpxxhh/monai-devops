@@ -508,6 +508,16 @@ function buildWorkflowRunResult(
     status,
     workflowId,
     results: finalResults,
+    ...(status === 'failed'
+      ? { terminalReason: 'step_failed' as const }
+      : status === 'cancelled'
+        ? {
+            terminalReason:
+              abortReason === 'destroy'
+                ? ('engine_destroyed' as const)
+                : ('user_cancelled' as const),
+          }
+        : {}),
     ...(state !== undefined ? { state } : {}),
   };
 }
@@ -1622,6 +1632,7 @@ export function createWorkflowExecutor(options: ExecutorOptions = {}) {
             meta,
             inFlightSteps: result.inFlightSteps ?? [],
             mode: result.mode ?? 'best-effort',
+            reason: 'user_cancelled',
           }),
         );
       }

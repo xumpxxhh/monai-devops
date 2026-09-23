@@ -32,6 +32,31 @@ export const SkipReasons = {
 
 export type SkipReason = (typeof SkipReasons)[keyof typeof SkipReasons];
 
+export const ExecutionReasonCategories = {
+  BUSINESS: 'business',
+  INFRASTRUCTURE: 'infrastructure',
+  CONFIGURATION: 'configuration',
+  INTERNAL: 'internal',
+  DEPENDENCY: 'dependency',
+  CONDITION: 'condition',
+  POLICY: 'policy',
+  CANCELLED: 'cancelled',
+  INTERRUPTED: 'interrupted',
+} as const;
+
+export type ExecutionReasonCategory =
+  (typeof ExecutionReasonCategories)[keyof typeof ExecutionReasonCategories];
+
+/** 跨 core/server/event 使用的稳定原因结构；旧 failureKind/skipReason 继续保留。 */
+export interface ExecutionReason {
+  code: string;
+  category: ExecutionReasonCategory;
+  retryable: boolean;
+  message?: string;
+}
+
+export type RunTerminalReasonCode = 'step_failed' | 'user_cancelled' | 'engine_destroyed';
+
 /**
  * 工作流校验错误（启动前 DAG 校验失败时抛出）
  */

@@ -96,17 +96,28 @@ describe('executor run control', () => {
     const run = await runPromise;
     assert.equal(run.status, 'cancelled');
     assert.equal(run.success, false);
+    assert.equal(run.terminalReason, 'user_cancelled');
 
     const b = run.results.find((r) => r.stepId === 'b');
     const c = run.results.find((r) => r.stepId === 'c');
     assert.equal(b?.skipReason, SkipReasons.USER_CANCELLED);
     assert.equal(c?.skipReason, SkipReasons.USER_CANCELLED);
+    assert.equal(b?.reason?.category, 'cancelled');
 
     const types = events.map((e) => e.type);
     const cancelledIdx = types.indexOf(WorkflowEventTypes.WORKFLOW_CANCELLED);
     const finishedIdx = types.indexOf(WorkflowEventTypes.WORKFLOW_FINISHED);
     assert.ok(cancelledIdx >= 0);
     assert.ok(finishedIdx > cancelledIdx);
+    const cancelledEvent = events.find(
+      (event) => event.type === WorkflowEventTypes.WORKFLOW_CANCELLED,
+    );
+    assert.equal(
+      cancelledEvent?.type === WorkflowEventTypes.WORKFLOW_CANCELLED
+        ? cancelledEvent.reason
+        : undefined,
+      'user_cancelled',
+    );
   });
 
   it('cancelRun is idempotent', async () => {

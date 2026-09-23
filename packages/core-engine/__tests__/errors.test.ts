@@ -4,7 +4,7 @@ import { createEngine } from '../engine/index.js';
 import { createPluginManager } from '../plugin/index.js';
 import { createWorkflowExecutor } from '../executor/index.js';
 import { createPlugin, PluginFailureCodes, z } from '@monai-devops/plugin-sdk';
-import { StepFailureKinds, StepStatuses } from '../errors.js';
+import { ExecutionReasonCategories, StepFailureKinds, StepStatuses } from '../errors.js';
 
 const TEST_RUN_ID = 'test-run-id';
 
@@ -39,6 +39,13 @@ describe('unified error model', () => {
     assert.equal(step?.status, StepStatuses.FAILED);
     assert.equal(step?.failureKind, StepFailureKinds.PLUGIN);
     assert.equal(step?.pluginResult?.message, 'business failure');
+    assert.deepEqual(step?.reason, {
+      code: StepFailureKinds.PLUGIN,
+      category: ExecutionReasonCategories.BUSINESS,
+      retryable: false,
+      message: 'business failure',
+    });
+    assert.equal(run.terminalReason, 'step_failed');
     engine.destroy();
   });
 
@@ -62,6 +69,7 @@ describe('unified error model', () => {
     assert.equal(step?.status, StepStatuses.FAILED);
     assert.equal(step?.failureKind, StepFailureKinds.PLUGIN);
     assert.equal(step?.pluginResult?.code, PluginFailureCodes.PLUGIN_CONFIG_INVALID);
+    assert.equal(step?.reason?.code, PluginFailureCodes.PLUGIN_CONFIG_INVALID);
     engine.destroy();
   });
 
@@ -83,6 +91,7 @@ describe('unified error model', () => {
     assert.equal(step?.status, StepStatuses.FAILED);
     assert.equal(step?.failureKind, StepFailureKinds.INTERNAL);
     assert.equal(step?.error?.message, 'unexpected throw');
+    assert.equal(step?.reason?.category, ExecutionReasonCategories.INTERNAL);
   });
 
   it('completed step has status completed', async () => {

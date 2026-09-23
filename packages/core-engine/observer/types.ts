@@ -77,6 +77,7 @@ export type WorkflowLifecycleEvent =
       meta: WorkflowRunMeta;
       inFlightSteps: string[];
       mode: RunControlMode;
+      reason?: 'user_cancelled' | 'engine_destroyed';
     }>
   | WithOptionalParent<{
       type: typeof WorkflowEventTypes.WORKFLOW_PAUSED;
