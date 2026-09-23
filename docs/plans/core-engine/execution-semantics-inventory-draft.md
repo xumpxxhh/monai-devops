@@ -1,12 +1,12 @@
-# 共用执行内核语义盘点与兼容边界（Core-0，待评审）
+# 共用执行内核语义盘点与兼容边界（Core-0，已完成）
 
-> **文档状态：待评审（Draft）**
+> **文档状态：已完成（Completed）**
 >
-> 本文是 [共用内核增强前置提案](./shared-core-engine-prerequisites-draft.md) 的第一阶段产物。内容基于当前 `core-engine` 与 `apps/server` 源码盘点，先固化事实、边界和待决策项；本文本身不改变运行时行为，也不代表目标状态已经确定。
+> 本文是 [共用内核增强前置提案](./shared-core-engine-prerequisites-draft.md) 的第一阶段产物，记录进入 Core-1 前的实现快照。后续已经落地的目标状态以 Core-1/Core-2 阶段文档为准。
 
 - 归档日期：2026-09-18
 - 当前阶段：Core-0 语义盘点与兼容边界
-- 当前状态：待评审
+- 当前状态：已评审并完成
 - 下游阶段：Core-1 执行对象与事件模型
 
 ---
@@ -43,17 +43,17 @@ apps/server Run
 
 ### 1.1 当前主要类型来源
 
-| 语义 | 当前类型/位置 | 当前状态 |
-| ---- | ------------- | -------- |
-| 工作流定义 | `WorkflowDefinition` | core-engine |
-| 步骤类型 | `WorkflowStep` / `StepKinds` | core-engine |
-| 步骤终态 | `StepStatus` | `completed` / `skipped` / `failed` |
-| 步骤失败分类 | `StepFailureKind` | plugin/resource/internal/config_resolution/subworkflow_failed |
-| 工作流执行结果 | `WorkflowRunResult` | success/failed/cancelled |
-| Run 控制状态 | `RunControlStatus` | running/pausing/paused/cancelling/cancelled/finished/failed/unknown |
-| 服务端 Run 状态 | `RunStatus` | queued/running/paused/pausing/finished/failed/rejected/cancelled |
-| 生命周期事件 | `WorkflowLifecycleEvent` | workflow、step、plugin log、iteration |
-| 持久化事件 | Prisma `RunEvent` | `eventIndex + payload` |
+| 语义            | 当前类型/位置                | 当前状态                                                            |
+| --------------- | ---------------------------- | ------------------------------------------------------------------- |
+| 工作流定义      | `WorkflowDefinition`         | core-engine                                                         |
+| 步骤类型        | `WorkflowStep` / `StepKinds` | core-engine                                                         |
+| 步骤终态        | `StepStatus`                 | `completed` / `skipped` / `failed`                                  |
+| 步骤失败分类    | `StepFailureKind`            | plugin/resource/internal/config_resolution/subworkflow_failed       |
+| 工作流执行结果  | `WorkflowRunResult`          | success/failed/cancelled                                            |
+| Run 控制状态    | `RunControlStatus`           | running/pausing/paused/cancelling/cancelled/finished/failed/unknown |
+| 服务端 Run 状态 | `RunStatus`                  | queued/running/paused/pausing/finished/failed/rejected/cancelled    |
+| 生命周期事件    | `WorkflowLifecycleEvent`     | workflow、step、plugin log、iteration                               |
+| 持久化事件      | Prisma `RunEvent`            | `eventIndex + payload`                                              |
 
 ---
 
@@ -63,11 +63,11 @@ apps/server Run
 
 当前步骤只有三个终态：
 
-| 状态 | 含义 | 是否执行过插件/内置逻辑 |
-| ---- | ---- | ------------------------- |
-| `completed` | 步骤执行完成；业务结果可成功或失败需结合 `success` | 是 |
-| `failed` | 发生未被转换为业务结果的步骤执行错误 | 通常是 |
-| `skipped` | 条件、依赖、取消、暂停或 fail-fast 导致未执行 | 否或未完成 |
+| 状态        | 含义                                               | 是否执行过插件/内置逻辑 |
+| ----------- | -------------------------------------------------- | ----------------------- |
+| `completed` | 步骤执行完成；业务结果可成功或失败需结合 `success` | 是                      |
+| `failed`    | 发生未被转换为业务结果的步骤执行错误               | 通常是                  |
+| `skipped`   | 条件、依赖、取消、暂停或 fail-fast 导致未执行      | 否或未完成              |
 
 注意：`completed` 与 `success` 不是同一维度。当前 `ExecutionResult` 可以表现为 `status: completed, success: false`，因此后续不能只用步骤状态判断业务成功。
 
@@ -120,13 +120,13 @@ running → finished / failed
 
 当前步骤失败分类如下：
 
-| 分类 | 当前含义 | 后续共用内核关注点 |
-| ---- | -------- | ------------------ |
-| `plugin` | 插件未找到、插件执行异常或插件失败结果 | 业务失败与基础设施异常需进一步拆分 |
-| `resource` | 资源申请或等待失败 | 是否可重试、资源是否已释放 |
-| `internal` | 引擎内部错误 | 通常可重试但必须有幂等边界 |
-| `config_resolution` | `$ref` 或运行时配置解析失败 | 通常不可重试，应在启动前尽量发现 |
-| `subworkflow_failed` | 子工作流失败 | 需要保留父子因果关系和恢复位置 |
+| 分类                 | 当前含义                               | 后续共用内核关注点                 |
+| -------------------- | -------------------------------------- | ---------------------------------- |
+| `plugin`             | 插件未找到、插件执行异常或插件失败结果 | 业务失败与基础设施异常需进一步拆分 |
+| `resource`           | 资源申请或等待失败                     | 是否可重试、资源是否已释放         |
+| `internal`           | 引擎内部错误                           | 通常可重试但必须有幂等边界         |
+| `config_resolution`  | `$ref` 或运行时配置解析失败            | 通常不可重试，应在启动前尽量发现   |
+| `subworkflow_failed` | 子工作流失败                           | 需要保留父子因果关系和恢复位置     |
 
 当前 `PluginResult.success: false` 是业务失败的主要表达方式；并非所有业务失败都会通过 `throw` 传播。
 
@@ -164,19 +164,19 @@ running → finished / failed
 
 当前事件类型：
 
-| 事件 | 当前用途 |
-| ---- | -------- |
-| `workflow:start` | 工作流执行开始 |
-| `workflow:finished` | 工作流产生最终结果 |
-| `workflow:cancelled` | 工作流取消完成/通知 |
-| `workflow:paused` | 工作流进入暂停状态 |
-| `workflow:resumed` | 工作流恢复 |
-| `workflow:iteration:start` | 嵌套工作流一轮开始 |
-| `workflow:iteration:finished` | 嵌套工作流一轮结束 |
-| `step:queued` | 步骤进入资源调度流程，不保证已经物理等待 |
-| `step:start` | 步骤开始执行 |
-| `step:finished` | 步骤产生终态结果 |
-| `plugin:log` | 插件日志或流式输出 |
+| 事件                          | 当前用途                                 |
+| ----------------------------- | ---------------------------------------- |
+| `workflow:start`              | 工作流执行开始                           |
+| `workflow:finished`           | 工作流产生最终结果                       |
+| `workflow:cancelled`          | 工作流取消完成/通知                      |
+| `workflow:paused`             | 工作流进入暂停状态                       |
+| `workflow:resumed`            | 工作流恢复                               |
+| `workflow:iteration:start`    | 嵌套工作流一轮开始                       |
+| `workflow:iteration:finished` | 嵌套工作流一轮结束                       |
+| `step:queued`                 | 步骤进入资源调度流程，不保证已经物理等待 |
+| `step:start`                  | 步骤开始执行                             |
+| `step:finished`               | 步骤产生终态结果                         |
+| `plugin:log`                  | 插件日志或流式输出                       |
 
 当前事件具备：
 
@@ -225,20 +225,20 @@ running → finished / failed
 - 事件模型已经能支撑实时展示，但不足以单独支撑可靠恢复和跨 Executor 执行；
 - 兼容策略应以加法式扩展为主，避免一次性替换旧 API。
 
-### Core-1 待解决问题
+### Core-1/Core-2 已形成的结论
 
-1. 是否引入统一的 `ExecutionStatus` 和状态转换表；
-2. `Run`、`Job`、`Attempt`、`Execution` 是否需要正式拆分；
-3. 哪些状态必须落库，哪些状态由事件重建；
-4. 事件 sequence、offset、版本和回放接口如何定义；
-5. 重试、checkpoint、lease 和幂等键如何进入执行契约；
-6. 本地 Executor 与远程 Executor 是否使用同一协议。
+1. 控制状态、步骤结果和 Attempt 状态保持分层，不压缩为单一状态枚举；
+2. Run、Job、Attempt 已成为正式持久化模型，ExecutionIdentity 贯穿结果与事件；
+3. PostgreSQL 是 Run、Job、Attempt、lease、checkpoint 和事件 offset 的权威来源；
+4. 源事件使用 sequence/version，持久化事件使用 eventIndex/offset；
+5. retry policy、checkpoint、lease 和幂等键已经进入可靠执行契约；
+6. 本地 Executor 已接入统一身份和 lease 授权边界，远程协议留待 Core-3。
 
 ---
 
 ## 7. 当前阶段结论
 
-本阶段暂不修改 `packages/core-engine` 和 `apps/server` 的运行时代码。下一步进入 Core-1 前，应先评审本清单中“兼容边界建议”和“待解决问题”，然后再选择一个最小垂直切片实现，优先验证：
+Core-0 的语义盘点、兼容约束和最小切片已经评审完成。Core-1 已按以下切片完成验证，并在保持旧 Workflow JSON 兼容的前提下进入 Core-2：
 
 ```text
 一个 Job/Attempt 标识
@@ -246,4 +246,4 @@ running → finished / failed
     + 一次可验证的失败/重试语义
 ```
 
-如果该切片无法在不破坏现有 Run API 的情况下落地，应先调整设计，不直接扩大重构范围。
+对应结果见 `core-1-execution-identity-draft.md`、`core-1-event-replay.md`、`core-1-outcome-reasons.md` 和 `core-2-reliable-execution-foundation.md`。

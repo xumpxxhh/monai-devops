@@ -13,6 +13,7 @@ import {
   type WorkflowStep,
 } from './types.js';
 import { StateSchemaConversionError, jsonSchemaToZod } from './state-schema.js';
+import { validateRetryPolicy } from '../reliability/index.js';
 
 /**
  * 校验步骤 kind 字段完整性与 stateSchema 约束：
@@ -39,6 +40,14 @@ export function validateStepKinds(workflow: WorkflowDefinition): void {
   const hasStateSchema = workflow.stateSchema !== undefined;
 
   for (const step of workflow.steps) {
+    if (step.retryPolicy !== undefined) {
+      try {
+        validateRetryPolicy(step.retryPolicy);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        throw new WorkflowValidationError(`步骤 "${step.id}" 的 ${message}`);
+      }
+    }
     const kind = getStepKind(step);
 
     if (kind === StepKinds.SET_STATE) {

@@ -85,7 +85,9 @@ function failureToExecutionReason(
   return {
     code: pluginResult?.code ?? failureKind,
     category,
-    retryable: false,
+    retryable:
+      category === ExecutionReasonCategories.INFRASTRUCTURE ||
+      category === ExecutionReasonCategories.INTERNAL,
     message: pluginResult?.message ?? error.message,
   };
 }

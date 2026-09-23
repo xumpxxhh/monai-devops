@@ -14,6 +14,11 @@
 - 顶层步骤在取得资源后、发出 `step:start` 和调用插件前必须先取得数据库 lease；授权失败会阻止插件执行；
 - 服务启动时扫描过期 leased/running Attempt，标记为 timed_out，持久化 waiting 保持待恢复状态；
 - lease 重领条件已收紧，终态 Attempt 不会因残留过期时间被重新领取。
+- WorkflowStep 支持显式 `retryPolicy`；默认 `maxAttempts=1`，保持旧工作流不重试；
+- infrastructure/internal 失败可被策略重试，business/configuration/dependency/cancelled 等失败不自动重试；
+- 每次重试保持 jobId、递增 attempt 并生成新 attemptId，所有 Attempt 事件和数据库历史均保留；
+- backoff 采用指数增长并受 `maxBackoffMs` 上限约束；中间失败不计入 Run 的最终步骤计数；
+- server 规范化与 web 编辑器导入/保存链路会保留 retryPolicy。
 
 ## 权威边界
 
@@ -26,12 +31,12 @@
 
 - 终态仍由有序事件链投影，执行前授权已是同步强制闸门；
 - 嵌套子执行暂不写 Job/Attempt 表，避免在子 Run 不独立落表时破坏外键和 `(runId, stepId)` 唯一性；
-- 过期 Attempt 当前进入 timed_out，不自动创建下一 Attempt；重试策略执行器将在下一闭环实现；
+- 当前进程内的可重试失败已经自动创建下一 Attempt；服务重启后扫描出的 timed_out Attempt 尚未自动恢复；
 - waiting/checkpoint 已有持久化契约，尚未接入实际唤醒协议。
 
 ## 下一闭环
 
-1. 实现 retry policy 执行器，过期/可重试失败生成新 Attempt；
-2. 将 pause/resume/cancel 写入跨进程控制命令并由 Executor 消费；
-3. 接入 waiting/checkpoint 的持久化唤醒；
+1. 将 pause/resume/cancel 写入跨进程控制命令并由 Executor 消费；
+2. 接入 waiting/checkpoint 的持久化唤醒；
+3. 为启动扫描出的 timed_out Attempt 执行恢复策略；
 4. 完成重复投递、失联和重启故障测试。

@@ -11,12 +11,15 @@ import { ConfigService } from '@nestjs/config';
 import {
   AttemptStatuses,
   parseState,
+  resolveRetryPolicy,
   SkipReasons,
+  shouldRetryExecution,
   StepStatuses,
   WorkflowRunIdValidationError,
   WorkflowValidationError,
   type WorkflowDefinition,
   type ExecutionIdentity,
+  type RetryPolicy,
   type WorkflowLifecycleEvent,
   type WorkflowRunResult,
 } from '@monai-devops/core-engine';
@@ -128,12 +131,13 @@ export class RunManagerService implements OnModuleInit {
       onChildRunFinished: (childRunId, result) => this.onChildRunFinished(childRunId, result),
     });
     this.engineService.setBeforeStepExecute((step, context) =>
-      this.authorizeStepExecution(step.id, context.runId, context.execution),
+      this.authorizeStepExecution(step.id, step.retryPolicy, context.runId, context.execution),
     );
   }
 
   private async authorizeStepExecution(
     stepId: string,
+    retryPolicy: RetryPolicy | undefined,
     runId: unknown,
     execution: ExecutionIdentity | undefined,
   ): Promise<void> {
@@ -143,7 +147,7 @@ export class RunManagerService implements OnModuleInit {
       runId,
       stepId,
       idempotencyKey: execution.jobId,
-      retryPolicy: { maxAttempts: 1, backoffMs: 0 },
+      retryPolicy: resolveRetryPolicy(retryPolicy),
     });
     await this.executionRepository.ensureAttempt(execution);
     await this.executionLeases.start(execution);
@@ -539,7 +543,7 @@ export class RunManagerService implements OnModuleInit {
       });
     }
 
-    if (event.type === 'step:finished') {
+    if (event.type === 'step:finished' && !this.willRetry(event)) {
       const record = await this.runRepository.findById(persistRunId);
       if (record) {
         const counts = { ...record.counts };
@@ -602,7 +606,7 @@ export class RunManagerService implements OnModuleInit {
       runId: persistRunId,
       stepId: event.step.id,
       idempotencyKey: execution.jobId,
-      retryPolicy: { maxAttempts: 1, backoffMs: 0 },
+      retryPolicy: resolveRetryPolicy(event.step.retryPolicy),
     });
     await this.executionRepository.ensureAttempt(execution);
 
@@ -639,8 +643,16 @@ export class RunManagerService implements OnModuleInit {
       if (transitioned) break;
     }
     if (transitioned) {
-      await this.executionRepository.setJobStatus(execution.jobId, terminalStatus);
+      await this.executionRepository.setJobStatus(
+        execution.jobId,
+        this.willRetry(event) ? AttemptStatuses.QUEUED : terminalStatus,
+      );
     }
+  }
+
+  private willRetry(event: Extract<WorkflowLifecycleEvent, { type: 'step:finished' }>): boolean {
+    const attempt = event.execution?.attempt ?? event.result.execution?.attempt ?? 0;
+    return shouldRetryExecution(event.result, resolveRetryPolicy(event.step.retryPolicy), attempt);
   }
 
   private initialCounts(workflow: WorkflowDefinition): RunCounts {

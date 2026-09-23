@@ -103,6 +103,7 @@ interface StepNodeData {
     until?: { when: string; equals?: unknown; exists?: boolean };
   };
   priority?: number;
+  retryPolicy?: WorkflowStep['retryPolicy'];
   configInvalid?: boolean;
   [key: string]: unknown;
 }
@@ -202,6 +203,7 @@ function stepToNodeData(step: WorkflowStep): StepNodeData {
     clientRef: step.id,
     stepId: step.id,
     priority: step.priority,
+    retryPolicy: step.retryPolicy,
   };
 
   if (isSetStateStep(step)) {
@@ -285,6 +287,7 @@ function buildDraft(
           clientRef: node.data.clientRef ?? node.id,
           stepId: node.data.stepId,
           priority: node.data.priority,
+          retryPolicy: node.data.retryPolicy,
         },
         deps,
       );

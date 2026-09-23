@@ -1,4 +1,5 @@
 import type { ExecutionIdentity } from '../executor/execution-identity.js';
+import type { ExecutionResult } from '../executor/types.js';
 
 export const AttemptStatuses = {
   QUEUED: 'queued',
@@ -31,6 +32,11 @@ export interface RetryPolicy {
   backoffMs: number;
   maxBackoffMs?: number;
 }
+
+export const DEFAULT_RETRY_POLICY: Readonly<RetryPolicy> = Object.freeze({
+  maxAttempts: 1,
+  backoffMs: 0,
+});
 
 export interface AttemptLease {
   attemptId: string;
@@ -72,10 +78,43 @@ export function validateReliableExecutionContract(contract: ReliableExecutionCon
   if (!contract.idempotencyKey.trim()) {
     throw new Error('idempotencyKey must not be empty');
   }
-  if (!Number.isInteger(contract.retryPolicy.maxAttempts) || contract.retryPolicy.maxAttempts < 1) {
+  validateRetryPolicy(contract.retryPolicy);
+}
+
+export function validateRetryPolicy(policy: RetryPolicy): void {
+  if (!Number.isInteger(policy.maxAttempts) || policy.maxAttempts < 1) {
     throw new Error('retryPolicy.maxAttempts must be a positive integer');
   }
-  if (!Number.isFinite(contract.retryPolicy.backoffMs) || contract.retryPolicy.backoffMs < 0) {
+  if (!Number.isFinite(policy.backoffMs) || policy.backoffMs < 0) {
     throw new Error('retryPolicy.backoffMs must be non-negative');
   }
+  if (
+    policy.maxBackoffMs !== undefined &&
+    (!Number.isFinite(policy.maxBackoffMs) || policy.maxBackoffMs < policy.backoffMs)
+  ) {
+    throw new Error('retryPolicy.maxBackoffMs must be greater than or equal to backoffMs');
+  }
+}
+
+export function resolveRetryPolicy(policy?: RetryPolicy): RetryPolicy {
+  const resolved = policy ?? DEFAULT_RETRY_POLICY;
+  validateRetryPolicy(resolved);
+  return resolved;
+}
+
+export function retryBackoffMs(policy: RetryPolicy, completedAttempt: number): number {
+  const exponential = policy.backoffMs * 2 ** completedAttempt;
+  return Math.min(exponential, policy.maxBackoffMs ?? exponential);
+}
+
+export function shouldRetryExecution(
+  result: ExecutionResult,
+  policy: RetryPolicy,
+  completedAttempt: number,
+): boolean {
+  return (
+    completedAttempt + 1 < policy.maxAttempts &&
+    result.status === 'failed' &&
+    result.reason?.retryable === true
+  );
 }

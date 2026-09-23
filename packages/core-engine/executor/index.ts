@@ -79,6 +79,7 @@ import { deriveChildRunId } from './child-run-id.js';
 import { defaultStateFromSchema, parseState } from './state-schema.js';
 import { validateStepKinds } from './step-kind-validation.js';
 import { createExecutionIdentity } from './execution-identity.js';
+import { resolveRetryPolicy, retryBackoffMs, shouldRetryExecution } from '../reliability/index.js';
 
 export type {
   AbortSchedulingReason,
@@ -1430,28 +1431,66 @@ export function createWorkflowExecutor(options: ExecutorOptions = {}) {
       /** 单步包装：track in-flight、执行、传播依赖、更新进度 */
       const runStep = async (stepId: string) => {
         const step = graph.stepById.get(stepId)!;
-        const execution = createExecutionIdentity(workflowRunId, step.id);
         const signal = handle.trackInFlight(stepId);
         try {
-          const executionContext: ExecutionContext = {
-            ...runContext,
-            workflowId: workflow.id,
-            stepId: step.id,
-            previousResults: toPreviousResults(results),
-            execution,
-            previousResultsData: toPreviousResultsData(results),
-            ...(runState ? { [WorkflowContextKeys.state]: runState.current } : {}),
-          };
+          const retryPolicy = resolveRetryPolicy(step.retryPolicy);
+          let attempt = 0;
+          let result: ExecutionResult;
+          while (true) {
+            const executionContext: ExecutionContext = {
+              ...runContext,
+              workflowId: workflow.id,
+              stepId: step.id,
+              previousResults: toPreviousResults(results),
+              execution: createExecutionIdentity(workflowRunId, step.id, attempt),
+              previousResultsData: toPreviousResultsData(results),
+              ...(runState ? { [WorkflowContextKeys.state]: runState.current } : {}),
+            };
 
-          const result = await executeStepInternal(
-            workflowRunId,
-            step,
-            executionContext,
-            runMeta,
-            signal,
-            handle,
-            stepRuntime,
-          );
+            result = await executeStepInternal(
+              workflowRunId,
+              step,
+              executionContext,
+              runMeta,
+              signal,
+              handle,
+              stepRuntime,
+            );
+            if (!shouldRetryExecution(result, retryPolicy, attempt)) {
+              break;
+            }
+            const finishInterruptedRetry = async (): Promise<ExecutionResult> => {
+              const interruptedContext: ExecutionContext = {
+                ...executionContext,
+                execution: createExecutionIdentity(workflowRunId, step.id, attempt + 1),
+              };
+              const interrupted = buildSkippedResult(
+                step.id,
+                resolveInFlightAbortSkipReason(handle),
+              );
+              await notifyStepComplete(
+                workflowRunId,
+                step,
+                interrupted,
+                interruptedContext,
+                runMeta,
+              );
+              return interrupted;
+            };
+            if (handle.shouldStopScheduling() || signal?.aborted) {
+              result = await finishInterruptedRetry();
+              break;
+            }
+            const delayMs = retryBackoffMs(retryPolicy, attempt);
+            if (delayMs > 0) {
+              await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
+            }
+            if (handle.shouldStopScheduling() || signal?.aborted) {
+              result = await finishInterruptedRetry();
+              break;
+            }
+            attempt += 1;
+          }
           results.set(stepId, result);
 
           if (result.status === StepStatuses.FAILED) {

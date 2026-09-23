@@ -74,6 +74,7 @@ function cloneStepToDraft(
     name: step.name,
     dependsOn: step.dependsOn?.map((dep) => refByStepId.get(dep) ?? dep),
     priority: step.priority,
+    retryPolicy: step.retryPolicy,
     condition: step.condition,
   };
 

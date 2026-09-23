@@ -48,13 +48,14 @@ describe('RunManagerService execution projection', () => {
       service as unknown as {
         authorizeStepExecution(
           stepId: string,
+          retryPolicy: undefined,
           runId: unknown,
           identity: typeof execution,
         ): Promise<void>;
       }
     ).authorizeStepExecution.bind(service);
 
-    await authorize(step.id, 'run-1', execution);
+    await authorize(step.id, undefined, 'run-1', execution);
 
     expect(repository.ensureAttempt).toHaveBeenCalledWith(execution);
     expect(leases.start).toHaveBeenCalledWith(execution);
@@ -112,5 +113,32 @@ describe('RunManagerService execution projection', () => {
       SkipReasons.CONDITION_NOT_MET,
     );
     expect(repository.setJobStatus).toHaveBeenCalledWith(execution.jobId, AttemptStatuses.SKIPPED);
+  });
+
+  it('keeps the job queued after a retryable non-final attempt fails', async () => {
+    const { project, repository } = createSubject();
+    const retryingStep = { ...step, retryPolicy: { maxAttempts: 2, backoffMs: 0 } };
+    await project(
+      {
+        type: 'step:finished',
+        workflowRunId: 'run-1',
+        meta: { workflowId: 'workflow-1' },
+        step: retryingStep,
+        execution,
+        result: {
+          stepId: step.id,
+          execution,
+          status: StepStatuses.FAILED,
+          success: false,
+          reason: { code: 'internal', category: 'internal', retryable: true },
+        },
+      },
+      'run-1',
+    );
+
+    expect(repository.setJobStatus).toHaveBeenLastCalledWith(
+      execution.jobId,
+      AttemptStatuses.QUEUED,
+    );
   });
 });

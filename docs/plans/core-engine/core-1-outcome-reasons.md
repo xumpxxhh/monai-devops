@@ -15,7 +15,7 @@ interface ExecutionReason {
 }
 ```
 
-`retryable` 在 Core-1 固定为 `false`；Core-2 必须结合 retry policy、幂等声明和 Attempt 状态后才能启用重试。
+`retryable` 在 Core-1 固定为 `false`。Core-2 已将 infrastructure/internal 原因标记为可重试，但只有步骤显式配置 `retryPolicy.maxAttempts > 1` 时才会创建新 Attempt。
 
 ## 2. 原因分类
 

@@ -13,6 +13,7 @@ import type {
 } from '../errors.js';
 import type { WorkflowObserver, WorkflowRunMeta } from '../observer/index.js';
 import type { ExecutionIdentity } from './execution-identity.js';
+import type { RetryPolicy } from '../reliability/index.js';
 
 /**
  * JSON Schema 对象（前端表单构建器 / 手填产出，持久化与传输形态）。
@@ -63,6 +64,8 @@ interface BaseStep {
   dependsOn?: string[];
   /** 资源调度优先级，数值越小越优先；默认继承 run 级 priority */
   priority?: number;
+  /** 默认只执行一次；仅 retryable 失败会按此策略创建新 Attempt。 */
+  retryPolicy?: RetryPolicy;
 }
 
 /** 未带 kind 字段的历史数据按 PLUGIN 处理 */

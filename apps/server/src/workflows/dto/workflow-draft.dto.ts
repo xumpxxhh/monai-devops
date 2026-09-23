@@ -3,6 +3,7 @@ import {
   ArrayMinSize,
   IsArray,
   IsIn,
+  IsInt,
   IsNumber,
   IsObject,
   IsOptional,
@@ -11,6 +12,7 @@ import {
   MinLength,
   ValidateNested,
 } from 'class-validator';
+import type { RetryPolicy } from '@monai-devops/core-engine';
 import type {
   WorkflowDraft,
   WorkflowDraftStep,
@@ -43,6 +45,21 @@ export class WorkflowLoopDto {
   @ValidateNested()
   @Type(() => WorkflowLoopUntilDto)
   until?: WorkflowLoopUntilDto;
+}
+
+export class RetryPolicyDto implements RetryPolicy {
+  @IsInt()
+  @Min(1)
+  maxAttempts!: number;
+
+  @IsNumber({ allowNaN: false, allowInfinity: false })
+  @Min(0)
+  backoffMs!: number;
+
+  @IsOptional()
+  @IsNumber({ allowNaN: false, allowInfinity: false })
+  @Min(0)
+  maxBackoffMs?: number;
 }
 
 export class WorkflowDraftStepDto implements WorkflowDraftStep {
@@ -99,6 +116,11 @@ export class WorkflowDraftStepDto implements WorkflowDraftStep {
   @IsOptional()
   @IsNumber()
   priority?: number;
+
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => RetryPolicyDto)
+  retryPolicy?: RetryPolicyDto;
 }
 
 export class WorkflowDraftDto implements WorkflowDraft {

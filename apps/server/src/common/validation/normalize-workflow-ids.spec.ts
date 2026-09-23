@@ -200,4 +200,22 @@ describe('normalizeWorkflowIds', () => {
       });
     }
   });
+
+  it('preserves an explicit retry policy', () => {
+    const retryPolicy = { maxAttempts: 3, backoffMs: 100, maxBackoffMs: 500 };
+    const result = normalizeWorkflowIds({
+      name: 'Retry',
+      steps: [
+        {
+          clientRef: 'retry-step',
+          name: 'Retry step',
+          plugin: 'test-plugin',
+          config: {},
+          retryPolicy,
+        },
+      ],
+    });
+
+    expect(result.steps[0]?.retryPolicy).toEqual(retryPolicy);
+  });
 });

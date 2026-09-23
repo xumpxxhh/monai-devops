@@ -26,6 +26,7 @@ export interface WorkflowDraftStep {
   condition?: WorkflowStep['condition'];
   dependsOn?: string[];
   priority?: number;
+  retryPolicy?: WorkflowStep['retryPolicy'];
 }
 
 export interface WorkflowDraft {
@@ -129,6 +130,7 @@ function normalizeDraftStep(
     ...(step.condition !== undefined ? { condition: step.condition } : {}),
     dependsOn: resolveDependsOn(step.dependsOn, refMap, stepLabel),
     ...(step.priority !== undefined ? { priority: step.priority } : {}),
+    ...(step.retryPolicy !== undefined ? { retryPolicy: step.retryPolicy } : {}),
   };
 
   if (kind === StepKinds.SET_STATE) {

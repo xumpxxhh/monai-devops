@@ -6,7 +6,7 @@
 > 本文提取两条路线共同依赖的执行编排内核能力，作为共享内核演进的阶段基线。各阶段仍以最小闭环实施，具体技术选型和兼容性变化在对应阶段文档中评审。
 
 - 归档日期：2026-09-18
-- 当前状态：按 Core-0 至 Core-4 顺序实施
+- 当前状态：Core-0、Core-1 已完成；Core-2 可靠调度与恢复进行中
 - 决策状态：总体方向已采纳，阶段细节逐项决策
 - 适用范围：`core-engine`、Run 模型、事件模型、插件/工具执行边界和可靠性基础
 - 下游路线：[企业级 CI/CD 推演](../ci-cd-engine/enterprise-ci-cd-roadmap-draft.md)、[AI Agent 推演](../agent-engine/ai-agent-execution-engine-roadmap-draft.md)
