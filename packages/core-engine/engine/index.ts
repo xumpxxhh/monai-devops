@@ -64,6 +64,8 @@ export interface EngineOptions {
   embeddedRunHooks?: EmbeddedRunHooks;
   /** 嵌套深度上限，默认 3 */
   maxNestingDepth?: number;
+  /** 资源取得后、step:start 与实际执行前的授权闸门。 */
+  beforeStepExecute?: (step: WorkflowStep, context: ExecutionContext) => void | Promise<void>;
 }
 
 /** 资源等待队列项与 releaseHandles 的键：${workflowRunId}:${stepId} */
@@ -151,7 +153,10 @@ export function createEngine(options: EngineOptions = {}) {
     // 资源钩子：在 step:start 之前挂起等待槽位（可能触发 step:queued）
     onStepStart: async (step, context, meta, helpers) => {
       // set_state 不占资源池
-      if (isSetStateStep(step)) return;
+      if (isSetStateStep(step)) {
+        await options.beforeStepExecute?.(step, context);
+        return;
+      }
 
       const resourceType = getResourceType(step);
       // runId 由 executor 从 workflowRunId 注入；缺失时跳过资源分配（单测/无 meta 场景）
@@ -170,6 +175,7 @@ export function createEngine(options: EngineOptions = {}) {
         onQueued: meta ? () => helpers?.emitQueued({ resourceType, priority }) : undefined,
       });
       releaseHandles.set(id, release);
+      await options.beforeStepExecute?.(step, context);
     },
     // 步骤结束归还资源；in-flight 超时时 executor 传入 deferReleaseUntil 推迟释放
     onStepComplete: (step, _result, context, completeOptions) => {

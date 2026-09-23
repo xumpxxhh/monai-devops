@@ -8,8 +8,9 @@
 - **变更**：完成 Core-1c 结果原因契约：新增兼容性的 `ExecutionReason`、Run `terminalReason` 和取消事件 reason，统一失败、跳过、取消与中断分类；Core-1 整体验收完成。
 - **变更**：启动 Core-2 可靠执行基础：新增 Attempt 状态机、retry/idempotency 契约、lease/heartbeat/checkpoint 类型，以及 Job/Attempt Prisma 模型和原子仓储操作。
 - **变更**：接通顶层 step 事件与 Job/Attempt 权威状态，增加本地 lease owner、周期 heartbeat、终态清理和启动过期 lease 扫描；修复终态 Attempt 可因过期 lease 被误领的问题。
+- **变更**：新增引擎 `beforeStepExecute` 授权闸门；服务端在 `step:start` 和插件调用前同步取得数据库 lease，授权失败不执行插件。
 - **决策**：Job/Attempt 使用独立持久化表；未来 retry 保持 `jobId`、递增 `attempt`，checkpoint 归属 Job 并记录来源 Attempt，lease 绑定 Attempt，本地与远程 Executor 共用身份协议。嵌套执行在子 Run 存储模型明确前暂不投影。
-- **验证**：core-engine 134 项测试通过；server 非数据库测试 65 项通过；受影响范围 lint、类型检查和构建通过。
+- **验证**：core-engine 136 项测试通过；server 非数据库测试 66 项通过；受影响范围 lint、类型检查和构建通过。
 - **文件**：`executor/execution-identity.ts`, `executor/index.ts`, `executor/types.ts`, `observer/*`, `apps/server/src/common/serialization/*`, `apps/server/src/runs/run-event-merge*`, `docs/plans/core-engine/core-1-execution-identity-draft.md`
 
 ## 2026-08-05

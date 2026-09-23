@@ -38,8 +38,28 @@ describe('RunManagerService execution projection', () => {
         projectExecutionState(event: WorkflowLifecycleEvent, runId: string): Promise<void>;
       }
     ).projectExecutionState.bind(service);
-    return { project, repository, leases };
+    return { service, project, repository, leases };
   }
+
+  it('acquires the durable lease before a managed step is allowed to execute', async () => {
+    const { service, repository, leases } = createSubject();
+    (service as unknown as { managedRunIds: Set<string> }).managedRunIds.add('run-1');
+    const authorize = (
+      service as unknown as {
+        authorizeStepExecution(
+          stepId: string,
+          runId: unknown,
+          identity: typeof execution,
+        ): Promise<void>;
+      }
+    ).authorizeStepExecution.bind(service);
+
+    await authorize(step.id, 'run-1', execution);
+
+    expect(repository.ensureAttempt).toHaveBeenCalledWith(execution);
+    expect(leases.start).toHaveBeenCalledWith(execution);
+    expect(repository.setJobStatus).toHaveBeenCalledWith(execution.jobId, AttemptStatuses.RUNNING);
+  });
 
   it('leases a started attempt and persists the running job state', async () => {
     const { project, repository, leases } = createSubject();

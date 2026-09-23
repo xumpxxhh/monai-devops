@@ -104,6 +104,7 @@ describe('RunManagerService nested event routing', () => {
       setEmbeddedRunHooks: jest.fn((h: EmbeddedRunHooks) => {
         hooks = h;
       }),
+      setBeforeStepExecute: jest.fn(),
       getRunStatus: jest.fn(),
       validateWorkflow: jest.fn(),
       runWorkflow: jest.fn(),

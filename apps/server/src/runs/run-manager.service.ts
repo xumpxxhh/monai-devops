@@ -16,6 +16,7 @@ import {
   WorkflowRunIdValidationError,
   WorkflowValidationError,
   type WorkflowDefinition,
+  type ExecutionIdentity,
   type WorkflowLifecycleEvent,
   type WorkflowRunResult,
 } from '@monai-devops/core-engine';
@@ -126,6 +127,27 @@ export class RunManagerService implements OnModuleInit {
         this.onChildRunStart(childRunId, childDefinition, ctx),
       onChildRunFinished: (childRunId, result) => this.onChildRunFinished(childRunId, result),
     });
+    this.engineService.setBeforeStepExecute((step, context) =>
+      this.authorizeStepExecution(step.id, context.runId, context.execution),
+    );
+  }
+
+  private async authorizeStepExecution(
+    stepId: string,
+    runId: unknown,
+    execution: ExecutionIdentity | undefined,
+  ): Promise<void> {
+    if (typeof runId !== 'string' || !execution || !this.managedRunIds.has(runId)) return;
+    await this.executionRepository.ensureJob({
+      execution,
+      runId,
+      stepId,
+      idempotencyKey: execution.jobId,
+      retryPolicy: { maxAttempts: 1, backoffMs: 0 },
+    });
+    await this.executionRepository.ensureAttempt(execution);
+    await this.executionLeases.start(execution);
+    await this.executionRepository.setJobStatus(execution.jobId, AttemptStatuses.RUNNING);
   }
 
   /** 将嵌入子事件解析到应持久化/推流的顶层 runId */

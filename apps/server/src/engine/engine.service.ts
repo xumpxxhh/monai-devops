@@ -24,6 +24,7 @@ import {
 
 type EngineInstance = ReturnType<typeof createEngine>;
 type EventHandler = (event: WorkflowLifecycleEvent) => void | Promise<void>;
+type BeforeStepExecute = (step: WorkflowStep, context: ExecutionContext) => void | Promise<void>;
 
 @Global()
 @Injectable()
@@ -34,6 +35,7 @@ export class EngineService implements OnModuleInit, OnModuleDestroy {
   private readonly eventHandlers = new Set<EventHandler>();
   private resolveWorkflowImpl?: ResolveWorkflow;
   private embeddedRunHooksImpl?: EmbeddedRunHooks;
+  private beforeStepExecuteImpl?: BeforeStepExecute;
 
   constructor(private readonly config: ConfigService) {}
 
@@ -61,6 +63,7 @@ export class EngineService implements OnModuleInit, OnModuleDestroy {
           await this.embeddedRunHooksImpl?.onChildRunFinished(childRunId, result);
         },
       },
+      beforeStepExecute: (step, context) => this.beforeStepExecuteImpl?.(step, context),
       observer: {
         onEvent: async (event) => {
           for (const handler of this.eventHandlers) {
@@ -84,6 +87,10 @@ export class EngineService implements OnModuleInit, OnModuleDestroy {
   /** 由 RunManager 注入子 run 落表回调 */
   setEmbeddedRunHooks(hooks: EmbeddedRunHooks): void {
     this.embeddedRunHooksImpl = hooks;
+  }
+
+  setBeforeStepExecute(hook: BeforeStepExecute): void {
+    this.beforeStepExecuteImpl = hook;
   }
 
   onModuleDestroy(): void {

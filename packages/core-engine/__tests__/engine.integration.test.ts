@@ -19,6 +19,64 @@ const testPlugin = createPlugin({
 const TEST_RUN_ID = 'test-run-id';
 
 describe('createEngine integration', () => {
+  it('runs the execution authorization gate before invoking a plugin', async () => {
+    const order: string[] = [];
+    const plugin = createPlugin({
+      name: 'gated-plugin',
+      version: '1.0.0',
+      execute: async () => {
+        order.push('plugin');
+        return { success: true };
+      },
+    });
+    const engine = createEngine({
+      plugins: [plugin],
+      beforeStepExecute: async (_step, context) => {
+        assert.ok(context.execution);
+        order.push('authorized');
+      },
+    });
+
+    const run = await engine.runWorkflow('authorized-run', {
+      id: 'authorized-workflow',
+      name: 'authorized workflow',
+      steps: [{ id: 's1', name: 'S1', plugin: 'gated-plugin', config: {} }],
+    });
+
+    assert.equal(run.success, true);
+    assert.deepEqual(order, ['authorized', 'plugin']);
+    await engine.destroy();
+  });
+
+  it('does not invoke a plugin when execution authorization fails', async () => {
+    let invoked = false;
+    const plugin = createPlugin({
+      name: 'denied-plugin',
+      version: '1.0.0',
+      execute: async () => {
+        invoked = true;
+        return { success: true };
+      },
+    });
+    const engine = createEngine({
+      plugins: [plugin],
+      beforeStepExecute: async () => {
+        throw new Error('lease denied');
+      },
+    });
+
+    const run = await engine.runWorkflow('denied-run', {
+      id: 'denied-workflow',
+      name: 'denied workflow',
+      steps: [{ id: 's1', name: 'S1', plugin: 'denied-plugin', config: {} }],
+    });
+
+    assert.equal(invoked, false);
+    assert.equal(run.results[0]?.status, StepStatuses.FAILED);
+    assert.match(run.results[0]?.error?.message ?? '', /lease denied/);
+    await engine.destroy();
+  });
+
   it('runs workflow with registered plugin', async () => {
     const engine = createEngine({
       plugins: [testPlugin],
