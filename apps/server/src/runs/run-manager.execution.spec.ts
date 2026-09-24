@@ -24,22 +24,31 @@ describe('RunManagerService execution projection', () => {
       transitionAttempt: jest.fn(async (_attemptId: string, _from: string) => true),
       setJobStatus: jest.fn(async () => undefined),
     };
+    const runRepository = { heartbeatRunLease: jest.fn(async () => true) };
     const leases = { start: jest.fn(async () => undefined), stop: jest.fn() };
     const service = new RunManagerService(
-      {} as EngineService,
-      {} as RunRepository,
+      { cancelRun: jest.fn(async () => undefined) } as unknown as EngineService,
+      runRepository as unknown as RunRepository,
       {} as RunStreamService,
       { get: jest.fn() } as unknown as ConfigService,
       repository as unknown as ExecutionRepository,
       leases as unknown as ExecutionLeaseService,
       { request: jest.fn() } as never,
     );
+    (
+      service as unknown as {
+        runLeases: Map<string, { token: string; timer: ReturnType<typeof setInterval> }>;
+      }
+    ).runLeases.set('run-1', {
+      token: 'run-token',
+      timer: 0 as unknown as ReturnType<typeof setInterval>,
+    });
     const project = (
       service as unknown as {
         projectExecutionState(event: WorkflowLifecycleEvent, runId: string): Promise<void>;
       }
     ).projectExecutionState.bind(service);
-    return { service, project, repository, leases };
+    return { service, project, repository, leases, runRepository };
   }
 
   it('loads a recovery snapshot from the Run and Job repositories without executing it', async () => {
@@ -53,6 +62,7 @@ describe('RunManagerService execution projection', () => {
         createdAt: new Date(),
         events: [],
       })),
+      getRecoveryState: jest.fn(async () => ({ present: false })),
     };
     const executionRepository = { listJobsForRun: jest.fn(async () => []) };
     const service = new RunManagerService(
@@ -70,12 +80,14 @@ describe('RunManagerService execution projection', () => {
       nextAttemptByStep: {},
     });
     expect(runRepository.findById).toHaveBeenCalledWith('run-1');
+    expect(runRepository.getRecoveryState).toHaveBeenCalledWith('run-1');
     expect(executionRepository.listJobsForRun).toHaveBeenCalledWith('run-1');
   });
 
   it('acquires the durable lease before a managed step is allowed to execute', async () => {
-    const { service, repository, leases } = createSubject();
+    const { service, repository, leases, runRepository } = createSubject();
     (service as unknown as { managedRunIds: Set<string> }).managedRunIds.add('run-1');
+    (service as unknown as { fencedRunIds: Set<string> }).fencedRunIds.add('run-1');
     const authorize = (
       service as unknown as {
         authorizeStepExecution(
@@ -90,8 +102,40 @@ describe('RunManagerService execution projection', () => {
     await authorize(step.id, undefined, 'run-1', execution);
 
     expect(repository.ensureAttempt).toHaveBeenCalledWith(execution);
+    expect(runRepository.heartbeatRunLease).toHaveBeenCalledWith(
+      'run-1',
+      'run-token',
+      expect.any(Date),
+    );
     expect(leases.start).toHaveBeenCalledWith(execution);
     expect(repository.setJobStatus).toHaveBeenCalledWith(execution.jobId, AttemptStatuses.RUNNING);
+  });
+
+  it('does not start an Attempt after losing Run ownership', async () => {
+    const { service, repository, leases, runRepository } = createSubject();
+    (service as unknown as { managedRunIds: Set<string> }).managedRunIds.add('run-1');
+    (service as unknown as { fencedRunIds: Set<string> }).fencedRunIds.add('run-1');
+    runRepository.heartbeatRunLease.mockImplementation(async () => false);
+    await expect(
+      (
+        service as unknown as {
+          authorizeStepExecution(
+            stepId: string,
+            retryPolicy: undefined,
+            runId: string,
+            identity: typeof execution,
+          ): Promise<void>;
+        }
+      ).authorizeStepExecution(step.id, undefined, 'run-1', execution),
+    ).rejects.toThrow(/Run lease unavailable/);
+    expect(repository.ensureAttempt).not.toHaveBeenCalled();
+    expect(leases.start).not.toHaveBeenCalled();
+    expect((service as unknown as { managedRunIds: Set<string> }).managedRunIds.has('run-1')).toBe(
+      false,
+    );
+    expect((service as unknown as { fencedRunIds: Set<string> }).fencedRunIds.has('run-1')).toBe(
+      true,
+    );
   });
 
   it('leases a started attempt and persists the running job state', async () => {

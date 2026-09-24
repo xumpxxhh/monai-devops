@@ -52,7 +52,7 @@ export interface RunListFilter {
 }
 
 export interface RunRepository {
-  save(record: RunRecord): Promise<void>;
+  save(record: RunRecord, recoveryState?: unknown): Promise<void>;
   update(runId: string, patch: Partial<RunRecord>): Promise<RunRecord | undefined>;
   findById(runId: string): Promise<RunRecord | undefined>;
   list(filter: RunListFilter): Promise<{ items: RunRecord[]; total: number }>;
@@ -61,6 +61,11 @@ export interface RunRepository {
   delete(runId: string): Promise<boolean>;
   countActive(): Promise<number>;
   countByStatus(status: RunStatus): Promise<number>;
+  /** 私有恢复状态不进入 RunRecord 或公开 API。 */
+  getRecoveryState(runId: string): Promise<{ present: boolean; value?: unknown }>;
+  acquireRunLease(runId: string, ownerId: string, token: string, expiresAt: Date): Promise<boolean>;
+  heartbeatRunLease(runId: string, token: string, expiresAt: Date): Promise<boolean>;
+  releaseRunLease(runId: string, token: string): Promise<boolean>;
 }
 
 export const RUN_REPOSITORY = Symbol('RUN_REPOSITORY');

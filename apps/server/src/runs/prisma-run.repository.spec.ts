@@ -69,6 +69,74 @@ describeIfDb('PrismaRunRepository integration', () => {
     expect(loaded?.events).toEqual([]);
   });
 
+  it('stores initial recovery state privately, outside Run responses', async () => {
+    await repository.save(baseRecord(), { secret: 'private', count: 1 });
+
+    expect(await repository.getRecoveryState('run-prisma-1')).toEqual({
+      present: true,
+      value: { secret: 'private', count: 1 },
+    });
+    await expect(repository.findById('run-prisma-1')).resolves.not.toHaveProperty('recoveryState');
+  });
+
+  it('allows only one Run lease owner and fences heartbeat/release by token', async () => {
+    await repository.save(baseRecord());
+    const expiration = () => new Date(Date.now() + 60_000);
+    const claims = await Promise.all([
+      repository.acquireRunLease('run-prisma-1', 'owner-a', 'token-a', expiration()),
+      repository.acquireRunLease('run-prisma-1', 'owner-b', 'token-b', expiration()),
+    ]);
+    expect(claims.filter(Boolean)).toHaveLength(1);
+    const winner = claims[0] ? 'token-a' : 'token-b';
+    const loser = claims[0] ? 'token-b' : 'token-a';
+    expect(await repository.heartbeatRunLease('run-prisma-1', loser, expiration())).toBe(false);
+    expect(await repository.heartbeatRunLease('run-prisma-1', winner, expiration())).toBe(true);
+    expect(await repository.releaseRunLease('run-prisma-1', loser)).toBe(false);
+    expect(await repository.releaseRunLease('run-prisma-1', winner)).toBe(true);
+    expect(
+      await repository.acquireRunLease('run-prisma-1', 'owner-c', 'token-c', expiration()),
+    ).toBe(true);
+  });
+
+  it('permits takeover only after the old lease expires', async () => {
+    await repository.save(baseRecord());
+    expect(
+      await repository.acquireRunLease(
+        'run-prisma-1',
+        'old-owner',
+        'old-token',
+        new Date(Date.now() + 60_000),
+      ),
+    ).toBe(true);
+    expect(
+      await repository.acquireRunLease(
+        'run-prisma-1',
+        'new-owner',
+        'new-token',
+        new Date(Date.now() + 60_000),
+      ),
+    ).toBe(false);
+    await prisma.run.update({
+      where: { runId: 'run-prisma-1' },
+      data: { leaseExpiresAt: new Date(Date.now() - 1_000) },
+    });
+    expect(
+      await repository.acquireRunLease(
+        'run-prisma-1',
+        'new-owner',
+        'new-token',
+        new Date(Date.now() + 60_000),
+      ),
+    ).toBe(true);
+    expect(
+      await repository.heartbeatRunLease(
+        'run-prisma-1',
+        'old-token',
+        new Date(Date.now() + 60_000),
+      ),
+    ).toBe(false);
+  });
+
   it('merges consecutive stream logs on appendEvent', async () => {
     await repository.save(baseRecord());
     await repository.appendEvent('run-prisma-1', streamLog('s1', 'line1\n'));

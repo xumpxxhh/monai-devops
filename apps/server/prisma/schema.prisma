@@ -24,6 +24,11 @@ model Run {
   createdBy        BigInt?                   @map("created_by")
   source           String?                   @default("api")
   metadata         Json                      @default("{}")
+  recoveryState    Json?                     @map("recovery_state")
+  leaseOwner       String?                   @map("lease_owner")
+  leaseToken       String?                   @map("lease_token")
+  leaseExpiresAt   DateTime?                 @map("lease_expires_at")
+  leaseHeartbeatAt DateTime?                 @map("lease_heartbeat_at")
   parentRunId      String?                   @map("parent_run_id")
   createdAt        DateTime                  @default(now()) @map("created_at")
   updatedAt        DateTime                  @updatedAt @map("updated_at")
@@ -34,6 +39,7 @@ model Run {
   controlCommands  ExecutionControlCommand[]
 
   @@index([isActive, createdAt])
+  @@index([isActive, leaseExpiresAt])
   @@index([workflowId])
   @@index([workflowName])
   @@index([parentRunId])

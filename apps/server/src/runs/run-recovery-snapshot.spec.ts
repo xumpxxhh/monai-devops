@@ -108,5 +108,8 @@ describe('buildRunRecoverySnapshot', () => {
     run.counts.completed = 0;
     run.events = [];
     expect(() => buildRunRecoverySnapshot(run, [])).toThrow(/缺少可恢复 state/);
+    expect(buildRunRecoverySnapshot(run, [], { present: true, value: { count: 0 } }).state).toEqual(
+      { count: 0 },
+    );
   });
 });

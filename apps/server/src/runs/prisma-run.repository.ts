@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import type { Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { toInputJson } from '../prisma/prisma-json.js';
 import { applyAppendRunEvent, getRunEventRowIdsToDelete } from './run-event-merge.js';
@@ -24,10 +24,12 @@ export class PrismaRunRepository implements RunRepository {
     private readonly config: ConfigService,
   ) {}
 
-  async save(record: RunRecord): Promise<void> {
+  async save(record: RunRecord, recoveryState?: unknown): Promise<void> {
     await this.prisma.run.create({
       data: {
         ...toRunCreateData(record),
+        recoveryState:
+          recoveryState === undefined ? Prisma.DbNull : toInputJson({ value: recoveryState }),
         events: {
           create: record.events.map((event, index) => ({
             eventIndex: index,
@@ -37,6 +39,66 @@ export class PrismaRunRepository implements RunRepository {
         },
       },
     });
+  }
+
+  async getRecoveryState(runId: string): Promise<{ present: boolean; value?: unknown }> {
+    const row = await this.prisma.run.findUnique({
+      where: { runId },
+      select: { recoveryState: true },
+    });
+    const payload = row?.recoveryState;
+    if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+      return { present: false };
+    }
+    if (!Object.prototype.hasOwnProperty.call(payload, 'value')) return { present: false };
+    return { present: true, value: (payload as Record<string, unknown>).value };
+  }
+
+  async acquireRunLease(
+    runId: string,
+    ownerId: string,
+    token: string,
+    expiresAt: Date,
+  ): Promise<boolean> {
+    const now = new Date();
+    if (expiresAt <= now) return false;
+    const result = await this.prisma.run.updateMany({
+      where: {
+        runId,
+        isActive: true,
+        OR: [{ leaseExpiresAt: null }, { leaseExpiresAt: { lt: now } }],
+      },
+      data: {
+        leaseOwner: ownerId,
+        leaseToken: token,
+        leaseExpiresAt: expiresAt,
+        leaseHeartbeatAt: now,
+      },
+    });
+    return result.count === 1;
+  }
+
+  async heartbeatRunLease(runId: string, token: string, expiresAt: Date): Promise<boolean> {
+    const now = new Date();
+    if (expiresAt <= now) return false;
+    const result = await this.prisma.run.updateMany({
+      where: { runId, leaseToken: token, leaseExpiresAt: { gt: now } },
+      data: { leaseExpiresAt: expiresAt, leaseHeartbeatAt: now },
+    });
+    return result.count === 1;
+  }
+
+  async releaseRunLease(runId: string, token: string): Promise<boolean> {
+    const result = await this.prisma.run.updateMany({
+      where: { runId, leaseToken: token },
+      data: {
+        leaseOwner: null,
+        leaseToken: null,
+        leaseExpiresAt: null,
+        leaseHeartbeatAt: null,
+      },
+    });
+    return result.count === 1;
   }
 
   async update(runId: string, patch: Partial<RunRecord>): Promise<RunRecord | undefined> {

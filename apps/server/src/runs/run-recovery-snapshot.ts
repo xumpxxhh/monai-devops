@@ -32,6 +32,7 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
 export function buildRunRecoverySnapshot(
   run: RunRecord,
   jobs: readonly RecoveryJob[],
+  initialState: { present: boolean; value?: unknown } = { present: false },
 ): WorkflowResumeSnapshot {
   if (run.status !== 'queued' && run.status !== 'running') {
     reject(`Run ${run.runId} 的状态 ${run.status} 不允许直接续跑`);
@@ -135,6 +136,8 @@ export function buildRunRecoverySnapshot(
   if (run.workflowSnapshot.stateSchema !== undefined) {
     if (hasSetState) {
       snapshot.state = latestState;
+    } else if (initialState.present) {
+      snapshot.state = initialState.value;
     } else {
       reject('有 stateSchema 的 Run 缺少可恢复 state');
     }

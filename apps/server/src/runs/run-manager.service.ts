@@ -5,11 +5,13 @@ import {
   Inject,
   Injectable,
   Logger,
+  OnModuleDestroy,
   OnModuleInit,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import {
   AttemptStatuses,
+  defaultStateFromSchema,
   parseState,
   resolveRetryPolicy,
   SkipReasons,
@@ -106,13 +108,21 @@ function mergeEngineControlStatus(record: RunRecord, engine?: RunStatusSnapshot)
 }
 
 @Injectable()
-export class RunManagerService implements OnModuleInit {
+export class RunManagerService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(RunManagerService.name);
   private readonly eventChains = new Map<string, Promise<void>>();
   /** 仅处理本服务 submit/save 过的顶层 run，避免直连引擎的旁路调用误打仓储 */
   private readonly managedRunIds = new Set<string>();
+  /** 即使失去 lease 也保留至本地执行退出，确保后续步骤不能绕过授权。 */
+  private readonly fencedRunIds = new Set<string>();
   /** 嵌入子执行 childRunId → 顶层 API runId；子 run 不落表，事件写入并推流到 root */
   private readonly childRootRunIds = new Map<string, string>();
+  private readonly runLeases = new Map<
+    string,
+    { token: string; timer: ReturnType<typeof setInterval> }
+  >();
+  private readonly runLeaseOwner: string;
+  private readonly runLeaseTtlMs: number;
 
   constructor(
     private readonly engineService: EngineService,
@@ -122,7 +132,77 @@ export class RunManagerService implements OnModuleInit {
     @Inject(EXECUTION_REPOSITORY) private readonly executionRepository: ExecutionRepository,
     private readonly executionLeases: ExecutionLeaseService,
     private readonly executionControls: ExecutionControlService,
-  ) {}
+  ) {
+    this.runLeaseOwner =
+      config.get<string>('EXECUTOR_ID', `server-${process.pid}`) ?? `server-${process.pid}`;
+    this.runLeaseTtlMs = Math.max(3_000, config.get<number>('RUN_LEASE_TTL_MS', 30_000) ?? 30_000);
+  }
+
+  onModuleDestroy(): void {
+    for (const lease of this.runLeases.values()) clearInterval(lease.timer);
+    this.runLeases.clear();
+    this.managedRunIds.clear();
+  }
+
+  private async acquireRunLease(runId: string): Promise<boolean> {
+    const token = randomUUID();
+    const acquired = await this.runRepository.acquireRunLease(
+      runId,
+      this.runLeaseOwner,
+      token,
+      new Date(Date.now() + this.runLeaseTtlMs),
+    );
+    if (!acquired) return false;
+    const timer = setInterval(
+      () => {
+        void this.heartbeatRunLease(runId, token);
+      },
+      Math.max(1_000, Math.floor(this.runLeaseTtlMs / 3)),
+    );
+    timer.unref?.();
+    this.runLeases.set(runId, { token, timer });
+    return true;
+  }
+
+  private async heartbeatRunLease(runId: string, token: string): Promise<boolean> {
+    try {
+      const renewed = await this.runRepository.heartbeatRunLease(
+        runId,
+        token,
+        new Date(Date.now() + this.runLeaseTtlMs),
+      );
+      if (!renewed) {
+        this.stopRunLease(runId, token);
+        this.managedRunIds.delete(runId);
+        this.logger.warn(`Run lease lost: ${runId}`);
+        void Promise.resolve(this.engineService.cancelRun(runId, 'hard')).catch(
+          (error: unknown) => {
+            const message = error instanceof Error ? error.message : String(error);
+            this.logger.error(`Failed to stop Run after lease loss ${runId}: ${message}`);
+          },
+        );
+      }
+      return renewed;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.error(`Run lease heartbeat failed for ${runId}: ${message}`);
+      return false;
+    }
+  }
+
+  private stopRunLease(runId: string, token: string): void {
+    const lease = this.runLeases.get(runId);
+    if (!lease || lease.token !== token) return;
+    clearInterval(lease.timer);
+    this.runLeases.delete(runId);
+  }
+
+  private async releaseRunLease(runId: string): Promise<void> {
+    const lease = this.runLeases.get(runId);
+    if (!lease) return;
+    this.stopRunLease(runId, lease.token);
+    await this.runRepository.releaseRunLease(runId, lease.token);
+  }
 
   onModuleInit(): void {
     // 不向引擎回传 Promise：持久化串行在 eventChains 内完成，避免 DB 延迟/失败阻塞 core-engine
@@ -145,7 +225,11 @@ export class RunManagerService implements OnModuleInit {
     runId: unknown,
     execution: ExecutionIdentity | undefined,
   ): Promise<void> {
-    if (typeof runId !== 'string' || !execution || !this.managedRunIds.has(runId)) return;
+    if (typeof runId !== 'string' || !execution || !this.fencedRunIds.has(runId)) return;
+    const runLease = this.runLeases.get(runId);
+    if (!runLease || !(await this.heartbeatRunLease(runId, runLease.token))) {
+      throw new Error(`Run lease unavailable: ${runId}`);
+    }
     await this.executionRepository.ensureJob({
       execution,
       runId,
@@ -262,8 +346,15 @@ export class RunManagerService implements OnModuleInit {
       metadata: {},
     };
 
-    await this.runRepository.save(record);
+    const recoveryState =
+      normalized.stateSchema === undefined
+        ? undefined
+        : options.initialState !== undefined
+          ? options.initialState
+          : defaultStateFromSchema(normalized.stateSchema);
+    await this.runRepository.save(record, recoveryState);
     this.managedRunIds.add(runId);
+    this.fencedRunIds.add(runId);
     this.logger.log(`Run ${runId} queued (workflow=${normalized.id}, traceId=${traceId})`);
 
     void this.executeRun(runId, normalized, {
@@ -287,7 +378,8 @@ export class RunManagerService implements OnModuleInit {
     const run = await this.runRepository.findById(runId);
     if (!run) throw new RunRecoveryNotReadyError(`Run ${runId} 不存在`);
     const jobs = await this.executionRepository.listJobsForRun(runId);
-    return buildRunRecoverySnapshot(run, jobs);
+    const initialState = await this.runRepository.getRecoveryState(runId);
+    return buildRunRecoverySnapshot(run, jobs, initialState);
   }
 
   async listRuns(filter: Parameters<RunRepository['list']>[0]) {
@@ -416,8 +508,24 @@ export class RunManagerService implements OnModuleInit {
     workflow: WorkflowDefinition,
     context: { traceId: string; priority?: number; initialState?: unknown },
   ): Promise<void> {
-    const existing = await this.runRepository.findById(runId);
-    if (existing?.status === 'cancelled') {
+    try {
+      const existing = await this.runRepository.findById(runId);
+      if (!existing || existing.status === 'cancelled') {
+        this.managedRunIds.delete(runId);
+        this.fencedRunIds.delete(runId);
+        return;
+      }
+      if (!(await this.acquireRunLease(runId))) {
+        this.logger.warn(`Run lease unavailable, leaving queued for recovery: ${runId}`);
+        this.managedRunIds.delete(runId);
+        this.fencedRunIds.delete(runId);
+        return;
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.error(`Run lease acquisition failed for ${runId}: ${message}`);
+      this.managedRunIds.delete(runId);
+      this.fencedRunIds.delete(runId);
       return;
     }
 
@@ -431,8 +539,10 @@ export class RunManagerService implements OnModuleInit {
         },
         context.initialState !== undefined ? { initialState: context.initialState } : undefined,
       );
+      if (!this.runLeases.has(runId)) return;
       await this.finalizeIfNeeded(runId, result);
     } catch (error) {
+      if (!this.runLeases.has(runId)) return;
       if (
         error instanceof WorkflowValidationError ||
         error instanceof WorkflowRunIdValidationError
@@ -458,6 +568,10 @@ export class RunManagerService implements OnModuleInit {
         finishedAt: new Date(),
       });
       this.runStream.fanOut(runId, { type: 'error', message });
+    } finally {
+      await this.releaseRunLease(runId);
+      this.managedRunIds.delete(runId);
+      this.fencedRunIds.delete(runId);
     }
   }
 
@@ -508,6 +622,7 @@ export class RunManagerService implements OnModuleInit {
 
   private async processEngineEvent(event: WorkflowLifecycleEvent): Promise<void> {
     const persistRunId = this.resolvePersistRunId(event);
+    if (!this.managedRunIds.has(persistRunId)) return;
     const nested = this.isNestedEngineEvent(event);
     const serialized = serializeWorkflowEvent(event);
     const offset = await this.runRepository.appendEvent(persistRunId, serialized);
