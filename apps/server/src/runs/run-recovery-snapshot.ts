@@ -110,6 +110,9 @@ export function buildRunRecoverySnapshot(
       continue;
     }
     if (latest.status === AttemptStatuses.QUEUED && job.status === AttemptStatuses.QUEUED) {
+      if (latest.attempt > 0 && !job.idempotencyKey?.trim()) {
+        reject(`步骤 ${job.stepId} 缺少重试幂等键`);
+      }
       nextAttemptByStep[job.stepId] = latest.attempt;
       continue;
     }
@@ -117,6 +120,7 @@ export function buildRunRecoverySnapshot(
       const retryable =
         latest.status === AttemptStatuses.TIMED_OUT || asRecord(latest.reason)?.retryable === true;
       const nextAttempt = latest.attempt + 1;
+      if (!job.idempotencyKey?.trim()) reject(`步骤 ${job.stepId} 缺少重试幂等键`);
       if (!retryable || nextAttempt >= resolveRetryPolicy(step.retryPolicy).maxAttempts) {
         reject(`步骤 ${job.stepId} 已失败且无可用重试 Attempt`);
       }

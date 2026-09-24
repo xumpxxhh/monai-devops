@@ -54,11 +54,13 @@ function jobs(): RecoveryJob[] {
     {
       stepId: 'a',
       status: AttemptStatuses.SUCCEEDED,
+      idempotencyKey: 'run-1/a',
       attempts: [{ attempt: 0, status: AttemptStatuses.SUCCEEDED }],
     },
     {
       stepId: 'b',
       status: AttemptStatuses.TIMED_OUT,
+      idempotencyKey: 'run-1/b',
       attempts: [{ attempt: 0, status: AttemptStatuses.TIMED_OUT }],
     },
   ];
@@ -101,6 +103,9 @@ describe('buildRunRecoverySnapshot', () => {
 
     retryable[1]!.attempts[0]!.reason = { code: 'business', retryable: false };
     expect(() => buildRunRecoverySnapshot(runRecord(), retryable)).toThrow(/无可用重试/);
+    retryable[1]!.attempts[0]!.reason = { code: 'internal', retryable: true };
+    retryable[1]!.idempotencyKey = undefined;
+    expect(() => buildRunRecoverySnapshot(runRecord(), retryable)).toThrow(/缺少重试幂等键/);
   });
 
   it('requires a completed set_state event for workflows with state', () => {

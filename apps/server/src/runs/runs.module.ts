@@ -11,6 +11,7 @@ import { ExecutionLeaseService } from '../execution/execution-lease.service.js';
 import { ExecutionRecoveryService } from '../execution/execution-recovery.service.js';
 import { ExecutionControlService } from '../execution/execution-control.service.js';
 import { ExecutionWakeService } from '../execution/execution-wake.service.js';
+import { RunRecoveryService } from './run-recovery.service.js';
 
 @Global()
 @Module({
@@ -25,6 +26,7 @@ import { ExecutionWakeService } from '../execution/execution-wake.service.js';
     ExecutionControlService,
     ExecutionWakeService,
     RunManagerService,
+    RunRecoveryService,
     RunStreamService,
     RunsGateway,
   ],

@@ -151,6 +151,41 @@ export class PrismaExecutionRepository implements ExecutionRepository {
     }));
   }
 
+  async timeoutExpiredAttempt(attemptId: string, now: Date, reason: unknown): Promise<boolean> {
+    return this.prisma.$transaction(async (tx) => {
+      const attempt = await tx.executionAttempt.findUnique({
+        where: { attemptId },
+        select: { jobId: true },
+      });
+      if (!attempt) return false;
+      const changed = await tx.executionAttempt.updateMany({
+        where: {
+          attemptId,
+          status: { in: [AttemptStatuses.LEASED, AttemptStatuses.RUNNING] },
+          leaseExpiresAt: { lt: now },
+          job: {
+            run: {
+              OR: [{ leaseExpiresAt: null }, { leaseExpiresAt: { lt: now } }],
+            },
+          },
+        },
+        data: {
+          status: AttemptStatuses.TIMED_OUT,
+          finishedAt: now,
+          reason: toInputJson(reason),
+          leaseOwner: null,
+          leaseToken: null,
+        },
+      });
+      if (changed.count !== 1) return false;
+      await tx.executionJob.update({
+        where: { jobId: attempt.jobId },
+        data: { status: AttemptStatuses.TIMED_OUT },
+      });
+      return true;
+    });
+  }
+
   async listJobsForRun(runId: string): Promise<RecoveryJob[]> {
     const rows = await this.prisma.executionJob.findMany({
       where: { runId },
@@ -160,6 +195,7 @@ export class PrismaExecutionRepository implements ExecutionRepository {
     return rows.map((row) => ({
       stepId: row.stepId,
       status: row.status as RecoveryJob['status'],
+      idempotencyKey: row.idempotencyKey ?? undefined,
       checkpoint: (row.checkpoint as unknown as RecoveryJob['checkpoint']) ?? undefined,
       attempts: row.attempts.map((attempt) => ({
         attempt: attempt.attempt,

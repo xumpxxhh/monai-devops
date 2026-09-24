@@ -28,6 +28,7 @@ export interface RecoverableAttempt {
 export interface RecoveryJob {
   stepId: string;
   status: AttemptStatus;
+  idempotencyKey?: string;
   checkpoint?: ExecutionCheckpoint;
   attempts: Array<{
     attempt: number;
@@ -76,6 +77,8 @@ export interface ExecutionRepository {
   setJobStatus(jobId: string, status: AttemptStatus): Promise<void>;
   saveCheckpoint(checkpoint: ExecutionCheckpoint): Promise<void>;
   listRecoverable(now: Date): Promise<RecoverableAttempt[]>;
+  /** 原子检查过期时间并将 Attempt/Job 一起转为 timed_out，防止与续租竞态。 */
+  timeoutExpiredAttempt(attemptId: string, now: Date, reason: unknown): Promise<boolean>;
   listJobsForRun(runId: string): Promise<RecoveryJob[]>;
   registerWait(input: RegisterExecutionWaitInput): Promise<boolean>;
   signalWait(attemptId: string, key: string, payload: unknown, now: Date): Promise<boolean>;

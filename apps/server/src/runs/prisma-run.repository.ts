@@ -101,6 +101,30 @@ export class PrismaRunRepository implements RunRepository {
     return result.count === 1;
   }
 
+  async listRecoverableRunIds(
+    now: Date,
+    unleasedBefore: Date,
+    limit: number,
+    excludeRunIds: string[] = [],
+  ): Promise<string[]> {
+    const rows = await this.prisma.run.findMany({
+      where: {
+        isActive: true,
+        parentRunId: null,
+        status: { in: ['queued', 'running'] },
+        ...(excludeRunIds.length > 0 ? { runId: { notIn: excludeRunIds } } : {}),
+        OR: [
+          { leaseExpiresAt: { lt: now } },
+          { leaseExpiresAt: null, createdAt: { lt: unleasedBefore } },
+        ],
+      },
+      select: { runId: true },
+      orderBy: { createdAt: 'asc' },
+      take: limit,
+    });
+    return rows.map((row) => row.runId);
+  }
+
   async update(runId: string, patch: Partial<RunRecord>): Promise<RunRecord | undefined> {
     const existing = await this.prisma.run.findUnique({ where: { runId } });
     if (!existing) return undefined;

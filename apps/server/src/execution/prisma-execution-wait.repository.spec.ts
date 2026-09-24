@@ -81,6 +81,58 @@ describeIfDb('PrismaExecutionRepository durable waits', () => {
     ]);
   });
 
+  it('does not time out an Attempt that renewed after a stale recovery scan', async () => {
+    const now = new Date();
+    await prisma.executionAttempt.update({
+      where: { attemptId: execution.attemptId },
+      data: { leaseExpiresAt: new Date(now.getTime() - 1_000) },
+    });
+    expect((await repository.listRecoverable(now)).map((item) => item.attemptId)).toContain(
+      execution.attemptId,
+    );
+    expect(
+      await repository.heartbeat(execution.attemptId, 'token-1', new Date(now.getTime() + 60_000)),
+    ).toBe(true);
+    expect(
+      await repository.timeoutExpiredAttempt(execution.attemptId, now, {
+        code: 'executor_lease_expired',
+      }),
+    ).toBe(false);
+    expect(
+      (
+        await prisma.executionAttempt.findUniqueOrThrow({
+          where: { attemptId: execution.attemptId },
+        })
+      ).status,
+    ).toBe(AttemptStatuses.RUNNING);
+
+    await prisma.executionAttempt.update({
+      where: { attemptId: execution.attemptId },
+      data: { leaseExpiresAt: new Date(now.getTime() - 1_000) },
+    });
+    await prisma.run.update({
+      where: { runId },
+      data: { leaseExpiresAt: new Date(now.getTime() + 60_000) },
+    });
+    expect(
+      await repository.timeoutExpiredAttempt(execution.attemptId, now, {
+        code: 'executor_lease_expired',
+      }),
+    ).toBe(false);
+    await prisma.run.update({
+      where: { runId },
+      data: { leaseExpiresAt: new Date(now.getTime() - 1_000) },
+    });
+    expect(
+      await repository.timeoutExpiredAttempt(execution.attemptId, now, {
+        code: 'executor_lease_expired',
+      }),
+    ).toBe(true);
+    expect(
+      (await prisma.executionJob.findUniqueOrThrow({ where: { jobId: execution.jobId } })).status,
+    ).toBe(AttemptStatuses.TIMED_OUT);
+  });
+
   it('atomically saves checkpoint and requires a matching signal before re-leasing', async () => {
     const checkpoint = {
       jobId: execution.jobId,

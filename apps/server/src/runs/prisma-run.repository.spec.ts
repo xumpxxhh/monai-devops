@@ -1,9 +1,15 @@
 import { jest } from '@jest/globals';
 import type { ConfigService } from '@nestjs/config';
+import type { WorkflowRunResult } from '@monai-devops/core-engine';
 import { assertTestDatabaseUrl } from '../common/storage/assert-test-database-url.js';
+import type { EngineService } from '../engine/engine.service.js';
+import type { ExecutionLeaseService } from '../execution/execution-lease.service.js';
+import type { ExecutionRepository } from '../execution/execution.repository.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import type { RunRecord } from './runs.repository.js';
 import { PrismaRunRepository } from './prisma-run.repository.js';
+import { RunManagerService } from './run-manager.service.js';
+import type { RunStreamService } from './run-stream.service.js';
 import type { SerializedWorkflowLifecycleEvent } from '../common/serialization/serialize-workflow-event.js';
 
 const databaseUrl = process.env.DATABASE_URL?.trim();
@@ -135,6 +141,116 @@ describeIfDb('PrismaRunRepository integration', () => {
         new Date(Date.now() + 60_000),
       ),
     ).toBe(false);
+  });
+
+  it('lists only old unleased or expired top-level Runs for recovery', async () => {
+    const old = baseRecord('old-queued');
+    old.status = 'queued';
+    old.createdAt = new Date(Date.now() - 60_000);
+    await repository.save(old);
+    const recent = baseRecord('recent-queued');
+    recent.status = 'queued';
+    await repository.save(recent);
+    await repository.save(baseRecord('expired-running'));
+    await repository.save(baseRecord('live-running'));
+    const until = new Date(Date.now() + 60_000);
+    expect(await repository.acquireRunLease('expired-running', 'old', 'expired-token', until)).toBe(
+      true,
+    );
+    expect(await repository.acquireRunLease('live-running', 'live', 'live-token', until)).toBe(
+      true,
+    );
+    await prisma.run.update({
+      where: { runId: 'expired-running' },
+      data: { leaseExpiresAt: new Date(Date.now() - 1_000) },
+    });
+
+    const ids = await repository.listRecoverableRunIds(
+      new Date(),
+      new Date(Date.now() - 5_000),
+      10,
+    );
+    expect(ids).toEqual(expect.arrayContaining(['old-queued', 'expired-running']));
+    expect(ids).not.toEqual(expect.arrayContaining(['recent-queued', 'live-running']));
+  });
+
+  it('starts a persisted Run only once when two managers race to recover it', async () => {
+    const queued = baseRecord();
+    queued.status = 'queued';
+    queued.workflowSnapshot.steps = [];
+    queued.counts.total = 0;
+    await repository.save(queued);
+
+    let finish!: (result: WorkflowRunResult) => void;
+    const pending = new Promise<WorkflowRunResult>((resolve) => {
+      finish = resolve;
+    });
+    const engine = { runWorkflow: jest.fn(async () => pending) } as unknown as EngineService;
+    const executions = {
+      listJobsForRun: jest.fn(async () => []),
+    } as unknown as ExecutionRepository;
+    const streams = { fanOut: jest.fn() } as unknown as RunStreamService;
+    const makeManager = () =>
+      new RunManagerService(
+        engine,
+        repository,
+        streams,
+        config,
+        executions,
+        {} as ExecutionLeaseService,
+        { request: jest.fn() } as never,
+      );
+    const first = makeManager();
+    const second = makeManager();
+
+    const accepted = await Promise.all([
+      first.resumePersistedRun(queued.runId),
+      second.resumePersistedRun(queued.runId),
+    ]);
+    expect(accepted.filter(Boolean)).toHaveLength(1);
+    expect(engine.runWorkflow).toHaveBeenCalledTimes(1);
+    expect(engine.runWorkflow).toHaveBeenCalledWith(
+      queued.runId,
+      queued.workflowSnapshot,
+      expect.any(Object),
+      { resume: { completedResults: [], nextAttemptByStep: {} } },
+    );
+
+    finish({ success: true, status: 'success', workflowId: 'wf-1', results: [] });
+    for (let i = 0; i < 50; i++) {
+      if ((await repository.findById(queued.runId))?.status === 'finished') break;
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    expect((await repository.findById(queued.runId))?.status).toBe('finished');
+    first.onModuleDestroy();
+    second.onModuleDestroy();
+  });
+
+  it('releases ownership without executing when a recovery snapshot is invalid', async () => {
+    const blocked = baseRecord('blocked-recovery');
+    blocked.status = 'queued';
+    blocked.workflowSnapshot.stateSchema = {
+      type: 'object',
+      properties: { count: { type: 'number' } },
+      required: ['count'],
+    };
+    await repository.save(blocked);
+    const engine = { runWorkflow: jest.fn() } as unknown as EngineService;
+    const manager = new RunManagerService(
+      engine,
+      repository,
+      {} as RunStreamService,
+      config,
+      { listJobsForRun: jest.fn(async () => []) } as unknown as ExecutionRepository,
+      {} as ExecutionLeaseService,
+      { request: jest.fn() } as never,
+    );
+
+    await expect(manager.resumePersistedRun(blocked.runId)).rejects.toThrow(/缺少可恢复 state/);
+    expect(engine.runWorkflow).not.toHaveBeenCalled();
+    const row = await prisma.run.findUniqueOrThrow({ where: { runId: blocked.runId } });
+    expect(row.status).toBe('queued');
+    expect(row.leaseToken).toBeNull();
   });
 
   it('merges consecutive stream logs on appendEvent', async () => {

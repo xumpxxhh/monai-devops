@@ -66,6 +66,12 @@ export interface RunRepository {
   acquireRunLease(runId: string, ownerId: string, token: string, expiresAt: Date): Promise<boolean>;
   heartbeatRunLease(runId: string, token: string, expiresAt: Date): Promise<boolean>;
   releaseRunLease(runId: string, token: string): Promise<boolean>;
+  listRecoverableRunIds(
+    now: Date,
+    unleasedBefore: Date,
+    limit: number,
+    excludeRunIds?: string[],
+  ): Promise<string[]>;
 }
 
 export const RUN_REPOSITORY = Symbol('RUN_REPOSITORY');

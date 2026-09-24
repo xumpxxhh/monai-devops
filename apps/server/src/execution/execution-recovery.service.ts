@@ -9,14 +9,17 @@ export class ExecutionRecoveryService implements OnModuleInit {
   constructor(@Inject(EXECUTION_REPOSITORY) private readonly repository: ExecutionRepository) {}
 
   async onModuleInit(): Promise<void> {
+    await this.scanExpiredAttempts();
+  }
+
+  async scanExpiredAttempts(): Promise<void> {
     try {
       const recoverable = await this.repository.listRecoverable(new Date());
       for (const attempt of recoverable) {
         if (attempt.status === AttemptStatuses.WAITING) continue;
-        const timedOut = await this.repository.transitionAttempt(
+        const timedOut = await this.repository.timeoutExpiredAttempt(
           attempt.attemptId,
-          attempt.status,
-          AttemptStatuses.TIMED_OUT,
+          new Date(),
           {
             code: 'executor_lease_expired',
             category: 'infrastructure',
@@ -24,7 +27,6 @@ export class ExecutionRecoveryService implements OnModuleInit {
           },
         );
         if (timedOut) {
-          await this.repository.setJobStatus(attempt.jobId, AttemptStatuses.TIMED_OUT);
           this.logger.warn(
             `Recovered expired execution attempt as timed out: ${attempt.attemptId}`,
           );

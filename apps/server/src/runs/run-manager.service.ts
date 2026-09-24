@@ -361,6 +361,9 @@ export class RunManagerService implements OnModuleInit, OnModuleDestroy {
       traceId,
       priority: options.priority,
       initialState: options.initialState,
+    }).catch((error: unknown) => {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.error(`Run ${runId} dispatch failed: ${message}`);
     });
 
     return { runId, status: 'queued' as const };
@@ -529,6 +532,46 @@ export class RunManagerService implements OnModuleInit, OnModuleDestroy {
       return;
     }
 
+    await this.runLeasedWorkflow(
+      runId,
+      workflow,
+      context,
+      context.initialState !== undefined ? { initialState: context.initialState } : undefined,
+    );
+  }
+
+  /** 仅由恢复扫描调用；先取得 Run lease，再重建快照，绝不重放未授权步骤。 */
+  async resumePersistedRun(runId: string): Promise<boolean> {
+    if (this.managedRunIds.has(runId)) return false;
+    if (!(await this.acquireRunLease(runId))) return false;
+    try {
+      const run = await this.runRepository.findById(runId);
+      if (!run) throw new RunRecoveryNotReadyError(`Run ${runId} 不存在`);
+      const resume = await this.loadRecoverySnapshot(runId);
+      this.managedRunIds.add(runId);
+      this.fencedRunIds.add(runId);
+      void this.runLeasedWorkflow(
+        runId,
+        run.workflowSnapshot,
+        { traceId: run.traceId ?? runId },
+        { resume },
+      ).catch((error: unknown) => {
+        const message = error instanceof Error ? error.message : String(error);
+        this.logger.error(`Recovered Run ${runId} failed to settle: ${message}`);
+      });
+      return true;
+    } catch (error) {
+      await this.releaseRunLease(runId);
+      throw error;
+    }
+  }
+
+  private async runLeasedWorkflow(
+    runId: string,
+    workflow: WorkflowDefinition,
+    context: { traceId: string; priority?: number },
+    callOptions?: { initialState?: unknown; resume?: WorkflowResumeSnapshot },
+  ): Promise<void> {
     try {
       const result = await this.engineService.runWorkflow(
         runId,
@@ -537,7 +580,7 @@ export class RunManagerService implements OnModuleInit, OnModuleDestroy {
           traceId: context.traceId,
           priority: context.priority,
         },
-        context.initialState !== undefined ? { initialState: context.initialState } : undefined,
+        callOptions,
       );
       if (!this.runLeases.has(runId)) return;
       await this.finalizeIfNeeded(runId, result);
@@ -623,6 +666,10 @@ export class RunManagerService implements OnModuleInit, OnModuleDestroy {
   private async processEngineEvent(event: WorkflowLifecycleEvent): Promise<void> {
     const persistRunId = this.resolvePersistRunId(event);
     if (!this.managedRunIds.has(persistRunId)) return;
+    if (this.fencedRunIds.has(persistRunId)) {
+      const lease = this.runLeases.get(persistRunId);
+      if (!lease || !(await this.heartbeatRunLease(persistRunId, lease.token))) return;
+    }
     const nested = this.isNestedEngineEvent(event);
     const serialized = serializeWorkflowEvent(event);
     const offset = await this.runRepository.appendEvent(persistRunId, serialized);
@@ -637,9 +684,10 @@ export class RunManagerService implements OnModuleInit, OnModuleDestroy {
     await this.projectExecutionState(event, persistRunId);
 
     if (event.type === 'workflow:start') {
+      const existing = await this.runRepository.findById(persistRunId);
       await this.runRepository.update(persistRunId, {
         status: 'running',
-        startedAt: new Date(),
+        startedAt: existing?.startedAt ?? new Date(),
       });
     }
 
