@@ -1,0 +1,143 @@
+import {
+  AttemptStatuses,
+  resolveRetryPolicy,
+  StepStatuses,
+  type ExecutionResult,
+  type WorkflowResumeSnapshot,
+} from '@monai-devops/core-engine';
+import type { RecoveryJob } from '../execution/execution.repository.js';
+import type { RunRecord } from './runs.repository.js';
+
+export class RunRecoveryNotReadyError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'RunRecoveryNotReadyError';
+  }
+}
+
+function reject(reason: string): never {
+  throw new RunRecoveryNotReadyError(reason);
+}
+
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined;
+}
+
+/**
+ * 从 Run 的事件与权威 Job/Attempt 状态构建执行器快照。
+ * 此函数只重建、校验，不认领 Run；调用方必须先获得 Run 级独占执行权。
+ */
+export function buildRunRecoverySnapshot(
+  run: RunRecord,
+  jobs: readonly RecoveryJob[],
+): WorkflowResumeSnapshot {
+  if (run.status !== 'queued' && run.status !== 'running') {
+    reject(`Run ${run.runId} 的状态 ${run.status} 不允许直接续跑`);
+  }
+  if (run.result || run.events.some((event) => event.type === 'workflow:finished')) {
+    reject('已有工作流终态，不能重建活跃 Run');
+  }
+  if (run.counts.failed > 0 || run.counts.skipped > 0) {
+    reject('含失败或跳过步骤的 Run 尚不支持快照续跑');
+  }
+
+  const steps = new Map(run.workflowSnapshot.steps.map((step) => [step.id, step]));
+  if (
+    steps.size !== run.workflowSnapshot.steps.length ||
+    run.counts.total !== run.workflowSnapshot.steps.length
+  ) {
+    reject('Run 步骤总数与工作流快照不一致');
+  }
+  const completed = new Map<string, ExecutionResult>();
+  let latestState: unknown;
+  let hasSetState = false;
+
+  for (const event of run.events) {
+    if (event.type !== 'step:finished' || event.workflowRunId !== run.runId || event.parent) {
+      continue;
+    }
+    const step = asRecord(event.step);
+    const result = asRecord(event.result);
+    const stepId = step?.id;
+    if (typeof stepId !== 'string' || !steps.has(stepId) || result?.stepId !== stepId) {
+      reject('步骤完成事件与工作流快照不一致');
+    }
+    if (result?.status !== StepStatuses.COMPLETED) continue;
+    if (
+      result.success !== true ||
+      asRecord(result.pluginResult)?.success !== true ||
+      completed.has(stepId)
+    ) {
+      reject(`步骤 ${stepId} 的完成事件重复或不完整`);
+    }
+    completed.set(stepId, result as unknown as ExecutionResult);
+    if (steps.get(stepId)?.kind === 'set_state') {
+      const state = asRecord(result.pluginResult)?.data;
+      if (state === undefined) reject(`set_state 步骤 ${stepId} 缺少 state 输出`);
+      latestState = state;
+      hasSetState = true;
+    }
+  }
+
+  if (completed.size !== run.counts.completed) {
+    reject('步骤完成事件与 Run 计数不一致，可能已被裁剪或尚未完成投影');
+  }
+  for (const stepId of completed.keys()) {
+    const step = steps.get(stepId)!;
+    if ((step.dependsOn ?? []).some((dependencyId) => !completed.has(dependencyId))) {
+      reject(`步骤 ${stepId} 缺少已完成的依赖事件`);
+    }
+  }
+
+  const nextAttemptByStep: Record<string, number> = {};
+  const seenJobs = new Set<string>();
+  for (const job of jobs) {
+    const step = steps.get(job.stepId);
+    if (!step || seenJobs.has(job.stepId)) reject(`Job 对应未知或重复步骤：${job.stepId}`);
+    seenJobs.add(job.stepId);
+    const latest = job.attempts[job.attempts.length - 1];
+    if (!latest) reject(`Job ${job.stepId} 缺少 Attempt`);
+    if (job.attempts.some((attempt, index) => attempt.attempt !== index)) {
+      reject(`Job ${job.stepId} 的 Attempt 序号不连续`);
+    }
+    if (completed.has(job.stepId)) {
+      if (latest.status !== AttemptStatuses.SUCCEEDED || job.status !== AttemptStatuses.SUCCEEDED) {
+        reject(`步骤 ${job.stepId} 的完成事件与 Attempt 状态不一致`);
+      }
+      continue;
+    }
+    if (latest.status === AttemptStatuses.QUEUED && job.status === AttemptStatuses.QUEUED) {
+      nextAttemptByStep[job.stepId] = latest.attempt;
+      continue;
+    }
+    if (latest.status === AttemptStatuses.TIMED_OUT || latest.status === AttemptStatuses.FAILED) {
+      const retryable =
+        latest.status === AttemptStatuses.TIMED_OUT || asRecord(latest.reason)?.retryable === true;
+      const nextAttempt = latest.attempt + 1;
+      if (!retryable || nextAttempt >= resolveRetryPolicy(step.retryPolicy).maxAttempts) {
+        reject(`步骤 ${job.stepId} 已失败且无可用重试 Attempt`);
+      }
+      nextAttemptByStep[job.stepId] = nextAttempt;
+      continue;
+    }
+    reject(`步骤 ${job.stepId} 处于 ${latest.status}，不能直接构建续跑快照`);
+  }
+  for (const stepId of completed.keys()) {
+    if (!seenJobs.has(stepId)) reject(`已完成步骤 ${stepId} 缺少 Job`);
+  }
+
+  const snapshot: WorkflowResumeSnapshot = {
+    completedResults: [...completed.values()],
+    nextAttemptByStep,
+  };
+  if (run.workflowSnapshot.stateSchema !== undefined) {
+    if (hasSetState) {
+      snapshot.state = latestState;
+    } else {
+      reject('有 stateSchema 的 Run 缺少可恢复 state');
+    }
+  }
+  return snapshot;
+}

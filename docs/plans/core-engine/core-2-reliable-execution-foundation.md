@@ -1,6 +1,6 @@
 # Core-2：可靠调度与恢复基础（进行中）
 
-> **阶段状态：进行中（执行器恢复快照入口已实现，服务端重建尚未接通）**
+> **阶段状态：进行中（服务端恢复快照重建已实现，自动接管尚未接通）**
 
 ## 已落地基础
 
@@ -29,6 +29,7 @@
 - `signalWait` 只接受匹配 key 的未超时 waiting Attempt，同一信号重复投递仅首个生效；timer 和超时由周期扫描标记，超时 Attempt/Job 进入 timed_out；
 - waiting Attempt 只有在被标记为 ready 后才能重新获取 lease，避免启动扫描或误投递直接越过等待条件。
 - `executeWorkflow` 可接收恢复快照：从已成功完成的步骤结果重建 DAG 入度与下游输入，恢复完整 state，并以指定的下一 Attempt 序号续跑未完成步骤；快照会校验步骤、依赖、state 和 retry 上限，已完成步骤不重发完成事件。
+- 服务端可从持久化 Run 事件及 Job/Attempt 视图构建恢复快照：按 Run 计数校验已完成事件未被裁剪，核对 Job/Attempt 终态与依赖，并只为排队中或允许重试且尚有额度的步骤指定 Attempt；嵌套事件不参与顶层恢复。此入口只读取和校验，不执行 Run。
 
 ## 权威边界
 
@@ -42,12 +43,12 @@
 - 终态仍由有序事件链投影，执行前授权已是同步强制闸门；
 - 嵌套子执行暂不写 Job/Attempt 表，避免在子 Run 不独立落表时破坏外键和 `(runId, stepId)` 唯一性；
 - 当前进程内的可重试失败已经自动创建下一 Attempt；服务重启后扫描出的 timed_out Attempt 尚未自动恢复；
-- 恢复快照目前是执行器能力；服务端尚未从 Run 事件、Job/Attempt 和 checkpoint 构建快照，也没有 Run 所有权 lease，因此不能安全地自动接管旧 Run。失联步骤的重试许可和幂等性必须由接管方在调用执行器前裁决。
+- 服务端恢复快照重建已接入 Run/Job 仓储，但尚无 Run 所有权 lease，因此不能安全地自动接管旧 Run；checkpoint 的插件级续跑、waiting/ready、paused、已有失败/跳过分支仍明确拒绝。Run 事件可能裁剪，缺失已完成步骤时拒绝重建。含 stateSchema 且没有已完成 `set_state` 输出的 Run 也拒绝重建，直到初始 state 有不暴露于公开 metadata 的私有持久化位置。失联步骤的幂等性仍须由接管方裁决。
 - 等待与唤醒已有数据库原子协议，但尚未由工作流步骤调用；ready Attempt 不会自动重建 RunHandle 或续跑 DAG。下一批须接入运行时恢复，才能形成用户可见的长任务等待闭环。
 - 控制命令已经跨进程持久化，但当前仍由内嵌 Executor 轮询；远程 Executor 协议留到 Core-3。
 
 ## 下一闭环
 
-1. 从 Run 事件、Job/Attempt 和 checkpoint 构建恢复快照，为 Run 增加所有权 lease 后再自动接管；
+1. 为 Run 增加所有权 lease 与私有 state 持久化，再将已校验快照接入受保护的自动接管；
 2. 为启动扫描出的 timed_out Attempt 执行恢复策略；
 3. 完成重复投递、失联和重启故障测试。

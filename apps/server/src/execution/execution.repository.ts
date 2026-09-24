@@ -24,6 +24,18 @@ export interface RecoverableAttempt {
   wakeReadyAt?: Date;
 }
 
+/** 构建 Run 恢复快照所需的持久化 Job/Attempt 视图。 */
+export interface RecoveryJob {
+  stepId: string;
+  status: AttemptStatus;
+  checkpoint?: ExecutionCheckpoint;
+  attempts: Array<{
+    attempt: number;
+    status: AttemptStatus;
+    reason?: unknown;
+  }>;
+}
+
 export interface RegisterExecutionWaitInput {
   execution: ExecutionIdentity;
   leaseToken: string;
@@ -64,6 +76,7 @@ export interface ExecutionRepository {
   setJobStatus(jobId: string, status: AttemptStatus): Promise<void>;
   saveCheckpoint(checkpoint: ExecutionCheckpoint): Promise<void>;
   listRecoverable(now: Date): Promise<RecoverableAttempt[]>;
+  listJobsForRun(runId: string): Promise<RecoveryJob[]>;
   registerWait(input: RegisterExecutionWaitInput): Promise<boolean>;
   signalWait(attemptId: string, key: string, payload: unknown, now: Date): Promise<boolean>;
   wakeDueTimers(now: Date): Promise<number>;

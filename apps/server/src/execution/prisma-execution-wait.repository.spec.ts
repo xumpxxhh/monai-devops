@@ -62,6 +62,25 @@ describeIfDb('PrismaExecutionRepository durable waits', () => {
     await prisma.run.delete({ where: { runId } });
   });
 
+  it('loads the persisted Job, Attempt and checkpoint for Run reconstruction', async () => {
+    const checkpoint = {
+      jobId: execution.jobId,
+      sourceAttemptId: execution.attemptId,
+      version: 1,
+      payload: { cursor: 'page-2' },
+      createdAt: new Date().toISOString(),
+    };
+    await repository.saveCheckpoint(checkpoint);
+
+    expect(await repository.listJobsForRun(runId)).toEqual([
+      expect.objectContaining({
+        stepId: 'step',
+        checkpoint,
+        attempts: [expect.objectContaining({ attempt: 0, status: AttemptStatuses.RUNNING })],
+      }),
+    ]);
+  });
+
   it('atomically saves checkpoint and requires a matching signal before re-leasing', async () => {
     const checkpoint = {
       jobId: execution.jobId,

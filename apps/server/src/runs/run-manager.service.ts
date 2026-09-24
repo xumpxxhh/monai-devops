@@ -22,6 +22,7 @@ import {
   type RetryPolicy,
   type WorkflowLifecycleEvent,
   type WorkflowRunResult,
+  type WorkflowResumeSnapshot,
 } from '@monai-devops/core-engine';
 import {
   serializeWorkflowEvent,
@@ -47,6 +48,7 @@ import {
 } from '../execution/execution.repository.js';
 import { ExecutionLeaseService } from '../execution/execution-lease.service.js';
 import { ExecutionControlService } from '../execution/execution-control.service.js';
+import { buildRunRecoverySnapshot, RunRecoveryNotReadyError } from './run-recovery-snapshot.js';
 
 export interface SubmitRunOptions {
   priority?: number;
@@ -278,6 +280,14 @@ export class RunManagerService implements OnModuleInit {
     if (!record) return undefined;
     const engineStatus = this.engineService.getRunStatus(runId);
     return mergeEngineControlStatus(record, engineStatus);
+  }
+
+  /** 仅读取并校验恢复输入；不获得 Run 执行权，也不启动工作流。 */
+  async loadRecoverySnapshot(runId: string): Promise<WorkflowResumeSnapshot> {
+    const run = await this.runRepository.findById(runId);
+    if (!run) throw new RunRecoveryNotReadyError(`Run ${runId} 不存在`);
+    const jobs = await this.executionRepository.listJobsForRun(runId);
+    return buildRunRecoverySnapshot(run, jobs);
   }
 
   async listRuns(filter: Parameters<RunRepository['list']>[0]) {

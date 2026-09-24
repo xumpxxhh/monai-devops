@@ -42,6 +42,37 @@ describe('RunManagerService execution projection', () => {
     return { service, project, repository, leases };
   }
 
+  it('loads a recovery snapshot from the Run and Job repositories without executing it', async () => {
+    const runRepository = {
+      findById: jest.fn(async () => ({
+        runId: 'run-1',
+        workflowId: 'workflow-1',
+        workflowSnapshot: { id: 'workflow-1', name: 'Recovery', steps: [] },
+        status: 'queued',
+        counts: { total: 0, completed: 0, failed: 0, skipped: 0 },
+        createdAt: new Date(),
+        events: [],
+      })),
+    };
+    const executionRepository = { listJobsForRun: jest.fn(async () => []) };
+    const service = new RunManagerService(
+      {} as EngineService,
+      runRepository as unknown as RunRepository,
+      {} as RunStreamService,
+      { get: jest.fn() } as unknown as ConfigService,
+      executionRepository as unknown as ExecutionRepository,
+      {} as ExecutionLeaseService,
+      { request: jest.fn() } as never,
+    );
+
+    expect(await service.loadRecoverySnapshot('run-1')).toEqual({
+      completedResults: [],
+      nextAttemptByStep: {},
+    });
+    expect(runRepository.findById).toHaveBeenCalledWith('run-1');
+    expect(executionRepository.listJobsForRun).toHaveBeenCalledWith('run-1');
+  });
+
   it('acquires the durable lease before a managed step is allowed to execute', async () => {
     const { service, repository, leases } = createSubject();
     (service as unknown as { managedRunIds: Set<string> }).managedRunIds.add('run-1');

@@ -13,6 +13,7 @@ import type {
   ExecutionRepository,
   RegisterExecutionWaitInput,
   RecoverableAttempt,
+  RecoveryJob,
 } from './execution.repository.js';
 import type { ExecutionCheckpoint, ExecutionIdentity } from '@monai-devops/core-engine';
 
@@ -147,6 +148,24 @@ export class PrismaExecutionRepository implements ExecutionRepository {
       leaseOwner: row.leaseOwner ?? undefined,
       leaseExpiresAt: row.leaseExpiresAt ?? undefined,
       wakeReadyAt: row.wakeReadyAt ?? undefined,
+    }));
+  }
+
+  async listJobsForRun(runId: string): Promise<RecoveryJob[]> {
+    const rows = await this.prisma.executionJob.findMany({
+      where: { runId },
+      include: { attempts: { orderBy: { attempt: 'asc' } } },
+      orderBy: { createdAt: 'asc' },
+    });
+    return rows.map((row) => ({
+      stepId: row.stepId,
+      status: row.status as RecoveryJob['status'],
+      checkpoint: (row.checkpoint as unknown as RecoveryJob['checkpoint']) ?? undefined,
+      attempts: row.attempts.map((attempt) => ({
+        attempt: attempt.attempt,
+        status: attempt.status as RecoveryJob['status'],
+        reason: attempt.reason ?? undefined,
+      })),
     }));
   }
 
