@@ -1,5 +1,12 @@
 # apps/server 开发日志
 
+## 2026-09-24
+
+- **变更**：为 `execution_attempts` 增加 signal/timer 等待条件、超时、ready 时间与唤醒载荷；`registerWait` 在数据库事务中校验 lease 和 checkpoint version，保存 Job checkpoint 并释放 Attempt lease。
+- **变更**：增加信号去重、定时唤醒与超时扫描；未满足唤醒条件的 waiting Attempt 无法重新领取。
+- **验证**：开发库和测试库 schema 已同步；79 项 server 测试通过，其中新增 3 项 PostgreSQL 等待状态集成测试。
+- **边界**：工作流执行器尚未调用等待协议或从 checkpoint 续跑，用户侧长任务等待仍需下一批运行时接入。
+
 ## 2026-09-23
 
 - **变更**：新增 `execution_control_commands` 权威控制命令表；pause/resume/cancel 在调用进程内引擎前持久化，Executor 按 owner 能力轮询、原子认领并回写 applied/rejected，过期认领可恢复。

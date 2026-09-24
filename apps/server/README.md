@@ -152,6 +152,7 @@ pnpm sync:plugins
 | `RUN_HISTORY_LIMIT`              |               | `500`       | 单 Run 事件条数上限（超限优先裁剪 `plugin:log`）                             |
 | `EXECUTION_CONTROL_POLL_MS`      |               | `500`       | Executor 轮询跨进程控制命令的间隔                                            |
 | `EXECUTION_CONTROL_CLAIM_TTL_MS` |               | `30000`     | 控制命令认领失效并允许其他消费者重领的时间                                   |
+| `EXECUTION_WAKE_POLL_MS`         |               | `1000`      | 持久化定时等待与超时扫描间隔                                                 |
 | `MONAI_ENV_FILE`                 |               | —           | 指定 env 文件并 **覆盖** 其中键（`dev:test` 使用）                           |
 
 加载顺序（`preload-env`）：
@@ -171,10 +172,12 @@ pnpm sync:plugins
 | `workflow_imports`                      | 父工作流导入子工作流：`mode` = `reference` \| `copy`，`id` 即步骤里的 `importId` |
 | `runs`                                  | 一次顶层执行：快照、状态、计数、结果、可选 `parent_run_id`                       |
 | `run_events`                            | 事件流（`run_id` + `event_index` 唯一）                                          |
-| `execution_jobs` / `execution_attempts` | Job、Attempt、lease、heartbeat 与 checkpoint 权威状态                            |
+| `execution_jobs` / `execution_attempts` | Job、Attempt、lease、heartbeat、checkpoint 与等待/唤醒条件权威状态               |
 | `execution_control_commands`            | pause/resume/cancel 跨进程命令、认领者与处理结果                                 |
 
 Run 状态：`queued` → `running` / `pausing` / `paused` → `finished` \| `failed` \| `cancelled`；校验失败可为 `rejected`。进行中的 Run 不可删除。
+
+可靠执行仓储支持 signal/timer 等待条件、checkpoint、唤醒去重和超时扫描。工作流步骤尚未接入等待协议；ready Attempt 的自动续跑将在 Core-2 恢复阶段完成。
 
 ---
 

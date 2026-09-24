@@ -10,6 +10,7 @@ import { PrismaExecutionRepository } from '../execution/prisma-execution.reposit
 import { ExecutionLeaseService } from '../execution/execution-lease.service.js';
 import { ExecutionRecoveryService } from '../execution/execution-recovery.service.js';
 import { ExecutionControlService } from '../execution/execution-control.service.js';
+import { ExecutionWakeService } from '../execution/execution-wake.service.js';
 
 @Global()
 @Module({
@@ -22,6 +23,7 @@ import { ExecutionControlService } from '../execution/execution-control.service.
     ExecutionLeaseService,
     ExecutionRecoveryService,
     ExecutionControlService,
+    ExecutionWakeService,
     RunManagerService,
     RunStreamService,
     RunsGateway,

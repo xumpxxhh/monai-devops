@@ -7,6 +7,7 @@ import {
   isAttemptTerminal,
   validateReliableExecutionContract,
   retryBackoffMs,
+  validateWakeCondition,
 } from '../reliability/index.js';
 import { createWorkflowExecutor, type WorkflowLifecycleEvent } from '../executor/index.js';
 import { SkipReasons } from '../errors.js';
@@ -51,6 +52,15 @@ describe('reliable execution contract', () => {
     assert.equal(retryBackoffMs(policy, 0), 100);
     assert.equal(retryBackoffMs(policy, 1), 200);
     assert.equal(retryBackoffMs(policy, 2), 250);
+  });
+
+  it('validates signal and timer wake conditions', () => {
+    assert.doesNotThrow(() => validateWakeCondition({ kind: 'signal', key: 'approval' }));
+    assert.doesNotThrow(() =>
+      validateWakeCondition({ kind: 'timer', wakeAt: '2026-09-24T12:00:00.000Z' }),
+    );
+    assert.throws(() => validateWakeCondition({ kind: 'signal', key: ' ' }), /key/);
+    assert.throws(() => validateWakeCondition({ kind: 'timer', wakeAt: 'invalid' }), /wakeAt/);
   });
 
   it('creates a new attempt for a retryable failure and preserves event history', async () => {

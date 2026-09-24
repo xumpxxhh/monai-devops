@@ -3,6 +3,7 @@ import type {
   ExecutionCheckpoint,
   ExecutionIdentity,
   RetryPolicy,
+  ExecutionWakeCondition,
 } from '@monai-devops/core-engine';
 
 export interface CreateExecutionJobInput {
@@ -20,6 +21,14 @@ export interface RecoverableAttempt {
   status: AttemptStatus;
   leaseOwner?: string;
   leaseExpiresAt?: Date;
+  wakeReadyAt?: Date;
+}
+
+export interface RegisterExecutionWaitInput {
+  execution: ExecutionIdentity;
+  leaseToken: string;
+  checkpoint: ExecutionCheckpoint;
+  condition: ExecutionWakeCondition;
 }
 
 export type ExecutionControlType = 'pause' | 'resume' | 'cancel';
@@ -55,6 +64,10 @@ export interface ExecutionRepository {
   setJobStatus(jobId: string, status: AttemptStatus): Promise<void>;
   saveCheckpoint(checkpoint: ExecutionCheckpoint): Promise<void>;
   listRecoverable(now: Date): Promise<RecoverableAttempt[]>;
+  registerWait(input: RegisterExecutionWaitInput): Promise<boolean>;
+  signalWait(attemptId: string, key: string, payload: unknown, now: Date): Promise<boolean>;
+  wakeDueTimers(now: Date): Promise<number>;
+  expireWaits(now: Date): Promise<number>;
   enqueueControl(command: ExecutionControlCommand): Promise<void>;
   listClaimableControls(staleBefore: Date, limit: number): Promise<ExecutionControlCommand[]>;
   claimControl(commandId: string, ownerId: string, staleBefore: Date): Promise<boolean>;

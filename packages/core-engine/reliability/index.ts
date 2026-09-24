@@ -54,6 +54,25 @@ export interface ExecutionCheckpoint {
   createdAt: string;
 }
 
+export type ExecutionWakeCondition =
+  | { kind: 'signal'; key: string; timeoutAt?: string }
+  | { kind: 'timer'; wakeAt: string; timeoutAt?: string };
+
+export function validateWakeCondition(condition: ExecutionWakeCondition): void {
+  if (condition.kind === 'signal') {
+    if (!condition.key.trim()) throw new Error('wake condition key must not be empty');
+  } else if (condition.kind === 'timer') {
+    if (!Number.isFinite(Date.parse(condition.wakeAt))) {
+      throw new Error('wakeAt must be a valid timestamp');
+    }
+  } else {
+    throw new Error('wake condition kind must be signal or timer');
+  }
+  if (condition.timeoutAt !== undefined && !Number.isFinite(Date.parse(condition.timeoutAt))) {
+    throw new Error('timeoutAt must be a valid timestamp');
+  }
+}
+
 export interface ReliableExecutionContract {
   execution: ExecutionIdentity;
   idempotencyKey: string;

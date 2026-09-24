@@ -1,6 +1,6 @@
 # Core-2：可靠调度与恢复基础（进行中）
 
-> **阶段状态：进行中（Cross-process control implemented）**
+> **阶段状态：进行中（Durable wait repository implemented）**
 
 ## 已落地基础
 
@@ -24,6 +24,10 @@
 - 同进程控制仍即时执行；跨进程请求保持 pending，直到实际持有者消费；尚未启动的 queued Run 可在无内存 owner 时直接持久化取消；
 - pause/resume/cancel 的状态投影仍沿用原有 Run 状态与事件语义，旧客户端可忽略新增的 control 响应字段。
 - Web 控制栏区分 pending/applied/rejected，不会把仍在等待其他执行节点处理的请求误报为已经完成。
+- Attempt 新增持久化等待条件：signal key 或 timer wakeAt、可选 timeoutAt、wakeReadyAt 与唤醒载荷；
+- `registerWait` 以有效 lease token、Attempt 身份和递增 checkpoint version 为闸门，在同一数据库事务中保存 Job checkpoint、切换 Attempt/Job 为 waiting，并清除 lease；
+- `signalWait` 只接受匹配 key 的未超时 waiting Attempt，同一信号重复投递仅首个生效；timer 和超时由周期扫描标记，超时 Attempt/Job 进入 timed_out；
+- waiting Attempt 只有在被标记为 ready 后才能重新获取 lease，避免启动扫描或误投递直接越过等待条件。
 
 ## 权威边界
 
@@ -37,11 +41,11 @@
 - 终态仍由有序事件链投影，执行前授权已是同步强制闸门；
 - 嵌套子执行暂不写 Job/Attempt 表，避免在子 Run 不独立落表时破坏外键和 `(runId, stepId)` 唯一性；
 - 当前进程内的可重试失败已经自动创建下一 Attempt；服务重启后扫描出的 timed_out Attempt 尚未自动恢复；
-- waiting/checkpoint 已有持久化契约，尚未接入实际唤醒协议。
+- 等待与唤醒已有数据库原子协议，但尚未由工作流步骤调用；ready Attempt 不会自动重建 RunHandle 或续跑 DAG。下一批须接入运行时恢复，才能形成用户可见的长任务等待闭环。
 - 控制命令已经跨进程持久化，但当前仍由内嵌 Executor 轮询；远程 Executor 协议留到 Core-3。
 
 ## 下一闭环
 
-1. 接入 waiting/checkpoint 的持久化唤醒；
+1. 将 waiting/ready Attempt 接入工作流执行器，并从 checkpoint 重建可继续的 Run；
 2. 为启动扫描出的 timed_out Attempt 执行恢复策略；
 3. 完成重复投递、失联和重启故障测试。

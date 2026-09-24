@@ -87,6 +87,12 @@ model ExecutionAttempt {
   leaseExpiresAt DateTime?    @map("lease_expires_at")
   heartbeatAt    DateTime?    @map("heartbeat_at")
   reason         Json?
+  waitKind       String?      @map("wait_kind")
+  wakeKey        String?      @map("wake_key")
+  wakeAt         DateTime?    @map("wake_at")
+  waitTimeoutAt  DateTime?    @map("wait_timeout_at")
+  wakeReadyAt    DateTime?    @map("wake_ready_at")
+  wakePayload    Json?        @map("wake_payload")
   createdAt      DateTime     @default(now()) @map("created_at")
   startedAt      DateTime?    @map("started_at")
   finishedAt     DateTime?    @map("finished_at")
@@ -94,6 +100,9 @@ model ExecutionAttempt {
 
   @@unique([jobId, attempt])
   @@index([status, leaseExpiresAt])
+  @@index([status, wakeAt])
+  @@index([status, waitTimeoutAt])
+  @@index([wakeKey, status])
   @@map("execution_attempts")
 }
 

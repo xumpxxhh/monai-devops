@@ -1,5 +1,11 @@
 # @monai-devops/core-engine 开发日志
 
+## 2026-09-24
+
+- **变更**：Core-2 增加 signal/timer 唤醒条件契约及校验；server 将等待条件、wakeReadyAt 与载荷存入 Attempt，以事务保存 checkpoint 并切换 waiting，定时扫描将到期等待标记为 ready 或 timed_out。
+- **边界**：当前是持久化等待/唤醒仓储闭环；执行器尚未消费 ready Attempt，也尚未从 checkpoint 自动续跑 Run。
+- **验证**：core-engine 142 项、server 79 项测试（含等待仓储 PostgreSQL 集成）通过；开发库与测试库迁移成功，类型检查和 lint 通过。
+
 ## 2026-09-23
 
 - **变更**：完成 Core-1a 执行身份与源事件顺序：为工作流步骤注入稳定的 Job/Attempt identity，覆盖成功、失败、跳过、取消及未调度路径；顶层与嵌套 Run 共用单调事件序列。
