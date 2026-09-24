@@ -232,12 +232,23 @@ export interface EmbeddedRunHooks {
  */
 export interface ExecuteWorkflowCallOptions {
   initialState?: unknown;
+  /** 仅由持久化层构造；已完成步骤不会再次执行，也不会重发 step:finished。 */
+  resume?: WorkflowResumeSnapshot;
   resolveWorkflow?: ResolveWorkflow;
   embeddedRunHooks?: EmbeddedRunHooks;
   /** 当前嵌套深度（内部传递；顶层为 0） */
   nestingDepth?: number;
   /** 祖先工作流 id 链（含当前），用于引用环检测 */
   ancestorWorkflowIds?: string[];
+}
+
+/** 重建 DAG 调度所需的最小快照；失联步骤的重试许可由调用方先行裁决。 */
+export interface WorkflowResumeSnapshot {
+  completedResults: ExecutionResult[];
+  /** 声明 stateSchema 的工作流恢复时必须提供完整 state。 */
+  state?: unknown;
+  /** 下次执行所用 Attempt 序号（从 0 开始）；必须小于步骤的 maxAttempts。 */
+  nextAttemptByStep?: Record<string, number>;
 }
 
 /**

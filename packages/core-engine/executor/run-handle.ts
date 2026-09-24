@@ -116,6 +116,10 @@ export class RunHandle {
     this.totalSteps = total;
   }
 
+  setCompletedSteps(completed: number): void {
+    this.completedSteps = completed;
+  }
+
   incrementCompleted(): void {
     this.completedSteps += 1;
   }

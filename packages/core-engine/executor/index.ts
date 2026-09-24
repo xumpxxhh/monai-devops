@@ -106,6 +106,7 @@ export type {
   WorkflowDefinition,
   WorkflowRefStep,
   WorkflowRunResult,
+  WorkflowResumeSnapshot,
   WorkflowRunStatus,
   WorkflowStep,
 } from './types.js';
@@ -1370,7 +1371,42 @@ export function createWorkflowExecutor(options: ExecutorOptions = {}) {
       validateStepKinds(workflow);
       validateWorkflowContextReferences(workflow, { resolvePluginResultSchema });
 
-      if (callOptions.initialState !== undefined && workflow.stateSchema === undefined) {
+      const resume = callOptions.resume;
+      const resumedResults = new Map<string, ExecutionResult>();
+      if (resume) {
+        for (const result of resume.completedResults) {
+          if (!graph.stepById.has(result.stepId) || resumedResults.has(result.stepId)) {
+            throw new WorkflowValidationError(`恢复快照包含未知或重复步骤：${result.stepId}`);
+          }
+          if (result.status !== StepStatuses.COMPLETED || !result.success) {
+            throw new WorkflowValidationError(`恢复快照只允许已成功完成的步骤：${result.stepId}`);
+          }
+          resumedResults.set(result.stepId, result);
+        }
+        for (const stepId of resumedResults.keys()) {
+          const step = graph.stepById.get(stepId)!;
+          if ((step.dependsOn ?? []).some((dependencyId) => !resumedResults.has(dependencyId))) {
+            throw new WorkflowValidationError(`恢复快照缺少已完成步骤的依赖：${stepId}`);
+          }
+        }
+        for (const [stepId, attempt] of Object.entries(resume.nextAttemptByStep ?? {})) {
+          const step = graph.stepById.get(stepId);
+          if (
+            !step ||
+            resumedResults.has(stepId) ||
+            !Number.isInteger(attempt) ||
+            attempt < 0 ||
+            attempt >= resolveRetryPolicy(step.retryPolicy).maxAttempts
+          ) {
+            throw new WorkflowValidationError(`恢复快照包含无效 Attempt：${stepId}/${attempt}`);
+          }
+        }
+      }
+
+      if (
+        (callOptions.initialState !== undefined || resume?.state !== undefined) &&
+        workflow.stateSchema === undefined
+      ) {
         throw new WorkflowValidationError(
           `工作流 "${workflow.id}" 未声明 stateSchema，不允许传入 initialState`,
         );
@@ -1378,8 +1414,12 @@ export function createWorkflowExecutor(options: ExecutorOptions = {}) {
 
       let runState: RunStateBag | undefined;
       if (workflow.stateSchema !== undefined) {
-        const initial =
-          callOptions.initialState !== undefined
+        if (resume && resume.state === undefined) {
+          throw new WorkflowValidationError('声明 stateSchema 的工作流恢复时必须提供 state');
+        }
+        const initial = resume
+          ? resume.state
+          : callOptions.initialState !== undefined
             ? callOptions.initialState
             : defaultStateFromSchema(workflow.stateSchema);
         const parsed = parseState(workflow.stateSchema, initial);
@@ -1416,12 +1456,21 @@ export function createWorkflowExecutor(options: ExecutorOptions = {}) {
         }),
       );
 
-      const results = new Map<string, ExecutionResult>();
+      const results = new Map(resumedResults);
+      handle.setCompletedSteps(results.size);
       const inDegree = new Map(graph.inDegree);
       const ready: string[] = [];
 
+      for (const stepId of results.keys()) {
+        for (const dependentId of graph.dependents.get(stepId) ?? []) {
+          if (!results.has(dependentId)) {
+            inDegree.set(dependentId, (inDegree.get(dependentId) ?? 0) - 1);
+          }
+        }
+      }
+
       for (const [id, degree] of inDegree) {
-        if (degree === 0) ready.push(id);
+        if (degree === 0 && !results.has(id)) ready.push(id);
       }
 
       const inFlight = new Map<string, Promise<void>>();
@@ -1434,7 +1483,7 @@ export function createWorkflowExecutor(options: ExecutorOptions = {}) {
         const signal = handle.trackInFlight(stepId);
         try {
           const retryPolicy = resolveRetryPolicy(step.retryPolicy);
-          let attempt = 0;
+          let attempt = resume?.nextAttemptByStep?.[stepId] ?? 0;
           let result: ExecutionResult;
           while (true) {
             const executionContext: ExecutionContext = {
