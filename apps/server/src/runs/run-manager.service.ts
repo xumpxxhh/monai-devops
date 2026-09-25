@@ -205,6 +205,7 @@ export class RunManagerService implements OnModuleInit, OnModuleDestroy {
   }
 
   onModuleInit(): void {
+    this.executionControls.setResumePersistedRun?.((runId) => this.resumePersistedRun(runId));
     // 不向引擎回传 Promise：持久化串行在 eventChains 内完成，避免 DB 延迟/失败阻塞 core-engine
     this.engineService.onEvent((event) => {
       void this.enqueueEngineEvent(event);

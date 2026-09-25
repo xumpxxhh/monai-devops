@@ -74,6 +74,14 @@ describe('buildRunRecoverySnapshot', () => {
     expect(snapshot.nextAttemptByStep).toEqual({ b: 1 });
   });
 
+  it('accepts a safely paused Run without auto-starting it', () => {
+    const run = runRecord();
+    run.status = 'paused';
+    const snapshot = buildRunRecoverySnapshot(run, [jobs()[0]!]);
+    expect(snapshot.completedResults.map((result) => result.stepId)).toEqual(['a']);
+    expect(snapshot.nextAttemptByStep).toEqual({});
+  });
+
   it('rejects event history that was trimmed below the completed count', () => {
     const run = runRecord();
     run.events = [];

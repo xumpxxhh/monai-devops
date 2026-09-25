@@ -15,6 +15,7 @@ import {
 import { assertTestDatabaseUrl } from '../common/storage/assert-test-database-url.js';
 import type { EngineService } from '../engine/engine.service.js';
 import type { ExecutionLeaseService } from '../execution/execution-lease.service.js';
+import { ExecutionControlService } from '../execution/execution-control.service.js';
 import { ExecutionRecoveryService } from '../execution/execution-recovery.service.js';
 import { PrismaExecutionRepository } from '../execution/prisma-execution.repository.js';
 import { PrismaService } from '../prisma/prisma.service.js';
@@ -316,6 +317,136 @@ describeIfDb('Run recovery integration', () => {
     expect(
       await prisma.executionAttempt.findUnique({ where: { attemptId: skipped.attemptId } }),
     ).toMatchObject({ status: AttemptStatuses.SKIPPED });
+    manager.onModuleDestroy();
+  });
+
+  it('resumes a paused Run on explicit control after its original owner is gone', async () => {
+    runId = randomUUID();
+    const workflow: WorkflowDefinition = {
+      id: 'recovery-paused-integration',
+      name: 'Recovery after pause',
+      steps: [
+        { id: 'a', name: 'A', plugin: 'test', config: {} },
+        { id: 'b', name: 'B', plugin: 'test', config: {}, dependsOn: ['a'] },
+      ],
+    };
+    const first = createExecutionIdentity(runId, 'a', 0);
+    await runs.save({
+      runId,
+      workflowId: workflow.id,
+      workflowSnapshot: workflow,
+      status: 'paused',
+      counts: { total: 2, completed: 1, failed: 0, skipped: 0 },
+      createdAt: new Date(Date.now() - 60_000),
+      startedAt: new Date('2026-09-24T10:00:00.000Z'),
+      events: [
+        {
+          type: 'step:finished',
+          workflowRunId: runId,
+          step: workflow.steps[0],
+          execution: first,
+          result: {
+            stepId: 'a',
+            execution: first,
+            status: StepStatuses.COMPLETED,
+            success: true,
+            result: { value: 7 },
+            pluginResult: { success: true, data: { value: 7 } },
+          },
+        },
+        { type: 'workflow:paused', workflowRunId: runId, inFlightSteps: [] },
+      ],
+    });
+    await executions.ensureJob({
+      execution: first,
+      runId,
+      stepId: 'a',
+      idempotencyKey: first.jobId,
+      retryPolicy: { maxAttempts: 1, backoffMs: 0 },
+    });
+    await executions.ensureAttempt(first);
+    await prisma.executionAttempt.update({
+      where: { attemptId: first.attemptId },
+      data: { status: AttemptStatuses.SUCCEEDED },
+    });
+    await prisma.executionJob.update({
+      where: { jobId: first.jobId },
+      data: { status: AttemptStatuses.SUCCEEDED },
+    });
+
+    const calls: string[] = [];
+    let onEvent: ((event: WorkflowLifecycleEvent) => void | Promise<void>) | undefined;
+    const executor = createWorkflowExecutor({
+      pluginExecutor: async (_plugin, _config, context) => {
+        calls.push(getContext<string>(context, WorkflowContextKeys.stepId)!);
+        return { success: true, data: { value: 8 } };
+      },
+      observer: { onEvent: (event) => onEvent?.(event) },
+    });
+    const engine = {
+      isReady: jest.fn(() => true),
+      getRunStatus: jest.fn(() => ({ workflowRunId: runId, status: 'unknown', inFlightSteps: [] })),
+      onEvent: (handler: typeof onEvent) => {
+        onEvent = handler;
+      },
+      setEmbeddedRunHooks: jest.fn(),
+      setBeforeStepExecute: jest.fn(),
+      runWorkflow: (id: string, definition: WorkflowDefinition, context: object, options: object) =>
+        executor.executeWorkflow(id, definition, context, options),
+    } as unknown as EngineService;
+    const controls = new ExecutionControlService(engine, runs, executions, config);
+    const manager = new RunManagerService(
+      engine,
+      runs,
+      { fanOut: jest.fn() } as unknown as RunStreamService,
+      config,
+      executions,
+      {
+        start: jest.fn(async () => undefined),
+        stop: jest.fn(),
+      } as unknown as ExecutionLeaseService,
+      controls,
+    );
+    manager.onModuleInit();
+
+    expect(
+      await runs.acquireRunLease(
+        runId,
+        'original-owner',
+        'original-token',
+        new Date(Date.now() + 60_000),
+      ),
+    ).toBe(true);
+    const result = await controls.request(runId, 'resume');
+    expect(result.status).toBe('pending');
+    expect(
+      await prisma.executionControlCommand.findUnique({
+        where: { commandId: result.commandId },
+      }),
+    ).toMatchObject({ status: 'pending', claimedBy: null, claimedAt: null });
+    expect(calls).toEqual([]);
+    expect(await runs.releaseRunLease(runId, 'original-token')).toBe(true);
+    await controls.drain();
+    expect(
+      await prisma.executionControlCommand.findUnique({
+        where: { commandId: result.commandId },
+      }),
+    ).toMatchObject({ status: 'applied' });
+    for (let i = 0; i < 100; i++) {
+      if ((await runs.findById(runId))?.status === 'finished') break;
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    const run = await runs.findById(runId);
+    expect(run?.status).toBe('finished');
+    expect(run?.startedAt).toEqual(new Date('2026-09-24T10:00:00.000Z'));
+    expect(run?.counts).toEqual({ total: 2, completed: 2, failed: 0, skipped: 0 });
+    expect(calls).toEqual(['b']);
+    expect(
+      run?.events.filter(
+        (event) =>
+          event.type === 'step:finished' && (event.step as { id?: string } | undefined)?.id === 'a',
+      ),
+    ).toHaveLength(1);
     manager.onModuleDestroy();
   });
 });

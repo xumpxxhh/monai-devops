@@ -2,6 +2,7 @@ import { jest } from '@jest/globals';
 import { ConfigService } from '@nestjs/config';
 import type { EngineService } from '../engine/engine.service.js';
 import type { RunRecord, RunRepository } from '../runs/runs.repository.js';
+import { RunRecoveryNotReadyError } from '../runs/run-recovery-snapshot.js';
 import { ExecutionControlService } from './execution-control.service.js';
 import type { ExecutionControlCommand, ExecutionRepository } from './execution.repository.js';
 
@@ -45,6 +46,7 @@ describe('ExecutionControlService', () => {
       }),
       listClaimableControls: jest.fn(async () => commandRows),
       claimControl: jest.fn(async () => true),
+      releaseControlClaim: jest.fn(async () => true),
       completeControl: jest.fn(async () => true),
     };
     const config = {
@@ -131,5 +133,48 @@ describe('ExecutionControlService', () => {
       'executor-1',
       'applied',
     );
+  });
+
+  it('takes over a paused Run with no live owner when resume is requested', async () => {
+    const { service, engine, executions } = createSubject({
+      engineStatus: 'unknown',
+      runStatus: 'paused',
+    });
+    const resume = jest.fn(async () => true);
+    service.setResumePersistedRun(resume);
+
+    const result = await service.request('run-1', 'resume');
+
+    expect(result.status).toBe('applied');
+    expect(result.result?.currentStatus).toBe('running');
+    expect(resume).toHaveBeenCalledWith('run-1');
+    expect(engine.resumeRun).not.toHaveBeenCalled();
+    expect(executions.completeControl).toHaveBeenCalledWith(
+      result.commandId,
+      'executor-1',
+      'applied',
+    );
+  });
+
+  it('keeps resume pending while another owner still holds the paused Run', async () => {
+    const { service, executions } = createSubject({ engineStatus: 'unknown', runStatus: 'paused' });
+    service.setResumePersistedRun(async () => false);
+
+    const result = await service.request('run-1', 'resume');
+
+    expect(result.status).toBe('pending');
+    expect(executions.claimControl).toHaveBeenCalled();
+    expect(executions.releaseControlClaim).toHaveBeenCalledWith(result.commandId, 'executor-1');
+  });
+
+  it('rejects a paused Run whose persisted snapshot is unsafe to resume', async () => {
+    const { service } = createSubject({ engineStatus: 'unknown', runStatus: 'paused' });
+    service.setResumePersistedRun(async () => {
+      throw new RunRecoveryNotReadyError('Attempt is still running');
+    });
+
+    const result = await service.request('run-1', 'resume');
+
+    expect(result).toMatchObject({ status: 'rejected', error: 'Attempt is still running' });
   });
 });

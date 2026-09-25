@@ -4,6 +4,7 @@ import { ConfigService } from '@nestjs/config';
 import type { RunControlResult } from '@monai-devops/core-engine';
 import { EngineService } from '../engine/engine.service.js';
 import { RUN_REPOSITORY, type RunRepository } from '../runs/runs.repository.js';
+import { RunRecoveryNotReadyError } from '../runs/run-recovery-snapshot.js';
 import {
   EXECUTION_REPOSITORY,
   type ExecutionControlCommand,
@@ -26,6 +27,7 @@ export class ExecutionControlService implements OnModuleInit, OnModuleDestroy {
   private readonly claimTtlMs: number;
   private timer?: ReturnType<typeof setInterval>;
   private draining = false;
+  private resumePersistedRun?: (runId: string) => Promise<boolean>;
 
   constructor(
     private readonly engine: EngineService,
@@ -46,6 +48,11 @@ export class ExecutionControlService implements OnModuleInit, OnModuleDestroy {
 
   onModuleDestroy(): void {
     if (this.timer) clearInterval(this.timer);
+  }
+
+  /** 由 RunManager 注册；仅在本进程没有活跃 RunHandle 时尝试接管失联的 paused Run。 */
+  setResumePersistedRun(handler: (runId: string) => Promise<boolean>): void {
+    this.resumePersistedRun = handler;
   }
 
   async request(
@@ -102,6 +109,53 @@ export class ExecutionControlService implements OnModuleInit, OnModuleDestroy {
     if (!engineStatus || engineStatus.status === 'unknown') {
       if (command.type === 'cancel' && record.status === 'queued') {
         return this.applyQueuedCancel(command);
+      }
+      if (command.type === 'resume' && record.status === 'paused' && this.resumePersistedRun) {
+        const claimed = await this.executions.claimControl(
+          command.commandId,
+          this.ownerId,
+          this.staleBefore(),
+        );
+        if (!claimed) return { commandId: command.commandId, status: 'pending' };
+        let resumed: boolean;
+        try {
+          resumed = await this.resumePersistedRun(command.runId);
+        } catch (error) {
+          if (error instanceof RunRecoveryNotReadyError) {
+            const completed = await this.executions.completeControl(
+              command.commandId,
+              this.ownerId,
+              'rejected',
+              error.message,
+            );
+            return completed
+              ? { commandId: command.commandId, status: 'rejected', error: error.message }
+              : { commandId: command.commandId, status: 'pending' };
+          }
+          await this.executions.releaseControlClaim(command.commandId, this.ownerId);
+          const message = error instanceof Error ? error.message : String(error);
+          this.logger.warn(`Paused Run ${command.runId} resume deferred: ${message}`);
+          return { commandId: command.commandId, status: 'pending' };
+        }
+        if (resumed) {
+          const completed = await this.executions.completeControl(
+            command.commandId,
+            this.ownerId,
+            'applied',
+          );
+          if (!completed) return { commandId: command.commandId, status: 'pending' };
+          return {
+            commandId: command.commandId,
+            status: 'applied',
+            result: {
+              workflowRunId: command.runId,
+              action: 'resume',
+              previousStatus: 'paused',
+              currentStatus: 'running',
+            },
+          };
+        }
+        await this.executions.releaseControlClaim(command.commandId, this.ownerId);
       }
       if (['finished', 'failed', 'rejected', 'cancelled'].includes(record.status)) {
         return this.reject(command, `Run is already ${record.status}`);

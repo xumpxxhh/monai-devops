@@ -378,6 +378,14 @@ export class PrismaExecutionRepository implements ExecutionRepository {
     return result.count === 1;
   }
 
+  async releaseControlClaim(commandId: string, ownerId: string): Promise<boolean> {
+    const result = await this.prisma.executionControlCommand.updateMany({
+      where: { commandId, status: 'pending', claimedBy: ownerId },
+      data: { claimedBy: null, claimedAt: null },
+    });
+    return result.count === 1;
+  }
+
   async completeControl(
     commandId: string,
     ownerId: string,

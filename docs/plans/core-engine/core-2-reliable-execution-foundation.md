@@ -1,6 +1,6 @@
 # Core-2：可靠调度与恢复基础（进行中）
 
-> **阶段状态：进行中（可重试 Run 与条件跳过分支的重启自动接管已形成闭环）**
+> **阶段状态：进行中（可重试 Run、条件跳过分支与显式 paused resume 的重启接管已形成闭环）**
 
 ## 已落地基础
 
@@ -35,6 +35,7 @@
 - 服务启动和周期扫描先以数据库原子条件将过期 Attempt/Job 一起标为 timed_out（Attempt 续租先发生、或 Run lease 仍有效时不误判），再查找 lease 过期的 running Run 与足够早的未认领 queued Run；恢复管理器先认领 Run、再校验快照、最后异步续跑，失败则释放 lease 并保留 Run 原状态。
 - 失联步骤仅在显式 retry policy 尚有 Attempt 额度、Job 有持久化 idempotency key、失败原因为可重试或 lease 超时的情况下续跑；成功步骤不再执行，下一 Attempt 使用递增身份。Run 事件投影及步骤执行前均重新确认 Run lease。两实例并发认领只有一个可启动，数据库集成测试覆盖已完成步骤跳过、Attempt 递增和最终状态。
 - 条件不满足而跳过的步骤可从持久化 `step:finished` 与 SKIPPED Attempt/Job 重建；恢复快照核对事件计数、跳过原因、依赖链及 Attempt 终态。执行器不重发该步骤事件，也不重复调用插件，仍按既有 DAG 语义运行其下游；未持久化的步骤继续调度。其他跳过原因仍拒绝自动恢复。
+- 对已暂停且原 RunHandle 失联的 Run，显式 resume 命令会先认领控制命令，再尝试获取 Run lease 并校验恢复快照；安全时从已完成步骤后继续，旧事件与步骤不重放。旧 owner 仍持有 lease（含崩溃后尚未过期的 lease）时命令释放认领并保持 pending，由 owner 消费或在 lease 到期后再次尝试；快照不安全时命令明确 rejected。暂停 Run 不纳入后台自动接管扫描，仍需用户主动 resume。
 
 ## 权威边界
 
@@ -47,7 +48,7 @@
 
 - 终态仍由有序事件链投影，执行前授权已是同步强制闸门；
 - 嵌套子执行暂不写 Job/Attempt 表，避免在子 Run 不独立落表时破坏外键和 `(runId, stepId)` 唯一性；
-- 自动接管覆盖 queued Run、按显式重试策略允许恢复的 timed_out/failed Attempt，以及条件跳过的已结算分支；checkpoint 的插件级续跑、waiting/ready、paused、已有失败分支和非条件原因的跳过仍明确拒绝，不能视为整个 Core-2 完成。拒绝原因记录日志，Run 保持原状态并短暂退避，避免阻塞后续可恢复 Run，之后重新校验。
+- 后台自动接管覆盖 queued Run、按显式重试策略允许恢复的 timed_out/failed Attempt，以及条件跳过的已结算分支；paused Run 仅由显式 resume 接管。checkpoint 的插件级续跑、waiting/ready、已有失败分支和非条件原因的跳过仍明确拒绝，不能视为整个 Core-2 完成。拒绝原因记录日志，Run 保持原状态并短暂退避，避免阻塞后续可恢复 Run，之后重新校验。
 - Run 事件可能裁剪，缺失已完成步骤时拒绝重建；旧 Run 若无私有初始 state 且无已完成 `set_state` 输出也拒绝重建。持久化 idempotency key 与显式 retry policy 是恢复准入条件，但外部副作用仍需插件实际履行幂等契约。
 - 等待与唤醒已有数据库原子协议，但尚未由工作流步骤调用；ready Attempt 尚不会自动重建 RunHandle 或续跑 DAG，长任务等待闭环仍待实现。
 - 混合版本滚动部署中，旧服务实例不持有 Run lease；启用自动接管前需保证执行节点均升级到本协议，否则旧实例的副作用无法被新 lease 完全约束。
@@ -56,7 +57,9 @@
 ## 下一闭环
 
 1. 将 waiting/ready Attempt 与插件 checkpoint 接入执行器，明确继续同一 Attempt 与超时失败的状态边界；
-2. 支持 paused 与其他可安全续跑的跳过分支恢复，避免历史 Run 长期停留在 active 状态；
+2. 支持 paused 时仍在途的步骤与其他可安全续跑的跳过分支恢复，避免历史 Run 长期停留在 active 状态；
 3. 扩展故障注入、重复投递和长时间运行测试，并验证插件幂等契约。
 
 本轮条件跳过恢复已通过执行器、快照及 PostgreSQL 端到端接管测试；端到端验证覆盖旧事件不重复、下游只执行一次、最终计数及 SKIPPED Attempt 保持一致。
+
+显式 paused resume 已增加控制命令、快照与 PostgreSQL 端到端测试，覆盖失联后接管、旧步骤不重播、原 owner 仍有效时保持 pending，以及不安全快照拒绝。

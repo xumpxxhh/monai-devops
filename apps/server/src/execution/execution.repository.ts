@@ -87,6 +87,7 @@ export interface ExecutionRepository {
   enqueueControl(command: ExecutionControlCommand): Promise<void>;
   listClaimableControls(staleBefore: Date, limit: number): Promise<ExecutionControlCommand[]>;
   claimControl(commandId: string, ownerId: string, staleBefore: Date): Promise<boolean>;
+  releaseControlClaim(commandId: string, ownerId: string): Promise<boolean>;
   completeControl(
     commandId: string,
     ownerId: string,
