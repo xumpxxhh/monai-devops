@@ -6,7 +6,7 @@
 > 本文提取两条路线共同依赖的执行编排内核能力，作为共享内核演进的阶段基线。各阶段仍以最小闭环实施，具体技术选型和兼容性变化在对应阶段文档中评审。
 
 - 归档日期：2026-09-18
-- 当前状态：Core-0、Core-1 已完成；Core-2 顶层可靠调度与恢复最小闭环已收尾，覆盖 Attempt/Run lease、retry/new Attempt、跨进程控制、signal/timer 等待及超时、重启接管、永久不可恢复状态的显式终结。嵌套挂起与 paused 在途步骤的无损续跑不在本阶段实现范围；真实外部副作用的幂等认证和更大规模故障注入留待 Core-4 验证。
+- 当前状态：Core-0、Core-1 已完成；Core-2 顶层可靠调度与恢复最小闭环已收尾，覆盖 Attempt/Run lease、retry/new Attempt、跨进程控制、signal/timer 等待及超时、重启接管、永久不可恢复状态的显式终结。Core-3 已进入[实施规划评审](./core-3-executor-capability-boundary.md)。嵌套挂起与 paused 在途步骤的无损续跑不在 Core-2 实现范围；真实外部副作用的幂等认证和更大规模故障注入留待 Core-4 验证。
 - 决策状态：总体方向已采纳，阶段细节逐项决策
 - 适用范围：`core-engine`、Run 模型、事件模型、插件/工具执行边界和可靠性基础
 - 下游路线：[企业级 CI/CD 推演](../ci-cd-engine/enterprise-ci-cd-roadmap-draft.md)、[AI Agent 推演](../agent-engine/ai-agent-execution-engine-roadmap-draft.md)
