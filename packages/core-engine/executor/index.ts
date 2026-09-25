@@ -173,6 +173,7 @@ export type {
 } from '../observer/index.js';
 
 export { RunHandle } from './run-handle.js';
+export * from './adapter-contract.js';
 export { RunRegistry } from './run-registry.js';
 export {
   RunAlreadyActiveError,
