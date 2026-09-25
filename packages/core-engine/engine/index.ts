@@ -14,6 +14,7 @@ import type { PluginDefinition } from '@monai-devops/plugin-sdk';
 import { createPluginManager } from '../plugin/index.js';
 import {
   createWorkflowExecutor,
+  createLocalPluginAdapter,
   assertValidWorkflowRunId,
   isPluginStep,
   isSetStateStep,
@@ -150,7 +151,9 @@ export function createEngine(options: EngineOptions = {}) {
     resolveWorkflow: options.resolveWorkflow,
     embeddedRunHooks: options.embeddedRunHooks,
     maxNestingDepth: options.maxNestingDepth,
-    pluginExecutor: (name, config, ctx) => plugins.executePlugin(name, config, ctx),
+    pluginAdapter: createLocalPluginAdapter((name, config, ctx) =>
+      plugins.executePlugin(name, config, ctx),
+    ),
     onStepWait: options.onStepWait,
     resolvePluginResultSchema: (name) => plugins.getPlugin(name)?.resultSchema,
     // 资源钩子：在 step:start 之前挂起等待槽位（可能触发 step:queued）

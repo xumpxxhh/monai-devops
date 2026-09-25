@@ -49,4 +49,4 @@
 
 `secretRefs` 的前缀检查不能证明 `input.config/context` 没有明文密钥；3.3/3.4 必须在派发前施加能力授权、Secret 分类与脱敏，worker 身份与引用解析也必须有独立鉴权。不要将租约 token、Secret 值或敏感结果写入事件和普通日志。当前契约没有宣称远程 worker 隔离、传输加密或数据库持久化已经完成。
 
-3.1 可仅把现有可信本地插件执行包入 adapter，保持旧行为。进入 3.2 前还需确定传输与认证、worker 隔离级别、Secret 来源和显式选路/回滚开关，并以两进程 PostgreSQL 测试证明上述 CAS 语义。
+3.1 已把默认引擎的现有插件管理器包入可信进程内 adapter；它走 `PluginExecutionAdapter` 运行桥接，保留 live logger/AbortSignal 与旧错误转换，不发送 `ExecutorDispatchV1`。进入 3.2 前还需确定传输与认证、worker 隔离级别、Secret 来源和显式选路/回滚开关，并以两进程 PostgreSQL 测试证明上述 CAS 语义。

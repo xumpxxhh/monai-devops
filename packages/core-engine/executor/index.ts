@@ -96,6 +96,7 @@ export type {
   ExecutionResult,
   ExecuteWorkflowCallOptions,
   ExecutorOptions,
+  PluginExecutionAdapter,
   JsonSchemaObject,
   PauseRunOptions,
   PluginExecutor,
@@ -118,6 +119,7 @@ export type {
   WorkflowStep,
 } from './types.js';
 export { createExecutionIdentity, type ExecutionIdentity } from './execution-identity.js';
+export { createLocalPluginAdapter } from './local-adapter.js';
 
 export {
   getStepKind,
@@ -542,7 +544,8 @@ function buildWorkflowRunResult(
  */
 export function createWorkflowExecutor(options: ExecutorOptions = {}) {
   const {
-    pluginExecutor,
+    pluginAdapter,
+    pluginExecutor: legacyPluginExecutor,
     onStepWait,
     maxParallelSteps = 1,
     failFast = true,
@@ -557,6 +560,7 @@ export function createWorkflowExecutor(options: ExecutorOptions = {}) {
     embeddedRunHooks: defaultEmbeddedRunHooks,
     maxNestingDepth = 3,
   } = options;
+  const pluginExecutor = pluginAdapter?.execute ?? legacyPluginExecutor;
 
   const executionHistory: Map<string, ExecutionResult[]> = new Map();
   const registry = new RunRegistry();

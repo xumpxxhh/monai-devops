@@ -287,10 +287,18 @@ export type PluginExecutor = (
   context: PluginContext,
 ) => Promise<PluginResult>;
 
+/** In-process execution bridge. Unlike ExecutorAdapterV1, context can contain live logger/signal. */
+export interface PluginExecutionAdapter {
+  readonly kind: 'local' | 'remote';
+  execute: PluginExecutor;
+}
+
 /**
  * 执行器选项
  */
 export interface ExecutorOptions {
+  /** Preferred plugin execution path; pluginExecutor remains for existing embedders. */
+  pluginAdapter?: PluginExecutionAdapter;
   pluginExecutor?: PluginExecutor;
   /** 持久化 waiting Attempt 后执行器才可退出；不提供时拒绝插件挂起请求。 */
   onStepWait?: (
