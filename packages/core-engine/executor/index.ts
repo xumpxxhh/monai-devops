@@ -1383,6 +1383,20 @@ export function createWorkflowExecutor(options: ExecutorOptions = {}) {
           }
           resumedResults.set(result.stepId, result);
         }
+        for (const result of resume.skippedResults ?? []) {
+          if (!graph.stepById.has(result.stepId) || resumedResults.has(result.stepId)) {
+            throw new WorkflowValidationError(`恢复快照包含未知或重复步骤：${result.stepId}`);
+          }
+          if (
+            result.status !== StepStatuses.SKIPPED ||
+            result.success !== true ||
+            result.skipReason !== SkipReasons.CONDITION_NOT_MET ||
+            !graph.stepById.get(result.stepId)?.condition
+          ) {
+            throw new WorkflowValidationError(`恢复快照包含不可续跑的跳过步骤：${result.stepId}`);
+          }
+          resumedResults.set(result.stepId, result);
+        }
         for (const stepId of resumedResults.keys()) {
           const step = graph.stepById.get(stepId)!;
           if ((step.dependsOn ?? []).some((dependencyId) => !resumedResults.has(dependencyId))) {

@@ -1,6 +1,7 @@
 import {
   AttemptStatuses,
   resolveRetryPolicy,
+  SkipReasons,
   StepStatuses,
   type ExecutionResult,
   type WorkflowResumeSnapshot,
@@ -40,8 +41,8 @@ export function buildRunRecoverySnapshot(
   if (run.result || run.events.some((event) => event.type === 'workflow:finished')) {
     reject('已有工作流终态，不能重建活跃 Run');
   }
-  if (run.counts.failed > 0 || run.counts.skipped > 0) {
-    reject('含失败或跳过步骤的 Run 尚不支持快照续跑');
+  if (run.counts.failed > 0) {
+    reject('含失败步骤的 Run 尚不支持快照续跑');
   }
 
   const steps = new Map(run.workflowSnapshot.steps.map((step) => [step.id, step]));
@@ -52,6 +53,7 @@ export function buildRunRecoverySnapshot(
     reject('Run 步骤总数与工作流快照不一致');
   }
   const completed = new Map<string, ExecutionResult>();
+  const skipped = new Map<string, ExecutionResult>();
   let latestState: unknown;
   let hasSetState = false;
 
@@ -65,11 +67,25 @@ export function buildRunRecoverySnapshot(
     if (typeof stepId !== 'string' || !steps.has(stepId) || result?.stepId !== stepId) {
       reject('步骤完成事件与工作流快照不一致');
     }
+    if (result?.status === StepStatuses.SKIPPED) {
+      if (
+        result.success !== true ||
+        result.skipReason !== SkipReasons.CONDITION_NOT_MET ||
+        !steps.get(stepId)?.condition ||
+        completed.has(stepId) ||
+        skipped.has(stepId)
+      ) {
+        reject(`步骤 ${stepId} 的跳过事件重复或不可安全续跑`);
+      }
+      skipped.set(stepId, result as unknown as ExecutionResult);
+      continue;
+    }
     if (result?.status !== StepStatuses.COMPLETED) continue;
     if (
       result.success !== true ||
       asRecord(result.pluginResult)?.success !== true ||
-      completed.has(stepId)
+      completed.has(stepId) ||
+      skipped.has(stepId)
     ) {
       reject(`步骤 ${stepId} 的完成事件重复或不完整`);
     }
@@ -85,10 +101,15 @@ export function buildRunRecoverySnapshot(
   if (completed.size !== run.counts.completed) {
     reject('步骤完成事件与 Run 计数不一致，可能已被裁剪或尚未完成投影');
   }
-  for (const stepId of completed.keys()) {
+  if (skipped.size !== run.counts.skipped) {
+    reject('步骤跳过事件与 Run 计数不一致，可能已被裁剪或尚未完成投影');
+  }
+  const settled = new Map([...completed, ...skipped]);
+  for (const [stepId] of settled) {
     const step = steps.get(stepId)!;
-    if ((step.dependsOn ?? []).some((dependencyId) => !completed.has(dependencyId))) {
-      reject(`步骤 ${stepId} 缺少已完成的依赖事件`);
+    const dependencies = step.dependsOn ?? [];
+    if (dependencies.some((dependencyId) => !settled.has(dependencyId))) {
+      reject(`步骤 ${stepId} 缺少已结算的依赖事件`);
     }
   }
 
@@ -103,8 +124,11 @@ export function buildRunRecoverySnapshot(
     if (job.attempts.some((attempt, index) => attempt.attempt !== index)) {
       reject(`Job ${job.stepId} 的 Attempt 序号不连续`);
     }
-    if (completed.has(job.stepId)) {
-      if (latest.status !== AttemptStatuses.SUCCEEDED || job.status !== AttemptStatuses.SUCCEEDED) {
+    if (settled.has(job.stepId)) {
+      const expected = completed.has(job.stepId)
+        ? AttemptStatuses.SUCCEEDED
+        : AttemptStatuses.SKIPPED;
+      if (latest.status !== expected || job.status !== expected) {
         reject(`步骤 ${job.stepId} 的完成事件与 Attempt 状态不一致`);
       }
       continue;
@@ -129,12 +153,13 @@ export function buildRunRecoverySnapshot(
     }
     reject(`步骤 ${job.stepId} 处于 ${latest.status}，不能直接构建续跑快照`);
   }
-  for (const stepId of completed.keys()) {
-    if (!seenJobs.has(stepId)) reject(`已完成步骤 ${stepId} 缺少 Job`);
+  for (const stepId of settled.keys()) {
+    if (!seenJobs.has(stepId)) reject(`已结算步骤 ${stepId} 缺少 Job`);
   }
 
   const snapshot: WorkflowResumeSnapshot = {
     completedResults: [...completed.values()],
+    ...(skipped.size > 0 ? { skippedResults: [...skipped.values()] } : {}),
     nextAttemptByStep,
   };
   if (run.workflowSnapshot.stateSchema !== undefined) {

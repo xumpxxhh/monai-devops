@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { getContext } from '@monai-devops/plugin-sdk';
 import { WorkflowContextKeys } from '../context-keys.js';
-import { StepStatuses } from '../errors.js';
+import { StepStatuses, SkipReasons } from '../errors.js';
 import {
   createWorkflowExecutor,
   WorkflowValidationError,
@@ -133,5 +133,109 @@ describe('executor checkpoint resume', () => {
       WorkflowValidationError,
     );
     assert.equal(calls, 0);
+  });
+
+  it('preserves a condition-skipped step and executes its unsettled descendants once', async () => {
+    const calls: string[] = [];
+    const events: WorkflowLifecycleEvent[] = [];
+    const executor = createWorkflowExecutor({
+      pluginExecutor: async (_name, _config, context) => {
+        const stepId = getContext<string>(context, WorkflowContextKeys.stepId)!;
+        calls.push(stepId);
+        return { success: true, data: { stepId } };
+      },
+      observer: { onEvent: (event) => events.push(event) },
+    });
+    const definition: WorkflowDefinition = {
+      id: 'skipped-branch',
+      name: 'Skipped branch',
+      steps: [
+        { id: 'a', name: 'A', plugin: 'test', config: {} },
+        {
+          id: 'b',
+          name: 'B',
+          plugin: 'test',
+          config: {},
+          dependsOn: ['a'],
+          condition: { when: 'enabled', equals: true },
+        },
+        { id: 'c', name: 'C', plugin: 'test', config: {}, dependsOn: ['b'] },
+        { id: 'd', name: 'D', plugin: 'test', config: {}, dependsOn: ['a'] },
+      ],
+    };
+    const run = await executor.executeWorkflow(
+      'skipped-branch-run',
+      definition,
+      {},
+      {
+        resume: {
+          completedResults: [
+            {
+              stepId: 'a',
+              status: StepStatuses.COMPLETED,
+              success: true,
+              pluginResult: { success: true, data: { stepId: 'a' } },
+            },
+          ],
+          skippedResults: [
+            {
+              stepId: 'b',
+              status: StepStatuses.SKIPPED,
+              success: true,
+              skipReason: SkipReasons.CONDITION_NOT_MET,
+            },
+          ],
+        },
+      },
+    );
+    assert.equal(run.status, 'success');
+    assert.deepEqual(calls.sort(), ['c', 'd']);
+    assert.deepEqual(
+      run.results.map((result) => result.status),
+      [
+        StepStatuses.COMPLETED,
+        StepStatuses.SKIPPED,
+        StepStatuses.COMPLETED,
+        StepStatuses.COMPLETED,
+      ],
+    );
+    assert.equal(
+      events.filter((event) => event.type === 'step:finished' && event.step.id === 'b').length,
+      0,
+    );
+    assert.equal(
+      events.filter((event) => event.type === 'step:finished' && event.step.id === 'c').length,
+      1,
+    );
+  });
+
+  it('rejects a non-conditional skipped result', async () => {
+    const executor = createWorkflowExecutor();
+    await assert.rejects(
+      () =>
+        executor.executeWorkflow(
+          'invalid-skipped-run',
+          {
+            id: 'invalid-skipped',
+            name: 'Invalid skipped',
+            steps: [{ id: 'a', name: 'A', plugin: 'test', config: {} }],
+          },
+          {},
+          {
+            resume: {
+              completedResults: [],
+              skippedResults: [
+                {
+                  stepId: 'a',
+                  status: StepStatuses.SKIPPED,
+                  success: true,
+                  skipReason: SkipReasons.DEPENDENCY_FAILED,
+                },
+              ],
+            },
+          },
+        ),
+      WorkflowValidationError,
+    );
   });
 });

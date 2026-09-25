@@ -6,6 +6,7 @@ import {
   AttemptStatuses,
   createExecutionIdentity,
   createWorkflowExecutor,
+  SkipReasons,
   StepStatuses,
   WorkflowContextKeys,
   type WorkflowDefinition,
@@ -175,6 +176,146 @@ describeIfDb('Run recovery integration', () => {
     expect(
       await prisma.executionAttempt.findUnique({ where: { attemptId: `${lost.jobId}/attempt-1` } }),
     ).toMatchObject({ attempt: 1, status: AttemptStatuses.SUCCEEDED });
+    manager.onModuleDestroy();
+  });
+
+  it('does not replay a condition skip and continues its downstream step after restart', async () => {
+    runId = randomUUID();
+    const workflow: WorkflowDefinition = {
+      id: 'recovery-skipped-integration',
+      name: 'Recovery with skip',
+      steps: [
+        { id: 'a', name: 'A', plugin: 'test', config: {} },
+        {
+          id: 'b',
+          name: 'B',
+          plugin: 'test',
+          config: {},
+          dependsOn: ['a'],
+          condition: { when: 'enabled', equals: true },
+        },
+        { id: 'c', name: 'C', plugin: 'test', config: {}, dependsOn: ['b'] },
+      ],
+    };
+    const first = createExecutionIdentity(runId, 'a', 0);
+    const skipped = createExecutionIdentity(runId, 'b', 0);
+    await runs.save({
+      runId,
+      workflowId: workflow.id,
+      workflowSnapshot: workflow,
+      status: 'running',
+      counts: { total: 3, completed: 1, failed: 0, skipped: 1 },
+      createdAt: new Date(Date.now() - 60_000),
+      events: [
+        {
+          type: 'step:finished',
+          workflowRunId: runId,
+          step: workflow.steps[0],
+          execution: first,
+          result: {
+            stepId: 'a',
+            execution: first,
+            status: StepStatuses.COMPLETED,
+            success: true,
+            result: { value: 7 },
+            pluginResult: { success: true, data: { value: 7 } },
+          },
+        },
+        {
+          type: 'step:finished',
+          workflowRunId: runId,
+          step: workflow.steps[1],
+          execution: skipped,
+          result: {
+            stepId: 'b',
+            execution: skipped,
+            status: StepStatuses.SKIPPED,
+            success: true,
+            skipReason: SkipReasons.CONDITION_NOT_MET,
+            result: { skipped: true, reason: SkipReasons.CONDITION_NOT_MET },
+          },
+        },
+      ],
+    });
+    for (const [identity, stepId] of [
+      [first, 'a'],
+      [skipped, 'b'],
+    ] as const) {
+      await executions.ensureJob({
+        execution: identity,
+        runId,
+        stepId,
+        idempotencyKey: identity.jobId,
+        retryPolicy: { maxAttempts: 1, backoffMs: 0 },
+      });
+      await executions.ensureAttempt(identity);
+    }
+    for (const [identity, status] of [
+      [first, AttemptStatuses.SUCCEEDED],
+      [skipped, AttemptStatuses.SKIPPED],
+    ] as const) {
+      await prisma.executionAttempt.update({
+        where: { attemptId: identity.attemptId },
+        data: { status },
+      });
+      await prisma.executionJob.update({ where: { jobId: identity.jobId }, data: { status } });
+    }
+
+    const calls: string[] = [];
+    let onEvent: ((event: WorkflowLifecycleEvent) => void | Promise<void>) | undefined;
+    const executor = createWorkflowExecutor({
+      pluginExecutor: async (_plugin, _config, context) => {
+        calls.push(getContext<string>(context, WorkflowContextKeys.stepId)!);
+        return { success: true, data: { value: 8 } };
+      },
+      observer: { onEvent: (event) => onEvent?.(event) },
+    });
+    const engine = {
+      onEvent: (handler: typeof onEvent) => {
+        onEvent = handler;
+      },
+      setEmbeddedRunHooks: jest.fn(),
+      setBeforeStepExecute: jest.fn(),
+      runWorkflow: (id: string, definition: WorkflowDefinition, context: object, options: object) =>
+        executor.executeWorkflow(id, definition, context, options),
+    } as unknown as EngineService;
+    const manager = new RunManagerService(
+      engine,
+      runs,
+      { fanOut: jest.fn() } as unknown as RunStreamService,
+      config,
+      executions,
+      {
+        start: jest.fn(async () => undefined),
+        stop: jest.fn(),
+      } as unknown as ExecutionLeaseService,
+      { request: jest.fn() } as never,
+    );
+    manager.onModuleInit();
+    const recovery = new RunRecoveryService(
+      { listRecoverableRunIds: async () => [runId] } as unknown as RunRepository,
+      new ExecutionRecoveryService(executions),
+      manager,
+      config,
+    );
+    await recovery.scan();
+    for (let i = 0; i < 100; i++) {
+      if ((await runs.findById(runId))?.status === 'finished') break;
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    const run = await runs.findById(runId);
+    expect(run?.status).toBe('finished');
+    expect(run?.counts).toEqual({ total: 3, completed: 2, failed: 0, skipped: 1 });
+    expect(
+      run?.events.filter(
+        (event) =>
+          event.type === 'step:finished' && (event.step as { id?: string } | undefined)?.id === 'b',
+      ),
+    ).toHaveLength(1);
+    expect(calls).toEqual(['c']);
+    expect(
+      await prisma.executionAttempt.findUnique({ where: { attemptId: skipped.attemptId } }),
+    ).toMatchObject({ status: AttemptStatuses.SKIPPED });
     manager.onModuleDestroy();
   });
 });

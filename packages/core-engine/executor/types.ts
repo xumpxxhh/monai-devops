@@ -245,6 +245,8 @@ export interface ExecuteWorkflowCallOptions {
 /** 重建 DAG 调度所需的最小快照；失联步骤的重试许可由调用方先行裁决。 */
 export interface WorkflowResumeSnapshot {
   completedResults: ExecutionResult[];
+  /** 已持久化的条件跳过步骤；恢复时不再次发出完成事件。 */
+  skippedResults?: ExecutionResult[];
   /** 声明 stateSchema 的工作流恢复时必须提供完整 state。 */
   state?: unknown;
   /** 下次执行所用 Attempt 序号（从 0 开始）；必须小于步骤的 maxAttempts。 */

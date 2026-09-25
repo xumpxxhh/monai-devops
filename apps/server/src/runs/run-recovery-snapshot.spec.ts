@@ -1,4 +1,4 @@
-import { AttemptStatuses, StepStatuses } from '@monai-devops/core-engine';
+import { AttemptStatuses, SkipReasons, StepStatuses } from '@monai-devops/core-engine';
 import type { RecoveryJob } from '../execution/execution.repository.js';
 import { buildRunRecoverySnapshot, RunRecoveryNotReadyError } from './run-recovery-snapshot.js';
 import type { RunRecord } from './runs.repository.js';
@@ -116,5 +116,46 @@ describe('buildRunRecoverySnapshot', () => {
     expect(buildRunRecoverySnapshot(run, [], { present: true, value: { count: 0 } }).state).toEqual(
       { count: 0 },
     );
+  });
+
+  it('rebuilds a condition-skipped branch while preserving pending independent work', () => {
+    const run = runRecord();
+    run.workflowSnapshot.steps[1]!.condition = { when: 'enabled', equals: true };
+    run.counts.skipped = 1;
+    run.events.push({
+      type: 'step:finished',
+      workflowRunId: run.runId,
+      step: { id: 'b' },
+      result: {
+        stepId: 'b',
+        status: StepStatuses.SKIPPED,
+        success: true,
+        skipReason: SkipReasons.CONDITION_NOT_MET,
+      },
+    });
+    const persistedJobs = jobs();
+    persistedJobs[1]!.status = AttemptStatuses.SKIPPED;
+    persistedJobs[1]!.attempts[0]!.status = AttemptStatuses.SKIPPED;
+    const snapshot = buildRunRecoverySnapshot(run, persistedJobs);
+    expect(snapshot.skippedResults?.map((result) => result.stepId)).toEqual(['b']);
+    expect(snapshot.nextAttemptByStep).toEqual({});
+  });
+
+  it('rejects missing or inconsistent skipped history', () => {
+    const run = runRecord();
+    run.counts.skipped = 1;
+    expect(() => buildRunRecoverySnapshot(run, jobs())).toThrow(/跳过事件.*计数/);
+    run.events.push({
+      type: 'step:finished',
+      workflowRunId: run.runId,
+      step: { id: 'b' },
+      result: {
+        stepId: 'b',
+        status: StepStatuses.SKIPPED,
+        success: true,
+        skipReason: SkipReasons.DEPENDENCY_FAILED,
+      },
+    });
+    expect(() => buildRunRecoverySnapshot(run, jobs())).toThrow(/跳过事件.*不可安全续跑/);
   });
 });
