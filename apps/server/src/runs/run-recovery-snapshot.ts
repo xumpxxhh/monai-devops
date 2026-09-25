@@ -1,5 +1,6 @@
 import {
   AttemptStatuses,
+  createExecutionIdentity,
   resolveRetryPolicy,
   SkipReasons,
   StepStatuses,
@@ -114,6 +115,7 @@ export function buildRunRecoverySnapshot(
   }
 
   const nextAttemptByStep: Record<string, number> = {};
+  const readyWaitsByStep: NonNullable<WorkflowResumeSnapshot['readyWaitsByStep']> = {};
   const seenJobs = new Set<string>();
   for (const job of jobs) {
     const step = steps.get(job.stepId);
@@ -140,6 +142,30 @@ export function buildRunRecoverySnapshot(
       nextAttemptByStep[job.stepId] = latest.attempt;
       continue;
     }
+    if (latest.status === AttemptStatuses.WAITING && job.status === AttemptStatuses.WAITING) {
+      if (!latest.wakeReadyAt) reject(`步骤 ${job.stepId} 的 waiting Attempt 尚未被唤醒`);
+      if (step.kind !== undefined && step.kind !== 'plugin') {
+        reject(`步骤 ${job.stepId} 不是可续跑的插件步骤`);
+      }
+      const identity = createExecutionIdentity(run.runId, job.stepId, latest.attempt);
+      const checkpoint = asRecord(job.checkpoint);
+      if (
+        !checkpoint ||
+        checkpoint.jobId !== identity.jobId ||
+        checkpoint.sourceAttemptId !== identity.attemptId ||
+        !Number.isInteger(checkpoint.version) ||
+        (checkpoint.version as number) < 1 ||
+        latest.attempt >= resolveRetryPolicy(step.retryPolicy).maxAttempts
+      ) {
+        reject(`步骤 ${job.stepId} 的 waiting checkpoint 无效`);
+      }
+      readyWaitsByStep[job.stepId] = {
+        attempt: latest.attempt,
+        checkpoint: job.checkpoint!,
+        ...(latest.wakePayload !== undefined ? { wakePayload: latest.wakePayload } : {}),
+      };
+      continue;
+    }
     if (latest.status === AttemptStatuses.TIMED_OUT || latest.status === AttemptStatuses.FAILED) {
       const retryable =
         latest.status === AttemptStatuses.TIMED_OUT || asRecord(latest.reason)?.retryable === true;
@@ -160,6 +186,7 @@ export function buildRunRecoverySnapshot(
   const snapshot: WorkflowResumeSnapshot = {
     completedResults: [...completed.values()],
     ...(skipped.size > 0 ? { skippedResults: [...skipped.values()] } : {}),
+    ...(Object.keys(readyWaitsByStep).length > 0 ? { readyWaitsByStep } : {}),
     nextAttemptByStep,
   };
   if (run.workflowSnapshot.stateSchema !== undefined) {

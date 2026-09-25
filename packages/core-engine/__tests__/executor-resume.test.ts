@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { getContext } from '@monai-devops/plugin-sdk';
+import { getContext, PluginContextKeys } from '@monai-devops/plugin-sdk';
 import { WorkflowContextKeys } from '../context-keys.js';
 import { StepStatuses, SkipReasons } from '../errors.js';
 import {
@@ -237,5 +237,55 @@ describe('executor checkpoint resume', () => {
         ),
       WorkflowValidationError,
     );
+  });
+
+  it('resumes a ready wait with the same Attempt and passes checkpoint and wake payload', async () => {
+    const calls: Array<{ attempt: number; checkpoint: unknown; wakePayload: unknown }> = [];
+    const executor = createWorkflowExecutor({
+      pluginExecutor: async (_name, _config, context) => {
+        calls.push({
+          attempt: (context.execution as { attempt: number }).attempt,
+          checkpoint: getContext(context, PluginContextKeys.checkpoint),
+          wakePayload: getContext(context, PluginContextKeys.wakePayload),
+        });
+        return { success: true, data: { resumed: true } };
+      },
+    });
+    const definition: WorkflowDefinition = {
+      id: 'ready-wait',
+      name: 'Ready wait',
+      steps: [{ id: 'wait', name: 'Wait', plugin: 'test', config: {} }],
+    };
+    const result = await executor.executeWorkflow(
+      'ready-wait-run',
+      definition,
+      {},
+      {
+        resume: {
+          completedResults: [],
+          readyWaitsByStep: {
+            wait: {
+              attempt: 0,
+              checkpoint: {
+                jobId: 'ready-wait-run/wait',
+                sourceAttemptId: 'ready-wait-run/wait/attempt-0',
+                version: 1,
+                payload: { cursor: 'after-page-1' },
+                createdAt: new Date().toISOString(),
+              },
+              wakePayload: { approved: true },
+            },
+          },
+        },
+      },
+    );
+    assert.equal(result.status, 'success');
+    assert.deepEqual(calls, [
+      {
+        attempt: 0,
+        checkpoint: { cursor: 'after-page-1' },
+        wakePayload: { approved: true },
+      },
+    ]);
   });
 });

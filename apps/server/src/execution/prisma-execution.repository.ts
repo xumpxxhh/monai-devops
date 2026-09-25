@@ -201,6 +201,8 @@ export class PrismaExecutionRepository implements ExecutionRepository {
         attempt: attempt.attempt,
         status: attempt.status as RecoveryJob['status'],
         reason: attempt.reason ?? undefined,
+        wakeReadyAt: attempt.wakeReadyAt ?? undefined,
+        wakePayload: attempt.wakePayload ?? undefined,
       })),
     }));
   }

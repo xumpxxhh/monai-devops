@@ -1407,12 +1407,36 @@ export function createWorkflowExecutor(options: ExecutorOptions = {}) {
           const step = graph.stepById.get(stepId);
           if (
             !step ||
+            !isPluginStep(step) ||
             resumedResults.has(stepId) ||
             !Number.isInteger(attempt) ||
             attempt < 0 ||
             attempt >= resolveRetryPolicy(step.retryPolicy).maxAttempts
           ) {
             throw new WorkflowValidationError(`恢复快照包含无效 Attempt：${stepId}/${attempt}`);
+          }
+        }
+        for (const [stepId, ready] of Object.entries(resume.readyWaitsByStep ?? {})) {
+          const step = graph.stepById.get(stepId);
+          const execution = createExecutionIdentity(workflowRunId, stepId, ready.attempt);
+          if (
+            !step ||
+            resumedResults.has(stepId) ||
+            !Number.isInteger(ready.attempt) ||
+            ready.attempt < 0 ||
+            ready.attempt >= resolveRetryPolicy(step.retryPolicy).maxAttempts ||
+            (resume.nextAttemptByStep?.[stepId] !== undefined &&
+              resume.nextAttemptByStep[stepId] !== ready.attempt) ||
+            !ready.checkpoint ||
+            ready.checkpoint.jobId !== execution.jobId ||
+            ready.checkpoint.sourceAttemptId !== execution.attemptId ||
+            !Number.isInteger(ready.checkpoint.version) ||
+            ready.checkpoint.version < 1
+          ) {
+            throw new WorkflowValidationError(`恢复快照包含无效 waiting Attempt：${stepId}`);
+          }
+          if ((step.dependsOn ?? []).some((dependencyId) => !resumedResults.has(dependencyId))) {
+            throw new WorkflowValidationError(`waiting Attempt 缺少已结算依赖：${stepId}`);
           }
         }
       }
@@ -1497,7 +1521,8 @@ export function createWorkflowExecutor(options: ExecutorOptions = {}) {
         const signal = handle.trackInFlight(stepId);
         try {
           const retryPolicy = resolveRetryPolicy(step.retryPolicy);
-          let attempt = resume?.nextAttemptByStep?.[stepId] ?? 0;
+          const readyWait = resume?.readyWaitsByStep?.[stepId];
+          let attempt = readyWait?.attempt ?? resume?.nextAttemptByStep?.[stepId] ?? 0;
           let result: ExecutionResult;
           while (true) {
             const executionContext: ExecutionContext = {
@@ -1507,6 +1532,14 @@ export function createWorkflowExecutor(options: ExecutorOptions = {}) {
               previousResults: toPreviousResults(results),
               execution: createExecutionIdentity(workflowRunId, step.id, attempt),
               previousResultsData: toPreviousResultsData(results),
+              ...(readyWait && attempt === readyWait.attempt
+                ? {
+                    [PluginContextKeys.checkpoint]: readyWait.checkpoint.payload,
+                    ...(readyWait.wakePayload !== undefined
+                      ? { [PluginContextKeys.wakePayload]: readyWait.wakePayload }
+                      : {}),
+                  }
+                : {}),
               ...(runState ? { [WorkflowContextKeys.state]: runState.current } : {}),
             };
 

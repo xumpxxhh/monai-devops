@@ -112,6 +112,9 @@ export class PrismaRunRepository implements RunRepository {
         isActive: true,
         parentRunId: null,
         status: { in: ['queued', 'running'] },
+        executionJobs: {
+          none: { attempts: { some: { status: 'waiting', wakeReadyAt: null } } },
+        },
         ...(excludeRunIds.length > 0 ? { runId: { notIn: excludeRunIds } } : {}),
         OR: [
           { leaseExpiresAt: { lt: now } },

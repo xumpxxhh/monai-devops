@@ -208,6 +208,8 @@ interface PluginHooks<TConfig = PluginConfig> {
 ```ts
 PluginContextKeys.logger  // 'logger'
 PluginContextKeys.signal // 'signal'
+PluginContextKeys.checkpoint // 'checkpoint'：ready waiting Attempt 的上次 checkpoint 载荷
+PluginContextKeys.wakePayload // 'wakePayload'：signal 唤醒载荷（timer 唤醒时缺省）
 ```
 
 ### `PluginLogger`

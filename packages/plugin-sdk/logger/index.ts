@@ -29,6 +29,10 @@ export interface PluginLogger {
 export const PluginContextKeys = {
   logger: 'logger',
   signal: 'signal',
+  /** 恢复 waiting Attempt 时提供的上次持久化 checkpoint 载荷。 */
+  checkpoint: 'checkpoint',
+  /** signal 唤醒载荷；timer 唤醒时不提供。 */
+  wakePayload: 'wakePayload',
 } as const;
 
 export const noopLogger: PluginLogger = {

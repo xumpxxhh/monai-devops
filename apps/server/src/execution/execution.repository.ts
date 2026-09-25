@@ -34,6 +34,8 @@ export interface RecoveryJob {
     attempt: number;
     status: AttemptStatus;
     reason?: unknown;
+    wakeReadyAt?: Date;
+    wakePayload?: unknown;
   }>;
 }
 

@@ -13,7 +13,7 @@ import type {
 } from '../errors.js';
 import type { WorkflowObserver, WorkflowRunMeta } from '../observer/index.js';
 import type { ExecutionIdentity } from './execution-identity.js';
-import type { RetryPolicy } from '../reliability/index.js';
+import type { ExecutionCheckpoint, RetryPolicy } from '../reliability/index.js';
 
 /**
  * JSON Schema 对象（前端表单构建器 / 手填产出，持久化与传输形态）。
@@ -251,6 +251,15 @@ export interface WorkflowResumeSnapshot {
   state?: unknown;
   /** 下次执行所用 Attempt 序号（从 0 开始）；必须小于步骤的 maxAttempts。 */
   nextAttemptByStep?: Record<string, number>;
+  /** 已唤醒的 waiting Attempt：仍使用原 Attempt 身份，不创建重试 Attempt。 */
+  readyWaitsByStep?: Record<
+    string,
+    {
+      attempt: number;
+      checkpoint: ExecutionCheckpoint;
+      wakePayload?: unknown;
+    }
+  >;
 }
 
 /**

@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { jest } from '@jest/globals';
 import type { ConfigService } from '@nestjs/config';
-import { getContext } from '@monai-devops/plugin-sdk';
+import { getContext, PluginContextKeys } from '@monai-devops/plugin-sdk';
 import {
   AttemptStatuses,
   createExecutionIdentity,
@@ -14,7 +14,7 @@ import {
 } from '@monai-devops/core-engine';
 import { assertTestDatabaseUrl } from '../common/storage/assert-test-database-url.js';
 import type { EngineService } from '../engine/engine.service.js';
-import type { ExecutionLeaseService } from '../execution/execution-lease.service.js';
+import { ExecutionLeaseService } from '../execution/execution-lease.service.js';
 import { ExecutionControlService } from '../execution/execution-control.service.js';
 import { ExecutionRecoveryService } from '../execution/execution-recovery.service.js';
 import { PrismaExecutionRepository } from '../execution/prisma-execution.repository.js';
@@ -447,6 +447,139 @@ describeIfDb('Run recovery integration', () => {
           event.type === 'step:finished' && (event.step as { id?: string } | undefined)?.id === 'a',
       ),
     ).toHaveLength(1);
+    manager.onModuleDestroy();
+  });
+
+  it('claims a signalled waiting Attempt with its checkpoint and original identity', async () => {
+    runId = randomUUID();
+    const workflow: WorkflowDefinition = {
+      id: 'recovery-ready-wait',
+      name: 'Ready wait recovery',
+      steps: [{ id: 'wait', name: 'Wait', plugin: 'test', config: {} }],
+    };
+    const identity = createExecutionIdentity(runId, 'wait', 0);
+    await runs.save({
+      runId,
+      workflowId: workflow.id,
+      workflowSnapshot: workflow,
+      status: 'running',
+      counts: { total: 1, completed: 0, failed: 0, skipped: 0 },
+      createdAt: new Date(Date.now() - 60_000),
+      events: [],
+    });
+    await executions.ensureJob({
+      execution: identity,
+      runId,
+      stepId: 'wait',
+      idempotencyKey: identity.jobId,
+      retryPolicy: { maxAttempts: 1, backoffMs: 0 },
+    });
+    await executions.ensureAttempt(identity);
+    expect(
+      await executions.acquireLease(
+        identity.attemptId,
+        'old-owner',
+        'old-token',
+        new Date(Date.now() + 60_000),
+      ),
+    ).toBe(true);
+    expect(
+      await executions.transitionAttempt(
+        identity.attemptId,
+        AttemptStatuses.LEASED,
+        AttemptStatuses.RUNNING,
+      ),
+    ).toBe(true);
+    const checkpoint = {
+      jobId: identity.jobId,
+      sourceAttemptId: identity.attemptId,
+      version: 1,
+      payload: { cursor: 'page-2' },
+      createdAt: new Date().toISOString(),
+    };
+    expect(
+      await executions.registerWait({
+        execution: identity,
+        leaseToken: 'old-token',
+        checkpoint,
+        condition: { kind: 'signal', key: 'continue' },
+      }),
+    ).toBe(true);
+    const candidatesBefore = await runs.listRecoverableRunIds(
+      new Date(),
+      new Date(Date.now() - 5_000),
+      50,
+    );
+    expect(candidatesBefore).not.toContain(runId);
+    expect(
+      await executions.signalWait(identity.attemptId, 'continue', { approved: true }, new Date()),
+    ).toBe(true);
+    const candidatesAfter = await runs.listRecoverableRunIds(
+      new Date(),
+      new Date(Date.now() - 5_000),
+      50,
+    );
+    expect(candidatesAfter).toContain(runId);
+
+    const calls: Array<{ attempt: number; checkpoint: unknown; wakePayload: unknown }> = [];
+    let onEvent: ((event: WorkflowLifecycleEvent) => void | Promise<void>) | undefined;
+    const executor = createWorkflowExecutor({
+      pluginExecutor: async (_plugin, _config, context) => {
+        calls.push({
+          attempt: (context.execution as { attempt: number }).attempt,
+          checkpoint: getContext(context, PluginContextKeys.checkpoint),
+          wakePayload: getContext(context, PluginContextKeys.wakePayload),
+        });
+        return { success: true, data: { resumed: true } };
+      },
+      observer: { onEvent: (event) => onEvent?.(event) },
+    });
+    const engine = {
+      onEvent: (handler: typeof onEvent) => {
+        onEvent = handler;
+      },
+      setEmbeddedRunHooks: jest.fn(),
+      setBeforeStepExecute: jest.fn(),
+      runWorkflow: (id: string, definition: WorkflowDefinition, context: object, options: object) =>
+        executor.executeWorkflow(id, definition, context, options),
+    } as unknown as EngineService;
+    const leases = new ExecutionLeaseService(executions, config);
+    const manager = new RunManagerService(
+      engine,
+      runs,
+      { fanOut: jest.fn() } as unknown as RunStreamService,
+      config,
+      executions,
+      leases,
+      { request: jest.fn() } as never,
+    );
+    manager.onModuleInit();
+    const recovery = new RunRecoveryService(
+      { listRecoverableRunIds: async () => [runId] } as unknown as RunRepository,
+      new ExecutionRecoveryService(executions),
+      manager,
+      config,
+    );
+    await recovery.scan();
+    for (let i = 0; i < 100; i++) {
+      if ((await runs.findById(runId))?.status === 'finished') break;
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    expect((await runs.findById(runId))?.status).toBe('finished');
+    expect(calls).toEqual([
+      {
+        attempt: 0,
+        checkpoint: { cursor: 'page-2' },
+        wakePayload: { approved: true },
+      },
+    ]);
+    expect(
+      await prisma.executionAttempt.findUnique({
+        where: { attemptId: identity.attemptId },
+      }),
+    ).toMatchObject({ status: AttemptStatuses.SUCCEEDED });
+    expect(await prisma.executionAttempt.count({ where: { jobId: identity.jobId } })).toBe(1);
+    leases.onModuleDestroy();
     manager.onModuleDestroy();
   });
 });

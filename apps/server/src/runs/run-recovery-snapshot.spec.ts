@@ -94,6 +94,21 @@ describe('buildRunRecoverySnapshot', () => {
     waiting[1]!.attempts[0]!.status = AttemptStatuses.WAITING;
     expect(() => buildRunRecoverySnapshot(runRecord(), waiting)).toThrow(/waiting/);
 
+    waiting[1]!.attempts[0]!.wakeReadyAt = new Date();
+    waiting[1]!.checkpoint = {
+      jobId: 'run-1/b',
+      sourceAttemptId: 'run-1/b/attempt-0',
+      version: 1,
+      payload: { cursor: 3 },
+      createdAt: new Date().toISOString(),
+    };
+    waiting[1]!.attempts[0]!.wakePayload = { signal: 'go' };
+    expect(buildRunRecoverySnapshot(runRecord(), waiting).readyWaitsByStep).toEqual({
+      b: { attempt: 0, checkpoint: waiting[1]!.checkpoint, wakePayload: { signal: 'go' } },
+    });
+    waiting[1]!.checkpoint = { ...waiting[1]!.checkpoint!, version: 0 };
+    expect(() => buildRunRecoverySnapshot(runRecord(), waiting)).toThrow(/waiting checkpoint 无效/);
+
     const exhausted = jobs();
     exhausted[1]!.attempts.push({ attempt: 1, status: AttemptStatuses.TIMED_OUT });
     expect(() => buildRunRecoverySnapshot(runRecord(), exhausted)).toThrow(/无可用重试/);
