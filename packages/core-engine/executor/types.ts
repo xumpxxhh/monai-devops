@@ -13,7 +13,11 @@ import type {
 } from '../errors.js';
 import type { WorkflowObserver, WorkflowRunMeta } from '../observer/index.js';
 import type { ExecutionIdentity } from './execution-identity.js';
-import type { ExecutionCheckpoint, RetryPolicy } from '../reliability/index.js';
+import type {
+  ExecutionCheckpoint,
+  ExecutionWakeCondition,
+  RetryPolicy,
+} from '../reliability/index.js';
 
 /**
  * JSON Schema 对象（前端表单构建器 / 手填产出，持久化与传输形态）。
@@ -73,6 +77,8 @@ export interface PluginStep extends BaseStep {
   kind?: typeof StepKinds.PLUGIN;
   plugin: string;
   config: PluginConfig;
+  /** 显式允许插件请求持久化挂起；含此步骤的工作流按串行 DAG 调度。 */
+  mayWait?: boolean;
 }
 
 export interface SetStateStep extends BaseStep {
@@ -284,6 +290,13 @@ export type PluginExecutor = (
  */
 export interface ExecutorOptions {
   pluginExecutor?: PluginExecutor;
+  /** 持久化 waiting Attempt 后执行器才可退出；不提供时拒绝插件挂起请求。 */
+  onStepWait?: (
+    step: PluginStep,
+    context: ExecutionContext,
+    checkpoint: ExecutionCheckpoint,
+    condition: ExecutionWakeCondition,
+  ) => Promise<void>;
   maxParallelSteps?: number;
   failFast?: boolean;
   /** hard cancel 时 in-flight 步骤超时（ms），默认 30000 */

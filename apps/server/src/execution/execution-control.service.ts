@@ -98,8 +98,11 @@ export class ExecutionControlService implements OnModuleInit, OnModuleDestroy {
     }
 
     if (!this.engine.isReady()) {
-      if (command.type === 'cancel' && record.status === 'queued') {
-        return this.applyQueuedCancel(command);
+      if (
+        command.type === 'cancel' &&
+        (record.status === 'queued' || record.status === 'waiting')
+      ) {
+        return this.applyUnownedCancel(command, record.status);
       }
       return { commandId: command.commandId, status: 'pending' };
     }
@@ -107,8 +110,11 @@ export class ExecutionControlService implements OnModuleInit, OnModuleDestroy {
     const engineStatus = this.engine.getRunStatus(command.runId);
 
     if (!engineStatus || engineStatus.status === 'unknown') {
-      if (command.type === 'cancel' && record.status === 'queued') {
-        return this.applyQueuedCancel(command);
+      if (
+        command.type === 'cancel' &&
+        (record.status === 'queued' || record.status === 'waiting')
+      ) {
+        return this.applyUnownedCancel(command, record.status);
       }
       if (command.type === 'resume' && record.status === 'paused' && this.resumePersistedRun) {
         const claimed = await this.executions.claimControl(
@@ -183,8 +189,9 @@ export class ExecutionControlService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  private async applyQueuedCancel(
+  private async applyUnownedCancel(
     command: ExecutionControlCommand,
+    runStatus: 'queued' | 'waiting',
   ): Promise<RequestedExecutionControl> {
     const claimed = await this.executions.claimControl(
       command.commandId,
@@ -194,11 +201,18 @@ export class ExecutionControlService implements OnModuleInit, OnModuleDestroy {
     if (!claimed) return { commandId: command.commandId, status: 'pending' };
 
     const mode = command.payload.mode === 'hard' ? 'hard' : 'best-effort';
-    await this.runs.update(command.runId, {
-      status: 'cancelled',
-      cancelled: mode,
-      finishedAt: new Date(),
-    });
+    if (runStatus === 'waiting') {
+      if (!(await this.executions.cancelWaitingRun(command.runId, mode))) {
+        await this.executions.releaseControlClaim(command.commandId, this.ownerId);
+        return { commandId: command.commandId, status: 'pending' };
+      }
+    } else {
+      await this.runs.update(command.runId, {
+        status: 'cancelled',
+        cancelled: mode,
+        finishedAt: new Date(),
+      });
+    }
     await this.executions.completeControl(command.commandId, this.ownerId, 'applied');
     return { commandId: command.commandId, status: 'applied' };
   }

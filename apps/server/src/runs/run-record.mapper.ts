@@ -9,7 +9,13 @@ import { toInputJson } from '../prisma/prisma-json.js';
 import type { Run, RunEvent } from '@prisma/client';
 import type { RunRecord, RunStatus } from './runs.repository.js';
 
-export const ACTIVE_RUN_STATUSES: RunStatus[] = ['queued', 'running', 'pausing', 'paused'];
+export const ACTIVE_RUN_STATUSES: RunStatus[] = [
+  'queued',
+  'running',
+  'waiting',
+  'pausing',
+  'paused',
+];
 
 export function isActiveRunStatus(status: RunStatus): boolean {
   return ACTIVE_RUN_STATUSES.includes(status);

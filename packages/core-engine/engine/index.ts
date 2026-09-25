@@ -28,6 +28,7 @@ import {
   type RunStatusSnapshot,
   type ResolveWorkflow,
   type EmbeddedRunHooks,
+  type ExecutorOptions,
 } from '../executor/index.js';
 import {
   createTaskScheduler,
@@ -66,6 +67,7 @@ export interface EngineOptions {
   maxNestingDepth?: number;
   /** 资源取得后、step:start 与实际执行前的授权闸门。 */
   beforeStepExecute?: (step: WorkflowStep, context: ExecutionContext) => void | Promise<void>;
+  onStepWait?: ExecutorOptions['onStepWait'];
 }
 
 /** 资源等待队列项与 releaseHandles 的键：${workflowRunId}:${stepId} */
@@ -149,6 +151,7 @@ export function createEngine(options: EngineOptions = {}) {
     embeddedRunHooks: options.embeddedRunHooks,
     maxNestingDepth: options.maxNestingDepth,
     pluginExecutor: (name, config, ctx) => plugins.executePlugin(name, config, ctx),
+    onStepWait: options.onStepWait,
     resolvePluginResultSchema: (name) => plugins.getPlugin(name)?.resultSchema,
     // 资源钩子：在 step:start 之前挂起等待槽位（可能触发 step:queued）
     onStepStart: async (step, context, meta, helpers) => {

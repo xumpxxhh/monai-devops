@@ -58,4 +58,9 @@ export interface PluginResult {
   message?: string;
   data?: unknown;
   code?: PluginFailureCode;
+  /** 仅声明 mayWait 的插件步骤可返回；执行器持久化 checkpoint 后挂起 Run。 */
+  wait?: {
+    checkpoint: unknown;
+    condition: { kind: 'signal'; key: string } | { kind: 'timer'; wakeAt: string };
+  };
 }

@@ -388,6 +388,35 @@ export class PrismaExecutionRepository implements ExecutionRepository {
     return result.count === 1;
   }
 
+  async cancelWaitingRun(runId: string, mode: 'best-effort' | 'hard'): Promise<boolean> {
+    const now = new Date();
+    return this.prisma.$transaction(async (tx) => {
+      const changed = await tx.run.updateMany({
+        where: {
+          runId,
+          status: 'waiting',
+          isActive: true,
+          OR: [{ leaseExpiresAt: null }, { leaseExpiresAt: { lt: now } }],
+        },
+        data: { status: 'cancelled', isActive: false, cancelled: mode, finishedAt: now },
+      });
+      if (changed.count !== 1) return false;
+      await tx.executionAttempt.updateMany({
+        where: { job: { runId }, status: AttemptStatuses.WAITING },
+        data: {
+          status: AttemptStatuses.CANCELLED,
+          finishedAt: now,
+          reason: toInputJson({ code: 'user_cancelled', category: 'cancelled', retryable: false }),
+        },
+      });
+      await tx.executionJob.updateMany({
+        where: { runId, status: AttemptStatuses.WAITING },
+        data: { status: AttemptStatuses.CANCELLED },
+      });
+      return true;
+    });
+  }
+
   async completeControl(
     commandId: string,
     ownerId: string,

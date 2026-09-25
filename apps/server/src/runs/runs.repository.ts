@@ -7,6 +7,7 @@ import type {
 export type RunStatus =
   | 'queued'
   | 'running'
+  | 'waiting'
   | 'paused'
   | 'pausing'
   | 'finished'

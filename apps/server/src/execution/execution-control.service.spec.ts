@@ -47,6 +47,7 @@ describe('ExecutionControlService', () => {
       listClaimableControls: jest.fn(async () => commandRows),
       claimControl: jest.fn(async () => true),
       releaseControlClaim: jest.fn(async () => true),
+      cancelWaitingRun: jest.fn(async () => true),
       completeControl: jest.fn(async () => true),
     };
     const config = {
@@ -109,6 +110,17 @@ describe('ExecutionControlService', () => {
       'executor-1',
       'applied',
     );
+  });
+
+  it('atomically cancels an unowned waiting Run through the durable repository', async () => {
+    const { service, executions, runs } = createSubject({
+      engineStatus: 'unknown',
+      runStatus: 'waiting',
+    });
+    const result = await service.request('run-1', 'cancel', { mode: 'hard' });
+    expect(result.status).toBe('applied');
+    expect(executions.cancelWaitingRun).toHaveBeenCalledWith('run-1', 'hard');
+    expect(runs.update).not.toHaveBeenCalled();
   });
 
   it('consumes commands inserted by a different server through the polling path', async () => {

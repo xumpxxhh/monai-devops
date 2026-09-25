@@ -100,6 +100,7 @@ function cloneStepToDraft(
         string,
         unknown
       >,
+      ...(step.mayWait !== undefined ? { mayWait: step.mayWait } : {}),
     };
   }
   return {

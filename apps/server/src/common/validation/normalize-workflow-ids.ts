@@ -27,6 +27,7 @@ export interface WorkflowDraftStep {
   dependsOn?: string[];
   priority?: number;
   retryPolicy?: WorkflowStep['retryPolicy'];
+  mayWait?: boolean;
 }
 
 export interface WorkflowDraft {
@@ -171,6 +172,7 @@ function normalizeDraftStep(
     ...base,
     ...(step.kind !== undefined ? { kind: StepKinds.PLUGIN } : {}),
     plugin: step.plugin.trim(),
+    ...(step.mayWait !== undefined ? { mayWait: step.mayWait } : {}),
     config: remapContextReferences(step.config, refMap, stepLabel) as Record<string, unknown>,
   };
 }

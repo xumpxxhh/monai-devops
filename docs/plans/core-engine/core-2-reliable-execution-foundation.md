@@ -1,6 +1,6 @@
 # Core-2：可靠调度与恢复基础（进行中）
 
-> **阶段状态：进行中（可重试 Run、条件跳过分支、显式 paused resume 与 ready Attempt 接管已形成闭环）**
+> **阶段状态：进行中（顶层插件的持久化等待/唤醒已形成 signal 与 timer 闭环）**
 
 ## 已落地基础
 
@@ -37,6 +37,8 @@
 - 条件不满足而跳过的步骤可从持久化 `step:finished` 与 SKIPPED Attempt/Job 重建；恢复快照核对事件计数、跳过原因、依赖链及 Attempt 终态。执行器不重发该步骤事件，也不重复调用插件，仍按既有 DAG 语义运行其下游；未持久化的步骤继续调度。其他跳过原因仍拒绝自动恢复。
 - 对已暂停且原 RunHandle 失联的 Run，显式 resume 命令会先认领控制命令，再尝试获取 Run lease 并校验恢复快照；安全时从已完成步骤后继续，旧事件与步骤不重放。旧 owner 仍持有 lease（含崩溃后尚未过期的 lease）时命令释放认领并保持 pending，由 owner 消费或在 lease 到期后再次尝试；快照不安全时命令明确 rejected。暂停 Run 不纳入后台自动接管扫描，仍需用户主动 resume。
 - ready 的 waiting Attempt 已接入恢复扫描：未唤醒时不认领对应 Run；signal 或 timer 标记 ready 后，快照校验 checkpoint 与原 Job/Attempt 身份，执行器沿用同一 Attempt，向插件上下文注入 checkpoint 载荷和可选 wakePayload，成功后继续 DAG。数据库集成测试覆盖未 ready 不抢跑、唤醒后仅一个 Attempt、载荷传递及最终状态。
+- 顶层插件步骤可显式声明 `mayWait: true`，插件以成功结果中的 `wait: { checkpoint, condition }` 请求 signal 或 timer 等待。执行器对含可挂起步骤的工作流采用串行 DAG 调度；等待前在有效 Attempt lease 下原子写入 checkpoint/条件并切换 Attempt/Job 为 waiting，释放步骤资源与 Run lease，Run 进入 waiting 且不发出伪造的 `step:finished` 或 `workflow:finished`。唤醒后继续原 Attempt；再次挂起递增 checkpoint version。
+- waiting Run 可在无活跃 owner 时持久化取消，Run、Job、Attempt 在数据库事务中一起进入取消态；旧 owner 或恢复器仍持有 Run lease 时取消命令保持 pending，避免与接管竞态。Web 列表和详情页已识别 waiting 为活跃状态。
 
 ## 权威边界
 
@@ -49,18 +51,20 @@
 
 - 终态仍由有序事件链投影，执行前授权已是同步强制闸门；
 - 嵌套子执行暂不写 Job/Attempt 表，避免在子 Run 不独立落表时破坏外键和 `(runId, stepId)` 唯一性；
-- 后台自动接管覆盖 queued Run、按显式重试策略允许恢复的 timed_out/failed Attempt、条件跳过的已结算分支，以及已 ready 且 checkpoint 有效的 waiting Attempt；paused Run 仅由显式 resume 接管。插件主动挂起的生产端、重复挂起版本推进、已有失败分支和非条件原因的跳过仍未完成，不能视为整个 Core-2 完成。拒绝原因记录日志，Run 保持原状态并短暂退避，避免阻塞后续可恢复 Run，之后重新校验。
+- 后台自动接管覆盖 queued Run、按显式重试策略允许恢复的 timed_out/failed Attempt、条件跳过的已结算分支，以及已 ready 且 checkpoint 有效的 waiting Attempt；paused Run 仅由显式 resume 接管。等待超时后的 Run 终态/重试、嵌套子工作流挂起、已有失败分支和非条件原因的跳过仍未完成，不能视为整个 Core-2 完成。拒绝原因记录日志，Run 保持原状态并短暂退避，避免阻塞后续可恢复 Run，之后重新校验。
 - Run 事件可能裁剪，缺失已完成步骤时拒绝重建；旧 Run 若无私有初始 state 且无已完成 `set_state` 输出也拒绝重建。持久化 idempotency key 与显式 retry policy 是恢复准入条件，但外部副作用仍需插件实际履行幂等契约。
-- 等待与唤醒已有数据库原子协议，ready 消费端也已自动重建 RunHandle 并续跑 DAG；但工作流步骤/插件尚不能主动发起持久化挂起，Run 仍无独立 waiting 生命周期，长任务等待的生产端闭环仍待实现。
+- 插件主动挂起目前只适用于顶层 `mayWait` 步骤；首版插件等待条件不支持 `timeoutAt`，也不支持嵌套子工作流挂起。signal 唤醒服务已具备内部接口，面向外部事件/人工审批的授权入口不在本轮范围内。
 - 混合版本滚动部署中，旧服务实例不持有 Run lease；启用自动接管前需保证执行节点均升级到本协议，否则旧实例的副作用无法被新 lease 完全约束。
 - 控制命令已经跨进程持久化，但当前仍由内嵌 Executor 轮询；远程 Executor 协议留到 Core-3。
 
 ## 下一闭环
 
-1. 定义插件主动挂起结果与 checkpoint 写入协议，安全释放步骤资源和 Run lease；补 Run waiting 生命周期、超时失败及再次挂起边界，完成生产端闭环；
+1. 补 waiting 超时后的 Run 终态/重试与可配置 timeoutAt，再评估嵌套子工作流的挂起恢复；
 2. 支持 paused 时仍在途的步骤与其他可安全续跑的跳过分支恢复，避免历史 Run 长期停留在 active 状态；
 3. 扩展故障注入、重复投递和长时间运行测试，并验证插件幂等契约。
 
 本轮条件跳过恢复已通过执行器、快照及 PostgreSQL 端到端接管测试；端到端验证覆盖旧事件不重复、下游只执行一次、最终计数及 SKIPPED Attempt 保持一致。
 
 显式 paused resume 已增加控制命令、快照与 PostgreSQL 端到端测试，覆盖失联后接管、旧步骤不重播、原 owner 仍有效时保持 pending，以及不安全快照拒绝。
+
+顶层插件等待生产端已有执行器单测和 PostgreSQL 端到端测试，覆盖定时唤醒、原 Attempt 续跑、无伪完成事件、资源/lease 释放、重复 checkpoint 版本与 waiting 取消。

@@ -36,7 +36,12 @@ export function buildRunRecoverySnapshot(
   jobs: readonly RecoveryJob[],
   initialState: { present: boolean; value?: unknown } = { present: false },
 ): WorkflowResumeSnapshot {
-  if (run.status !== 'queued' && run.status !== 'running' && run.status !== 'paused') {
+  if (
+    run.status !== 'queued' &&
+    run.status !== 'running' &&
+    run.status !== 'waiting' &&
+    run.status !== 'paused'
+  ) {
     reject(`Run ${run.runId} 的状态 ${run.status} 不允许直接续跑`);
   }
   if (run.result || run.events.some((event) => event.type === 'workflow:finished')) {

@@ -90,6 +90,8 @@ export interface ExecutionRepository {
   listClaimableControls(staleBefore: Date, limit: number): Promise<ExecutionControlCommand[]>;
   claimControl(commandId: string, ownerId: string, staleBefore: Date): Promise<boolean>;
   releaseControlClaim(commandId: string, ownerId: string): Promise<boolean>;
+  /** 原子取消无活跃 Run owner 的 waiting Run 及其 Attempt/Job。 */
+  cancelWaitingRun(runId: string, mode: 'best-effort' | 'hard'): Promise<boolean>;
   completeControl(
     commandId: string,
     ownerId: string,

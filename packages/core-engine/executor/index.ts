@@ -27,6 +27,7 @@ import {
   StepStatuses,
   WorkflowRunIdValidationError,
   WorkflowValidationError,
+  WorkflowSuspendedError,
 } from '../errors.js';
 import type { SkipReason } from '../errors.js';
 import type {
@@ -64,6 +65,7 @@ import type {
   WorkflowDefinition,
   WorkflowRunResult,
   WorkflowRunStatus,
+  WorkflowResumeSnapshot,
   WorkflowStep,
   StepCompleteOptions,
   WorkflowRefStep,
@@ -79,7 +81,12 @@ import { deriveChildRunId } from './child-run-id.js';
 import { defaultStateFromSchema, parseState } from './state-schema.js';
 import { validateStepKinds } from './step-kind-validation.js';
 import { createExecutionIdentity } from './execution-identity.js';
-import { resolveRetryPolicy, retryBackoffMs, shouldRetryExecution } from '../reliability/index.js';
+import {
+  resolveRetryPolicy,
+  retryBackoffMs,
+  shouldRetryExecution,
+  validateWakeCondition,
+} from '../reliability/index.js';
 
 export type {
   AbortSchedulingReason,
@@ -171,6 +178,7 @@ export {
   RunAlreadyActiveError,
   WorkflowRunIdValidationError,
   WorkflowValidationError,
+  WorkflowSuspendedError,
 } from '../errors.js';
 
 /** 单次 run 内可变的 state 容器 */
@@ -186,6 +194,7 @@ interface StepRuntime {
   embeddedRunHooks?: EmbeddedRunHooks;
   nestingDepth: number;
   ancestorWorkflowIds: string[];
+  readyWaitsByStep?: WorkflowResumeSnapshot['readyWaitsByStep'];
 }
 
 const WORKFLOW_RUN_ID_MAX_LENGTH = 128;
@@ -533,6 +542,7 @@ function buildWorkflowRunResult(
 export function createWorkflowExecutor(options: ExecutorOptions = {}) {
   const {
     pluginExecutor,
+    onStepWait,
     maxParallelSteps = 1,
     failFast = true,
     observer,
@@ -722,6 +732,7 @@ export function createWorkflowExecutor(options: ExecutorOptions = {}) {
 
       return await executePluginStep(workflowRunId, step, context, meta, signal, handle, runtime);
     } catch (error) {
+      if (error instanceof WorkflowSuspendedError) throw error;
       if (error instanceof PluginCancelledError) {
         const executionResult = buildSkippedResult(step.id, resolveInFlightAbortSkipReason(handle));
         await notifyStepComplete(workflowRunId, step, executionResult, context, meta);
@@ -1246,6 +1257,45 @@ export function createWorkflowExecutor(options: ExecutorOptions = {}) {
       );
     }
 
+    if (pluginResult.wait) {
+      if (!step.mayWait || runtime.nestingDepth !== 0 || !onStepWait || !context.execution) {
+        return finalizeFailure(
+          workflowRunId,
+          step,
+          buildFailedResult(step.id, {
+            error: new Error(`步骤 ${step.id} 未启用可持久化等待`),
+            failureKind: StepFailureKinds.CONFIG_RESOLUTION,
+          }),
+          context,
+          meta,
+        );
+      }
+      if ('timeoutAt' in pluginResult.wait.condition) {
+        throw new Error('插件持久化等待暂不支持 timeoutAt');
+      }
+      validateWakeCondition(pluginResult.wait.condition);
+      const execution = context.execution;
+      const checkpoint = {
+        jobId: execution.jobId,
+        sourceAttemptId: execution.attemptId,
+        version: (runtime.readyWaitsByStep?.[step.id]?.checkpoint.version ?? 0) + 1,
+        payload: pluginResult.wait.checkpoint,
+        createdAt: new Date().toISOString(),
+      };
+      await onStepWait(step, context, checkpoint, pluginResult.wait.condition);
+      onStepComplete?.(
+        step,
+        {
+          stepId: step.id,
+          execution,
+          status: StepStatuses.WAITING,
+          success: false,
+        },
+        context,
+      );
+      throw new WorkflowSuspendedError(step.id);
+    }
+
     const executionResult = buildCompletedResult(step.id, pluginResult);
     await notifyStepComplete(workflowRunId, step, executionResult, context, meta);
     return executionResult;
@@ -1370,6 +1420,11 @@ export function createWorkflowExecutor(options: ExecutorOptions = {}) {
       const graph = validateDag(workflow.steps);
       validateStepKinds(workflow);
       validateWorkflowContextReferences(workflow, { resolvePluginResultSchema });
+      const effectiveMaxParallelSteps = workflow.steps.some(
+        (step) => isPluginStep(step) && step.mayWait,
+      )
+        ? 1
+        : maxParallelSteps;
 
       const resume = callOptions.resume;
       const resumedResults = new Map<string, ExecutionResult>();
@@ -1484,6 +1539,7 @@ export function createWorkflowExecutor(options: ExecutorOptions = {}) {
         embeddedRunHooks,
         nestingDepth,
         ancestorWorkflowIds,
+        readyWaitsByStep: resume?.readyWaitsByStep,
       };
 
       await emit(
@@ -1640,7 +1696,7 @@ export function createWorkflowExecutor(options: ExecutorOptions = {}) {
         // 从 ready 取出步骤填满 inFlight 池（受 maxParallelSteps 与 stopScheduling 约束）
         while (
           ready.length > 0 &&
-          inFlight.size < maxParallelSteps &&
+          inFlight.size < effectiveMaxParallelSteps &&
           !stopScheduling &&
           !handle.isPaused() &&
           !handle.isPausing()

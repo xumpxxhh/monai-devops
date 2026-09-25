@@ -148,9 +148,21 @@ function renderLogLine(log: LogLine, stepNameById: Record<string, string> | unde
   );
 }
 
-const ACTIVE_RUN_STATUSES = new Set<RunStatus>(['queued', 'running', 'paused', 'pausing']);
+const ACTIVE_RUN_STATUSES = new Set<RunStatus>([
+  'queued',
+  'running',
+  'waiting',
+  'paused',
+  'pausing',
+]);
 const TERMINAL_RUN_STATUSES = new Set<RunStatus>(['finished', 'failed', 'cancelled', 'rejected']);
-const CANCELLABLE_STATUSES = new Set<RunStatus>(['queued', 'running', 'paused', 'pausing']);
+const CANCELLABLE_STATUSES = new Set<RunStatus>([
+  'queued',
+  'running',
+  'waiting',
+  'paused',
+  'pausing',
+]);
 const PAUSABLE_STATUSES = new Set<RunStatus>(['running', 'pausing']);
 const RESUMABLE_STATUSES = new Set<RunStatus>(['paused', 'pausing']);
 

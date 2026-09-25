@@ -10,7 +10,13 @@ import { EmptyState } from '../../shared/ui/EmptyState';
 import { Input, Select } from '../../shared/ui/form';
 import { Modal } from '../../shared/ui/Modal';
 
-const ACTIVE_RUN_STATUSES = new Set<RunStatus>(['queued', 'running', 'paused', 'pausing']);
+const ACTIVE_RUN_STATUSES = new Set<RunStatus>([
+  'queued',
+  'running',
+  'waiting',
+  'paused',
+  'pausing',
+]);
 
 export default function RunsListPage() {
   const [runs, setRuns] = useState<RunRecord[]>([]);

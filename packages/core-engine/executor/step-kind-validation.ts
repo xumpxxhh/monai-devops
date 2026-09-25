@@ -103,6 +103,9 @@ export function validateStepKinds(workflow: WorkflowDefinition): void {
     if (!('config' in step) || typeof step.config !== 'object' || step.config === null) {
       throw new WorkflowValidationError(`步骤 "${step.id}" 缺少 config 字段`);
     }
+    if (step.mayWait !== undefined && typeof step.mayWait !== 'boolean') {
+      throw new WorkflowValidationError(`步骤 "${step.id}" 的 mayWait 必须为布尔值`);
+    }
   }
 }
 

@@ -1,7 +1,12 @@
 import { randomUUID } from 'node:crypto';
 import { Inject, Injectable, Logger, OnModuleDestroy } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { AttemptStatuses, type ExecutionIdentity } from '@monai-devops/core-engine';
+import {
+  AttemptStatuses,
+  type ExecutionCheckpoint,
+  type ExecutionIdentity,
+  type ExecutionWakeCondition,
+} from '@monai-devops/core-engine';
 import { EXECUTION_REPOSITORY, type ExecutionRepository } from './execution.repository.js';
 
 interface ActiveLease {
@@ -61,6 +66,26 @@ export class ExecutionLeaseService implements OnModuleDestroy {
     if (!lease) return;
     clearInterval(lease.timer);
     this.active.delete(attemptId);
+  }
+
+  async registerWait(
+    execution: ExecutionIdentity,
+    checkpoint: ExecutionCheckpoint,
+    condition: ExecutionWakeCondition,
+  ): Promise<void> {
+    const active = this.active.get(execution.attemptId);
+    if (
+      !active ||
+      !(await this.repository.registerWait({
+        execution,
+        leaseToken: active.token,
+        checkpoint,
+        condition,
+      }))
+    ) {
+      throw new Error(`Execution attempt cannot enter waiting: ${execution.attemptId}`);
+    }
+    this.stop(execution.attemptId);
   }
 
   has(attemptId: string): boolean {

@@ -212,6 +212,8 @@ PluginContextKeys.checkpoint // 'checkpoint'：ready waiting Attempt 的上次 c
 PluginContextKeys.wakePayload // 'wakePayload'：signal 唤醒载荷（timer 唤醒时缺省）
 ```
 
+顶层插件步骤声明 `mayWait: true` 后，可返回 `{ success: true, wait: { checkpoint, condition } }` 请求持久化挂起；`condition` 为 `{ kind: 'signal', key }` 或 `{ kind: 'timer', wakeAt }`。恢复时同一 Attempt 再次调用插件，`checkpoint` 与 `wakePayload` 由上述 Context 键提供。当前不支持等待超时 `timeoutAt` 或嵌套子工作流挂起。
+
 ### `PluginLogger`
 
 ```ts

@@ -7,6 +7,7 @@ import {
   type EmbeddedRunHooks,
   type ExecuteWorkflowCallOptions,
   type ExecutionContext,
+  type ExecutorOptions,
   type ExecutionResult,
   type ResolveWorkflow,
   type WorkflowDefinition,
@@ -36,6 +37,7 @@ export class EngineService implements OnModuleInit, OnModuleDestroy {
   private resolveWorkflowImpl?: ResolveWorkflow;
   private embeddedRunHooksImpl?: EmbeddedRunHooks;
   private beforeStepExecuteImpl?: BeforeStepExecute;
+  private onStepWaitImpl?: NonNullable<ExecutorOptions['onStepWait']>;
 
   constructor(private readonly config: ConfigService) {}
 
@@ -64,6 +66,10 @@ export class EngineService implements OnModuleInit, OnModuleDestroy {
         },
       },
       beforeStepExecute: (step, context) => this.beforeStepExecuteImpl?.(step, context),
+      onStepWait: async (step, context, checkpoint, condition) => {
+        if (!this.onStepWaitImpl) throw new Error('Durable wait handler is unavailable');
+        await this.onStepWaitImpl(step, context, checkpoint, condition);
+      },
       observer: {
         onEvent: async (event) => {
           for (const handler of this.eventHandlers) {
@@ -91,6 +97,10 @@ export class EngineService implements OnModuleInit, OnModuleDestroy {
 
   setBeforeStepExecute(hook: BeforeStepExecute): void {
     this.beforeStepExecuteImpl = hook;
+  }
+
+  setOnStepWait(hook: NonNullable<ExecutorOptions['onStepWait']>): void {
+    this.onStepWaitImpl = hook;
   }
 
   onModuleDestroy(): void {

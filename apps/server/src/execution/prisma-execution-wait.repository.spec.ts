@@ -62,6 +62,39 @@ describeIfDb('PrismaExecutionRepository durable waits', () => {
     await prisma.run.delete({ where: { runId } });
   });
 
+  it('atomically cancels a waiting Run and its parked Attempt', async () => {
+    const checkpoint = {
+      jobId: execution.jobId,
+      sourceAttemptId: execution.attemptId,
+      version: 1,
+      payload: { cursor: 1 },
+      createdAt: new Date().toISOString(),
+    };
+    expect(
+      await repository.registerWait({
+        execution,
+        leaseToken: 'token-1',
+        checkpoint,
+        condition: { kind: 'signal', key: 'continue' },
+      }),
+    ).toBe(true);
+    await prisma.run.update({ where: { runId }, data: { status: 'waiting' } });
+
+    expect(await repository.cancelWaitingRun(runId, 'hard')).toBe(true);
+    expect(await repository.cancelWaitingRun(runId, 'hard')).toBe(false);
+    expect(await prisma.run.findUnique({ where: { runId } })).toMatchObject({
+      status: 'cancelled',
+      isActive: false,
+      cancelled: 'hard',
+    });
+    expect(
+      await prisma.executionJob.findUnique({ where: { jobId: execution.jobId } }),
+    ).toMatchObject({ status: AttemptStatuses.CANCELLED });
+    expect(
+      await prisma.executionAttempt.findUnique({ where: { attemptId: execution.attemptId } }),
+    ).toMatchObject({ status: AttemptStatuses.CANCELLED });
+  });
+
   it('loads the persisted Job, Attempt and checkpoint for Run reconstruction', async () => {
     const checkpoint = {
       jobId: execution.jobId,

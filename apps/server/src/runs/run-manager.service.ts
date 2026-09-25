@@ -11,6 +11,7 @@ import {
 import { ConfigService } from '@nestjs/config';
 import {
   AttemptStatuses,
+  WorkflowSuspendedError,
   defaultStateFromSchema,
   parseState,
   resolveRetryPolicy,
@@ -21,6 +22,9 @@ import {
   WorkflowValidationError,
   type WorkflowDefinition,
   type ExecutionIdentity,
+  type ExecutionCheckpoint,
+  type ExecutionWakeCondition,
+  type PluginStep,
   type RetryPolicy,
   type WorkflowLifecycleEvent,
   type WorkflowRunResult,
@@ -76,7 +80,13 @@ const TERMINAL_RUN_STATUSES: RunRecord['status'][] = [
   'cancelled',
 ];
 
-const NON_DELETABLE_STATUSES: RunRecord['status'][] = ['queued', 'running', 'paused', 'pausing'];
+const NON_DELETABLE_STATUSES: RunRecord['status'][] = [
+  'queued',
+  'running',
+  'waiting',
+  'paused',
+  'pausing',
+];
 
 function mergeEngineControlStatus(record: RunRecord, engine?: RunStatusSnapshot): RunRecord {
   if (!engine || engine.status === 'unknown') {
@@ -218,6 +228,27 @@ export class RunManagerService implements OnModuleInit, OnModuleDestroy {
     this.engineService.setBeforeStepExecute((step, context) =>
       this.authorizeStepExecution(step.id, step.retryPolicy, context.runId, context.execution),
     );
+    this.engineService.setOnStepWait?.((step, context, checkpoint, condition) =>
+      this.registerStepWait(step, context.runId, context.execution, checkpoint, condition),
+    );
+  }
+
+  private async registerStepWait(
+    step: PluginStep,
+    runId: unknown,
+    execution: ExecutionIdentity | undefined,
+    checkpoint: ExecutionCheckpoint,
+    condition: ExecutionWakeCondition,
+  ): Promise<void> {
+    if (typeof runId !== 'string' || !execution || !this.managedRunIds.has(runId)) {
+      throw new Error(`Run is not managed for waiting step ${step.id}`);
+    }
+    await (this.eventChains.get(runId) ?? Promise.resolve());
+    const runLease = this.runLeases.get(runId);
+    if (!runLease || !(await this.heartbeatRunLease(runId, runLease.token))) {
+      throw new Error(`Run lease unavailable before waiting: ${runId}`);
+    }
+    await this.executionLeases.registerWait(execution, checkpoint, condition);
   }
 
   private async authorizeStepExecution(
@@ -425,7 +456,8 @@ export class RunManagerService implements OnModuleInit, OnModuleDestroy {
       runId,
       status:
         currentStatus === 'cancelled' ||
-        (record.status === 'queued' && control.status === 'applied')
+        ((record.status === 'queued' || record.status === 'waiting') &&
+          control.status === 'applied')
           ? ('cancelled' as const)
           : record.status,
       cancelled: mode,
@@ -587,6 +619,11 @@ export class RunManagerService implements OnModuleInit, OnModuleDestroy {
       await this.finalizeIfNeeded(runId, result);
     } catch (error) {
       if (!this.runLeases.has(runId)) return;
+      if (error instanceof WorkflowSuspendedError) {
+        await (this.eventChains.get(runId) ?? Promise.resolve());
+        await this.runRepository.update(runId, { status: 'waiting' });
+        return;
+      }
       if (
         error instanceof WorkflowValidationError ||
         error instanceof WorkflowRunIdValidationError

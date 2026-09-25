@@ -87,6 +87,7 @@ export type WsInboundMessage =
 export type RunStatus =
   | 'queued'
   | 'running'
+  | 'waiting'
   | 'pausing'
   | 'paused'
   | 'finished'

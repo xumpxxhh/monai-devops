@@ -115,6 +115,7 @@ export type DraftStepNodeData = EditorNodeConfigData & {
   stepId?: string;
   priority?: number;
   retryPolicy?: WorkflowStep['retryPolicy'];
+  mayWait?: boolean;
   inputState?: unknown;
   loop?: {
     maxIterations: number;
@@ -160,6 +161,7 @@ export function nodeDataToDraftStep(
     kind: StepKinds.PLUGIN,
     plugin: data.plugin ?? '',
     config: data.config ?? {},
+    ...(data.mayWait !== undefined ? { mayWait: data.mayWait } : {}),
   };
 }
 

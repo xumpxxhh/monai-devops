@@ -582,4 +582,114 @@ describeIfDb('Run recovery integration', () => {
     leases.onModuleDestroy();
     manager.onModuleDestroy();
   });
+
+  it('persists a plugin timer wait, releases ownership, and resumes when due', async () => {
+    const workflow: WorkflowDefinition = {
+      id: 'producer-wait',
+      name: 'Producer wait',
+      steps: [
+        { id: 'wait', name: 'Wait', plugin: 'test', config: {}, mayWait: true },
+        { id: 'after', name: 'After', plugin: 'test', config: {}, dependsOn: ['wait'] },
+      ],
+    };
+    const calls: string[] = [];
+    let onEvent: ((event: WorkflowLifecycleEvent) => void | Promise<void>) | undefined;
+    let beforeStep:
+      | ((step: WorkflowDefinition['steps'][number], context: never) => Promise<void> | void)
+      | undefined;
+    let onWait:
+      | ((step: never, context: never, checkpoint: never, condition: never) => Promise<void>)
+      | undefined;
+    const executor = createWorkflowExecutor({
+      pluginExecutor: async (_plugin, _config, context) => {
+        const stepId = getContext<string>(context, WorkflowContextKeys.stepId)!;
+        calls.push(stepId);
+        if (stepId === 'wait' && !getContext(context, PluginContextKeys.checkpoint)) {
+          return {
+            success: true,
+            wait: {
+              checkpoint: { cursor: 'saved' },
+              condition: {
+                kind: 'timer' as const,
+                wakeAt: new Date(Date.now() + 1_000).toISOString(),
+              },
+            },
+          };
+        }
+        if (stepId === 'wait') {
+          expect(getContext(context, PluginContextKeys.checkpoint)).toEqual({ cursor: 'saved' });
+          expect(getContext(context, PluginContextKeys.wakePayload)).toBeUndefined();
+        }
+        return { success: true, data: { stepId } };
+      },
+      onStepStart: (step, context) => beforeStep?.(step, context as never),
+      onStepWait: (step, context, checkpoint, condition) =>
+        onWait!(step as never, context as never, checkpoint as never, condition as never),
+      observer: { onEvent: (event) => onEvent?.(event) },
+    });
+    const engine = {
+      validateWorkflow: jest.fn(async () => undefined),
+      onEvent: (handler: typeof onEvent) => {
+        onEvent = handler;
+      },
+      setEmbeddedRunHooks: jest.fn(),
+      setBeforeStepExecute: (handler: typeof beforeStep) => {
+        beforeStep = handler;
+      },
+      setOnStepWait: (handler: typeof onWait) => {
+        onWait = handler;
+      },
+      runWorkflow: (id: string, definition: WorkflowDefinition, context: object, options: object) =>
+        executor.executeWorkflow(id, definition, context, options),
+    } as unknown as EngineService;
+    const leases = new ExecutionLeaseService(executions, config);
+    const manager = new RunManagerService(
+      engine,
+      runs,
+      { fanOut: jest.fn() } as unknown as RunStreamService,
+      config,
+      executions,
+      leases,
+      { request: jest.fn() } as never,
+    );
+    manager.onModuleInit();
+    const submitted = await manager.submitRun(workflow);
+    runId = submitted.runId;
+    for (let i = 0; i < 100; i++) {
+      if ((await runs.findById(runId))?.status === 'waiting') break;
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    const waitingRun = await runs.findById(runId);
+    const identity = createExecutionIdentity(runId, 'wait', 0);
+    expect(waitingRun?.status).toBe('waiting');
+    expect(waitingRun?.counts.completed).toBe(0);
+    expect(waitingRun?.events.filter((event) => event.type === 'step:finished')).toHaveLength(0);
+    expect(
+      await prisma.executionAttempt.findUnique({ where: { attemptId: identity.attemptId } }),
+    ).toMatchObject({ status: AttemptStatuses.WAITING, leaseToken: null });
+    expect(await prisma.run.findUnique({ where: { runId } })).toMatchObject({ leaseToken: null });
+    expect(calls).toEqual(['wait']);
+
+    await prisma.run.update({
+      where: { runId },
+      data: { createdAt: new Date(Date.now() - 60_000) },
+    });
+    expect(await executions.wakeDueTimers(new Date(Date.now() + 2_000))).toBe(1);
+    const recovery = new RunRecoveryService(
+      { listRecoverableRunIds: async () => [runId] } as unknown as RunRepository,
+      new ExecutionRecoveryService(executions),
+      manager,
+      config,
+    );
+    await recovery.scan();
+    for (let i = 0; i < 100; i++) {
+      if ((await runs.findById(runId))?.status === 'finished') break;
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    expect((await runs.findById(runId))?.status).toBe('finished');
+    expect(calls).toEqual(['wait', 'wait', 'after']);
+    expect(await prisma.executionAttempt.count({ where: { jobId: identity.jobId } })).toBe(1);
+    leases.onModuleDestroy();
+    manager.onModuleDestroy();
+  });
 });

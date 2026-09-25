@@ -7,7 +7,16 @@ export const StepStatuses = {
   COMPLETED: 'completed',
   SKIPPED: 'skipped',
   FAILED: 'failed',
+  WAITING: 'waiting',
 } as const;
+
+/** checkpoint 已持久化，当前执行栈必须退出；不是步骤失败或工作流终态。 */
+export class WorkflowSuspendedError extends Error {
+  constructor(readonly stepId: string) {
+    super(`Workflow suspended at step ${stepId}`);
+    this.name = 'WorkflowSuspendedError';
+  }
+}
 
 export type StepStatus = (typeof StepStatuses)[keyof typeof StepStatuses];
 
