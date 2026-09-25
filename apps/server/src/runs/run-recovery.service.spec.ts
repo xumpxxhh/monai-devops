@@ -62,7 +62,7 @@ describe('RunRecoveryService', () => {
 
     await service.scan();
     expect(manager.resumePersistedRun).toHaveBeenCalledTimes(2);
-    expect(manager.resumePersistedRun).toHaveBeenCalledWith('ready');
+    expect(manager.resumePersistedRun).toHaveBeenCalledWith('ready', true);
     await service.scan();
     expect(runs.listRecoverableRunIds).toHaveBeenLastCalledWith(
       expect.any(Date),

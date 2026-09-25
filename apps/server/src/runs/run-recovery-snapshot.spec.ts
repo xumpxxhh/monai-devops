@@ -86,6 +86,49 @@ describe('buildRunRecoverySnapshot', () => {
     const run = runRecord();
     run.events = [];
     expect(() => buildRunRecoverySnapshot(run, jobs())).toThrow(RunRecoveryNotReadyError);
+    try {
+      buildRunRecoverySnapshot(run, jobs());
+    } catch (error) {
+      expect(error).toMatchObject({ permanent: true });
+    }
+  });
+
+  it('classifies failed and non-condition-skipped branches as permanently unrecoverable', () => {
+    const failed = runRecord();
+    failed.counts.failed = 1;
+    expect(() => buildRunRecoverySnapshot(failed, jobs())).toThrow(/含失败步骤/);
+
+    const skipped = runRecord();
+    skipped.counts.skipped = 1;
+    skipped.events.push({
+      type: 'step:finished',
+      workflowRunId: skipped.runId,
+      step: { id: 'b' },
+      result: {
+        stepId: 'b',
+        status: StepStatuses.SKIPPED,
+        success: true,
+        skipReason: SkipReasons.USER_CANCELLED,
+      },
+    });
+    try {
+      buildRunRecoverySnapshot(skipped, jobs());
+    } catch (error) {
+      expect(error).toMatchObject({ permanent: true });
+    }
+  });
+
+  it('defers recovery while an Attempt is still leased or running', () => {
+    for (const status of [AttemptStatuses.LEASED, AttemptStatuses.RUNNING]) {
+      const inFlight = jobs();
+      inFlight[1]!.status = status;
+      inFlight[1]!.attempts[0]!.status = status;
+      try {
+        buildRunRecoverySnapshot(runRecord(), inFlight);
+      } catch (error) {
+        expect(error).toMatchObject({ permanent: false });
+      }
+    }
   });
 
   it('rejects waiting attempts and exhausted retries', () => {
@@ -93,6 +136,11 @@ describe('buildRunRecoverySnapshot', () => {
     waiting[1]!.status = AttemptStatuses.WAITING;
     waiting[1]!.attempts[0]!.status = AttemptStatuses.WAITING;
     expect(() => buildRunRecoverySnapshot(runRecord(), waiting)).toThrow(/waiting/);
+    try {
+      buildRunRecoverySnapshot(runRecord(), waiting);
+    } catch (error) {
+      expect(error).toMatchObject({ permanent: false });
+    }
 
     waiting[1]!.attempts[0]!.wakeReadyAt = new Date();
     waiting[1]!.checkpoint = {

@@ -692,4 +692,114 @@ describeIfDb('Run recovery integration', () => {
     leases.onModuleDestroy();
     manager.onModuleDestroy();
   });
+
+  it('retries a timed-out plugin wait as a new Attempt without replaying downstream work', async () => {
+    const workflow: WorkflowDefinition = {
+      id: 'producer-timeout',
+      name: 'Producer timeout',
+      steps: [
+        {
+          id: 'wait',
+          name: 'Wait',
+          plugin: 'test',
+          config: {},
+          mayWait: true,
+          retryPolicy: { maxAttempts: 2, backoffMs: 0 },
+        },
+        { id: 'after', name: 'After', plugin: 'test', config: {}, dependsOn: ['wait'] },
+      ],
+    };
+    const calls: string[] = [];
+    let onEvent: ((event: WorkflowLifecycleEvent) => void | Promise<void>) | undefined;
+    let beforeStep:
+      | ((step: WorkflowDefinition['steps'][number], context: never) => Promise<void> | void)
+      | undefined;
+    let onWait:
+      | ((step: never, context: never, checkpoint: never, condition: never) => Promise<void>)
+      | undefined;
+    const executor = createWorkflowExecutor({
+      pluginExecutor: async (_plugin, _config, context) => {
+        const stepId = getContext<string>(context, WorkflowContextKeys.stepId)!;
+        const attempt = (context.execution as { attempt: number }).attempt;
+        calls.push(`${stepId}/${attempt}`);
+        if (stepId === 'wait' && attempt === 0) {
+          return {
+            success: true,
+            wait: {
+              checkpoint: { stage: 'approval' },
+              condition: {
+                kind: 'signal' as const,
+                key: 'approval',
+                timeoutAt: new Date(Date.now() + 1_000).toISOString(),
+              },
+            },
+          };
+        }
+        return { success: true, data: { stepId } };
+      },
+      onStepStart: (step, context) => beforeStep?.(step, context as never),
+      onStepWait: (step, context, checkpoint, condition) =>
+        onWait!(step as never, context as never, checkpoint as never, condition as never),
+      observer: { onEvent: (event) => onEvent?.(event) },
+    });
+    const engine = {
+      validateWorkflow: jest.fn(async () => undefined),
+      onEvent: (handler: typeof onEvent) => {
+        onEvent = handler;
+      },
+      setEmbeddedRunHooks: jest.fn(),
+      setBeforeStepExecute: (handler: typeof beforeStep) => {
+        beforeStep = handler;
+      },
+      setOnStepWait: (handler: typeof onWait) => {
+        onWait = handler;
+      },
+      runWorkflow: (id: string, definition: WorkflowDefinition, context: object, options: object) =>
+        executor.executeWorkflow(id, definition, context, options),
+    } as unknown as EngineService;
+    const leases = new ExecutionLeaseService(executions, config);
+    const manager = new RunManagerService(
+      engine,
+      runs,
+      { fanOut: jest.fn() } as unknown as RunStreamService,
+      config,
+      executions,
+      leases,
+      { request: jest.fn() } as never,
+    );
+    manager.onModuleInit();
+    runId = (await manager.submitRun(workflow)).runId;
+    for (let i = 0; i < 100; i++) {
+      if ((await runs.findById(runId))?.status === 'waiting') break;
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    expect((await runs.findById(runId))?.status).toBe('waiting');
+    await prisma.run.update({
+      where: { runId },
+      data: { createdAt: new Date(Date.now() - 60_000) },
+    });
+    expect(await executions.expireWaits(new Date(Date.now() + 2_000))).toBe(1);
+    const recovery = new RunRecoveryService(
+      { listRecoverableRunIds: async () => [runId] } as unknown as RunRepository,
+      new ExecutionRecoveryService(executions),
+      manager,
+      config,
+    );
+    await recovery.scan();
+    for (let i = 0; i < 100; i++) {
+      if ((await runs.findById(runId))?.status === 'finished') break;
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    expect((await runs.findById(runId))?.status).toBe('finished');
+    expect(calls).toEqual(['wait/0', 'wait/1', 'after/0']);
+    expect(
+      await prisma.executionAttempt.findMany({
+        where: { jobId: createExecutionIdentity(runId, 'wait', 0).jobId },
+        orderBy: { attempt: 'asc' },
+        select: { status: true },
+      }),
+    ).toEqual([{ status: AttemptStatuses.TIMED_OUT }, { status: AttemptStatuses.SUCCEEDED }]);
+    leases.onModuleDestroy();
+    manager.onModuleDestroy();
+  });
 });

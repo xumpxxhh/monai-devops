@@ -40,6 +40,8 @@ export interface WorkflowRunResultSerialized {
   status: 'success' | 'failed' | 'cancelled';
   workflowId: string;
   results: ExecutionResultSerialized[];
+  terminalReason?: string;
+  terminalMessage?: string;
   state?: unknown;
 }
 

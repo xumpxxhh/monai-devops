@@ -95,6 +95,47 @@ describeIfDb('PrismaExecutionRepository durable waits', () => {
     ).toMatchObject({ status: AttemptStatuses.CANCELLED });
   });
 
+  it('cancels an orphaned paused Run with an in-flight Attempt', async () => {
+    await prisma.run.update({ where: { runId }, data: { status: 'paused' } });
+    expect(await repository.cancelWaitingRun(runId, 'best-effort', 'paused')).toBe(true);
+    expect(await repository.cancelWaitingRun(runId, 'best-effort', 'paused')).toBe(false);
+    expect(await prisma.run.findUnique({ where: { runId } })).toMatchObject({
+      status: 'cancelled',
+      isActive: false,
+    });
+    expect(
+      await prisma.executionAttempt.findUnique({ where: { attemptId: execution.attemptId } }),
+    ).toMatchObject({
+      status: AttemptStatuses.CANCELLED,
+    });
+    expect(
+      await prisma.executionJob.findUnique({ where: { jobId: execution.jobId } }),
+    ).toMatchObject({
+      status: AttemptStatuses.CANCELLED,
+    });
+  });
+
+  it('keeps paused cancellation pending while another owner holds the Run lease', async () => {
+    await prisma.run.update({
+      where: { runId },
+      data: {
+        status: 'paused',
+        leaseOwner: 'other-owner',
+        leaseToken: 'other-token',
+        leaseExpiresAt: new Date(Date.now() + 60_000),
+      },
+    });
+    expect(await repository.cancelWaitingRun(runId, 'hard', 'paused')).toBe(false);
+    expect((await prisma.run.findUniqueOrThrow({ where: { runId } })).status).toBe('paused');
+    expect(
+      (
+        await prisma.executionAttempt.findUniqueOrThrow({
+          where: { attemptId: execution.attemptId },
+        })
+      ).status,
+    ).toBe(AttemptStatuses.RUNNING);
+  });
+
   it('loads the persisted Job, Attempt and checkpoint for Run reconstruction', async () => {
     const checkpoint = {
       jobId: execution.jobId,
@@ -290,6 +331,18 @@ describeIfDb('PrismaExecutionRepository durable waits', () => {
     expect(run.status).toBe('failed');
     expect(run.isActive).toBe(false);
     expect(run.countsFailed).toBe(1);
+    expect(run.result).toMatchObject({
+      status: 'failed',
+      terminalReason: 'step_failed',
+      results: [{ stepId: 'step', reason: { code: 'wait_timeout' } }],
+    });
+    const events = await prisma.runEvent.findMany({
+      where: { runId },
+      orderBy: { eventIndex: 'asc' },
+    });
+    expect(events.map((event) => event.type)).toEqual(['step:finished', 'workflow:finished']);
+    expect(await repository.expireWaits(new Date(now.getTime() + 7_000))).toBe(0);
+    expect(await prisma.runEvent.count({ where: { runId } })).toBe(2);
     expect(
       await repository.acquireLease(
         execution.attemptId,

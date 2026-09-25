@@ -59,9 +59,9 @@ export class RunRecoveryService implements OnApplicationBootstrap, OnModuleDestr
       );
       for (const runId of candidates) {
         try {
-          if (await this.manager.resumePersistedRun(runId)) {
+          if (await this.manager.resumePersistedRun(runId, true)) {
             this.blockedReasons.delete(runId);
-            this.logger.log(`Resumed Run under recovered ownership: ${runId}`);
+            this.logger.log(`Recovered or settled Run under exclusive ownership: ${runId}`);
           }
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);

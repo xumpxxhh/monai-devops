@@ -67,6 +67,8 @@ export interface RunRepository {
   acquireRunLease(runId: string, ownerId: string, token: string, expiresAt: Date): Promise<boolean>;
   heartbeatRunLease(runId: string, token: string, expiresAt: Date): Promise<boolean>;
   releaseRunLease(runId: string, token: string): Promise<boolean>;
+  /** 持有 Run lease 时将永久不可恢复的 Run 结算为可审计失败；重复调用不得追加终态事件。 */
+  settleRecoveryBlocked(runId: string, token: string, reason: string): Promise<boolean>;
   listRecoverableRunIds(
     now: Date,
     unleasedBefore: Date,

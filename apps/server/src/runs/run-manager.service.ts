@@ -456,7 +456,9 @@ export class RunManagerService implements OnModuleInit, OnModuleDestroy {
       runId,
       status:
         currentStatus === 'cancelled' ||
-        ((record.status === 'queued' || record.status === 'waiting') &&
+        ((record.status === 'queued' ||
+          record.status === 'waiting' ||
+          record.status === 'paused') &&
           control.status === 'applied')
           ? ('cancelled' as const)
           : record.status,
@@ -574,11 +576,12 @@ export class RunManagerService implements OnModuleInit, OnModuleDestroy {
   }
 
   /** 仅由恢复扫描调用；先取得 Run lease，再重建快照，绝不重放未授权步骤。 */
-  async resumePersistedRun(runId: string): Promise<boolean> {
+  async resumePersistedRun(runId: string, settlePermanent = false): Promise<boolean> {
     if (this.managedRunIds.has(runId)) return false;
     if (!(await this.acquireRunLease(runId))) return false;
+    let run: RunRecord | undefined;
     try {
-      const run = await this.runRepository.findById(runId);
+      run = await this.runRepository.findById(runId);
       if (!run) throw new RunRecoveryNotReadyError(`Run ${runId} 不存在`);
       const resume = await this.loadRecoverySnapshot(runId);
       this.managedRunIds.add(runId);
@@ -594,7 +597,28 @@ export class RunManagerService implements OnModuleInit, OnModuleDestroy {
       });
       return true;
     } catch (error) {
-      await this.releaseRunLease(runId);
+      try {
+        if (
+          settlePermanent &&
+          run?.status !== 'paused' &&
+          error instanceof RunRecoveryNotReadyError &&
+          error.permanent
+        ) {
+          const token = this.runLeases.get(runId)?.token;
+          if (
+            token &&
+            (await this.runRepository.settleRecoveryBlocked(runId, token, error.message))
+          ) {
+            const settledRun = await this.runRepository.findById(runId);
+            if (settledRun?.result) {
+              this.runStream.fanOut(runId, { type: 'done', result: settledRun.result });
+            }
+            return true;
+          }
+        }
+      } finally {
+        await this.releaseRunLease(runId);
+      }
       throw error;
     }
   }

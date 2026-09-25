@@ -755,6 +755,12 @@ export default function RunDetailPage() {
         )}
       </header>
 
+      {runState?.finalResult?.terminalReason === 'recovery_blocked' && (
+        <div className="shrink-0 bg-failed/10 border-b border-failed/30 text-failed text-sm px-6 py-2">
+          恢复已安全终止：{runState.finalResult.terminalMessage ?? '持久化状态无法安全续跑'}
+        </div>
+      )}
+
       {wsBanner && (
         <div className="shrink-0 bg-warning/10 border-b border-warning/30 text-warning text-sm px-6 py-2">
           {wsBanner}

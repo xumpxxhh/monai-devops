@@ -1,6 +1,6 @@
-# Core-2：可靠调度与恢复基础（进行中）
+# Core-2：可靠调度与恢复基础（已收尾）
 
-> **阶段状态：进行中（顶层插件的持久化等待/唤醒已形成 signal 与 timer 闭环）**
+> **阶段状态：最小可靠闭环已完成。** 范围为顶层 Run/Attempt、顶层插件等待与显式安全边界；嵌套子工作流挂起和远程 Executor 不包含在 Core-2 验收范围。
 
 ## 已落地基础
 
@@ -39,6 +39,8 @@
 - ready 的 waiting Attempt 已接入恢复扫描：未唤醒时不认领对应 Run；signal 或 timer 标记 ready 后，快照校验 checkpoint 与原 Job/Attempt 身份，执行器沿用同一 Attempt，向插件上下文注入 checkpoint 载荷和可选 wakePayload，成功后继续 DAG。数据库集成测试覆盖未 ready 不抢跑、唤醒后仅一个 Attempt、载荷传递及最终状态。
 - 顶层插件步骤可显式声明 `mayWait: true`，插件以成功结果中的 `wait: { checkpoint, condition }` 请求 signal 或 timer 等待。执行器对含可挂起步骤的工作流采用串行 DAG 调度；等待前在有效 Attempt lease 下原子写入 checkpoint/条件并切换 Attempt/Job 为 waiting，释放步骤资源与 Run lease，Run 进入 waiting 且不发出伪造的 `step:finished` 或 `workflow:finished`。唤醒后继续原 Attempt；再次挂起递增 checkpoint version。
 - waiting Run 可在无活跃 owner 时持久化取消，Run、Job、Attempt 在数据库事务中一起进入取消态；旧 owner 或恢复器仍持有 Run lease 时取消命令保持 pending，避免与接管竞态。Web 列表和详情页已识别 waiting 为活跃状态。
+- 插件等待超时无重试额度时，Attempt/Job/Run 及失败结果、`step:finished`/`workflow:finished` 事件在同一事务结算；有幂等键和剩余次数时，恢复扫描以新 Attempt 续跑。重复扫描不会重复结算；端到端测试覆盖超时后下一 Attempt 成功。
+- 自动接管遇到永久不可恢复的快照（例如事件被裁剪、重试耗尽、已有失败或不支持的跳过分支）时，在独占 Run lease 下结算为 `failed`，写入 `recovery_blocked` 原因及终态事件；暂时未唤醒或仍在途的 Attempt 不作永久失败处理。原执行者失联的 paused Run 可由用户持久化取消，包括仍在途的 Job/Attempt。
 
 ## 权威边界
 
@@ -51,17 +53,21 @@
 
 - 终态仍由有序事件链投影，执行前授权已是同步强制闸门；
 - 嵌套子执行暂不写 Job/Attempt 表，避免在子 Run 不独立落表时破坏外键和 `(runId, stepId)` 唯一性；
-- 后台自动接管覆盖 queued Run、按显式重试策略允许恢复的 timed_out/failed Attempt、条件跳过的已结算分支，以及已 ready 且 checkpoint 有效的 waiting Attempt；paused Run 仅由显式 resume 接管。插件等待条件现可指定 `timeoutAt`：到期后原子标记 Attempt/Job 为 timed_out；有幂等键且仍有重试次数时保持 Run waiting 供恢复扫描创建下一 Attempt，否则同一事务将 Run 结算为 failed。嵌套子工作流挂起、已有失败分支和非条件原因的跳过仍未完成，不能视为整个 Core-2 完成。拒绝原因记录日志，Run 保持原状态并短暂退避，避免阻塞后续可恢复 Run，之后重新校验。
+- 后台自动接管覆盖 queued Run、按显式重试策略允许恢复的 timed_out/failed Attempt、条件跳过的已结算分支，以及已 ready 且 checkpoint 有效的 waiting Attempt；paused Run 仅由显式 resume 接管。不安全分支不强行重放：自动恢复将其持久化为 `recovery_blocked` 失败，显式 paused resume 返回拒绝原因，用户可取消。尚未唤醒或仍在途的 Attempt 保持待处理并退避重试。
 - Run 事件可能裁剪，缺失已完成步骤时拒绝重建；旧 Run 若无私有初始 state 且无已完成 `set_state` 输出也拒绝重建。持久化 idempotency key 与显式 retry policy 是恢复准入条件，但外部副作用仍需插件实际履行幂等契约。
 - 插件主动挂起目前只适用于顶层 `mayWait` 步骤；signal/timer 条件可选 `timeoutAt`，但不支持嵌套子工作流挂起。signal 唤醒服务已具备内部接口，面向外部事件/人工审批的授权入口不在本轮范围内。
 - 混合版本滚动部署中，旧服务实例不持有 Run lease；启用自动接管前需保证执行节点均升级到本协议，否则旧实例的副作用无法被新 lease 完全约束。
 - 控制命令已经跨进程持久化，但当前仍由内嵌 Executor 轮询；远程 Executor 协议留到 Core-3。
 
-## 下一闭环
+## 退出标准与后续边界
 
-1. 评估嵌套子工作流的挂起恢复，以及超时失败时补齐与普通执行失败一致的终态事件/结果投影；
-2. 支持 paused 时仍在途的步骤与其他可安全续跑的跳过分支恢复，避免历史 Run 长期停留在 active 状态；
-3. 扩展故障注入、重复投递和长时间运行测试，并验证插件幂等契约。
+Core-2 的退出条件是：顶层 Run 在服务重启、owner 失联、重复唤醒与 lease 竞争后，能安全续跑、等待、取消或明确终结；已完成步骤不重复执行；无把永久不可恢复的自动接管 Run 留在 active 状态。现有单元与 PostgreSQL 集成测试覆盖这些路径。
+
+以下不作为 Core-2 已实现能力，后续单独评审：
+
+1. 嵌套子工作流独立持久化与挂起恢复；当前嵌套步骤不写 Job/Attempt，不能安全套用顶层 checkpoint/lease 协议。
+2. paused 时仍在途步骤的无损续跑，以及非条件跳过分支的继续执行；当前显式 resume 拒绝不安全快照，用户可取消，自动接管则明确失败。
+3. 真实外部副作用的端到端幂等认证、长时间/高并发故障注入与远程 Executor；这些属于 Core-4 验证与 Core-3 执行边界工作，不以数据库幂等键代替插件承诺。
 
 本轮条件跳过恢复已通过执行器、快照及 PostgreSQL 端到端接管测试；端到端验证覆盖旧事件不重复、下游只执行一次、最终计数及 SKIPPED Attempt 保持一致。
 

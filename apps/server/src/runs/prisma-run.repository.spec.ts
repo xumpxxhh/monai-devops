@@ -239,7 +239,7 @@ describeIfDb('PrismaRunRepository integration', () => {
     const manager = new RunManagerService(
       engine,
       repository,
-      {} as RunStreamService,
+      { fanOut: jest.fn() } as unknown as RunStreamService,
       config,
       { listJobsForRun: jest.fn(async () => []) } as unknown as ExecutionRepository,
       {} as ExecutionLeaseService,
@@ -251,6 +251,68 @@ describeIfDb('PrismaRunRepository integration', () => {
     const row = await prisma.run.findUniqueOrThrow({ where: { runId: blocked.runId } });
     expect(row.status).toBe('queued');
     expect(row.leaseToken).toBeNull();
+  });
+
+  it('settles a permanently unrecoverable Run once during automatic recovery', async () => {
+    const blocked = baseRecord('blocked-auto-recovery');
+    blocked.status = 'queued';
+    blocked.workflowSnapshot.stateSchema = {
+      type: 'object',
+      properties: { count: { type: 'number' } },
+      required: ['count'],
+    };
+    await repository.save(blocked);
+    const engine = { runWorkflow: jest.fn() } as unknown as EngineService;
+    const manager = new RunManagerService(
+      engine,
+      repository,
+      { fanOut: jest.fn() } as unknown as RunStreamService,
+      config,
+      { listJobsForRun: jest.fn(async () => []) } as unknown as ExecutionRepository,
+      {} as ExecutionLeaseService,
+      { request: jest.fn() } as never,
+    );
+
+    expect(await manager.resumePersistedRun(blocked.runId, true)).toBe(true);
+    expect(await manager.resumePersistedRun(blocked.runId, true)).toBe(false);
+    expect(engine.runWorkflow).not.toHaveBeenCalled();
+    const row = await prisma.run.findUniqueOrThrow({ where: { runId: blocked.runId } });
+    expect(row).toMatchObject({ status: 'failed', isActive: false, leaseToken: null });
+    expect(row.result).toMatchObject({
+      status: 'failed',
+      terminalReason: 'recovery_blocked',
+      terminalMessage: expect.stringMatching(/缺少可恢复 state/),
+    });
+    expect(await prisma.runEvent.count({ where: { runId: blocked.runId } })).toBe(1);
+  });
+
+  it('fences recovery settlement by lease token and reuses an existing terminal event', async () => {
+    const record = baseRecord('terminal-projection-lost');
+    record.events = [
+      {
+        type: 'workflow:finished',
+        workflowRunId: record.runId,
+        result: { success: true, status: 'success', workflowId: record.workflowId, results: [] },
+      },
+    ];
+    await repository.save(record);
+    expect(
+      await repository.acquireRunLease(
+        record.runId,
+        'owner',
+        'current-token',
+        new Date(Date.now() + 60_000),
+      ),
+    ).toBe(true);
+    expect(await repository.settleRecoveryBlocked(record.runId, 'old-token', 'stale')).toBe(false);
+    expect(
+      await repository.settleRecoveryBlocked(record.runId, 'current-token', 'projection lost'),
+    ).toBe(true);
+    expect(await repository.settleRecoveryBlocked(record.runId, 'current-token', 'again')).toBe(
+      false,
+    );
+    expect((await repository.findById(record.runId))?.status).toBe('finished');
+    expect(await prisma.runEvent.count({ where: { runId: record.runId } })).toBe(1);
   });
 
   it('merges consecutive stream logs on appendEvent', async () => {

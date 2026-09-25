@@ -97,10 +97,14 @@ export class ExecutionControlService implements OnModuleInit, OnModuleDestroy {
       return this.reject(command, 'Run does not exist');
     }
 
+    if (['finished', 'failed', 'rejected', 'cancelled'].includes(record.status)) {
+      return this.reject(command, `Run is already ${record.status}`);
+    }
+
     if (!this.engine.isReady()) {
       if (
         command.type === 'cancel' &&
-        (record.status === 'queued' || record.status === 'waiting')
+        (record.status === 'queued' || record.status === 'waiting' || record.status === 'paused')
       ) {
         return this.applyUnownedCancel(command, record.status);
       }
@@ -112,7 +116,7 @@ export class ExecutionControlService implements OnModuleInit, OnModuleDestroy {
     if (!engineStatus || engineStatus.status === 'unknown') {
       if (
         command.type === 'cancel' &&
-        (record.status === 'queued' || record.status === 'waiting')
+        (record.status === 'queued' || record.status === 'waiting' || record.status === 'paused')
       ) {
         return this.applyUnownedCancel(command, record.status);
       }
@@ -163,9 +167,6 @@ export class ExecutionControlService implements OnModuleInit, OnModuleDestroy {
         }
         await this.executions.releaseControlClaim(command.commandId, this.ownerId);
       }
-      if (['finished', 'failed', 'rejected', 'cancelled'].includes(record.status)) {
-        return this.reject(command, `Run is already ${record.status}`);
-      }
       return { commandId: command.commandId, status: 'pending' };
     }
 
@@ -191,7 +192,7 @@ export class ExecutionControlService implements OnModuleInit, OnModuleDestroy {
 
   private async applyUnownedCancel(
     command: ExecutionControlCommand,
-    runStatus: 'queued' | 'waiting',
+    runStatus: 'queued' | 'waiting' | 'paused',
   ): Promise<RequestedExecutionControl> {
     const claimed = await this.executions.claimControl(
       command.commandId,
@@ -201,8 +202,8 @@ export class ExecutionControlService implements OnModuleInit, OnModuleDestroy {
     if (!claimed) return { commandId: command.commandId, status: 'pending' };
 
     const mode = command.payload.mode === 'hard' ? 'hard' : 'best-effort';
-    if (runStatus === 'waiting') {
-      if (!(await this.executions.cancelWaitingRun(command.runId, mode))) {
+    if (runStatus === 'waiting' || runStatus === 'paused') {
+      if (!(await this.executions.cancelWaitingRun(command.runId, mode, runStatus))) {
         await this.executions.releaseControlClaim(command.commandId, this.ownerId);
         return { commandId: command.commandId, status: 'pending' };
       }

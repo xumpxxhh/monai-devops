@@ -211,6 +211,8 @@ export interface WorkflowRunResult {
   workflowId: string;
   results: ExecutionResult[];
   terminalReason?: RunTerminalReasonCode;
+  /** 恢复被永久性持久化状态冲突阻断时的可审计说明。 */
+  terminalMessage?: string;
   /** 仅当 workflow.stateSchema 已声明时出现 */
   state?: unknown;
 }

@@ -5,6 +5,7 @@ import {
   resolveRetryPolicy,
   validateWakeCondition,
   type AttemptStatus,
+  type WorkflowDefinition,
 } from '@monai-devops/core-engine';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { toInputJson } from '../prisma/prisma-json.js';
@@ -310,7 +311,7 @@ export class PrismaExecutionRepository implements ExecutionRepository {
           attemptId: true,
           jobId: true,
           attempt: true,
-          job: { select: { runId: true, idempotencyKey: true, retryPolicy: true } },
+          job: { select: { runId: true, stepId: true, idempotencyKey: true, retryPolicy: true } },
         },
       });
       let expired = 0;
@@ -349,7 +350,45 @@ export class PrismaExecutionRepository implements ExecutionRepository {
           // Invalid persisted retry policy cannot authorize a new Attempt.
         }
         if (!canRetry) {
-          await tx.run.updateMany({
+          const run = await tx.run.findUnique({
+            where: { runId: attempt.job.runId },
+            include: { events: { orderBy: { eventIndex: 'asc' } } },
+          });
+          if (!run) continue;
+          const priorResults = run.events
+            .map((event) => event.payload as Record<string, unknown>)
+            .filter((event) => event.type === 'step:finished')
+            .map((event) => event.result as Record<string, unknown>)
+            .filter((result) => result?.status === 'completed' || result?.status === 'skipped');
+          const workflow = run.workflowSnapshot as unknown as WorkflowDefinition;
+          const step = workflow.steps.find((item) => item.id === attempt.job.stepId);
+          const execution = {
+            jobId: attempt.jobId,
+            attemptId: attempt.attemptId,
+            attempt: attempt.attempt,
+          };
+          const failedResult = {
+            stepId: attempt.job.stepId,
+            execution,
+            status: 'failed',
+            success: false,
+            error: { name: 'ExecutionWaitTimeoutError', message: 'Execution wait timed out' },
+            failureKind: 'resource',
+            reason: {
+              code: 'wait_timeout',
+              category: 'infrastructure',
+              retryable: false,
+              message: 'Execution wait timed out; no retry is available',
+            },
+          };
+          const result = {
+            success: false,
+            status: 'failed',
+            workflowId: run.workflowId,
+            results: [...priorResults, failedResult],
+            terminalReason: 'step_failed',
+          };
+          const settled = await tx.run.updateMany({
             where: {
               runId: attempt.job.runId,
               status: 'waiting',
@@ -361,8 +400,38 @@ export class PrismaExecutionRepository implements ExecutionRepository {
               isActive: false,
               countsFailed: { increment: 1 },
               finishedAt: now,
+              result: toInputJson(result),
             },
           });
+          if (settled.count === 1) {
+            const nextOffset = (run.events[run.events.length - 1]?.eventIndex ?? -1) + 1;
+            await tx.runEvent.create({
+              data: {
+                runId: run.runId,
+                eventIndex: nextOffset,
+                type: 'step:finished',
+                payload: toInputJson({
+                  type: 'step:finished',
+                  workflowRunId: run.runId,
+                  step: step ?? { id: attempt.job.stepId },
+                  execution,
+                  result: failedResult,
+                }),
+              },
+            });
+            await tx.runEvent.create({
+              data: {
+                runId: run.runId,
+                eventIndex: nextOffset + 1,
+                type: 'workflow:finished',
+                payload: toInputJson({
+                  type: 'workflow:finished',
+                  workflowRunId: run.runId,
+                  result,
+                }),
+              },
+            });
+          }
         }
         expired += 1;
       }
@@ -427,13 +496,17 @@ export class PrismaExecutionRepository implements ExecutionRepository {
     return result.count === 1;
   }
 
-  async cancelWaitingRun(runId: string, mode: 'best-effort' | 'hard'): Promise<boolean> {
+  async cancelWaitingRun(
+    runId: string,
+    mode: 'best-effort' | 'hard',
+    status: 'waiting' | 'paused' = 'waiting',
+  ): Promise<boolean> {
     const now = new Date();
     return this.prisma.$transaction(async (tx) => {
       const changed = await tx.run.updateMany({
         where: {
           runId,
-          status: 'waiting',
+          status,
           isActive: true,
           OR: [{ leaseExpiresAt: null }, { leaseExpiresAt: { lt: now } }],
         },
@@ -441,7 +514,17 @@ export class PrismaExecutionRepository implements ExecutionRepository {
       });
       if (changed.count !== 1) return false;
       await tx.executionAttempt.updateMany({
-        where: { job: { runId }, status: AttemptStatuses.WAITING },
+        where: {
+          job: { runId },
+          status: {
+            in: [
+              AttemptStatuses.QUEUED,
+              AttemptStatuses.LEASED,
+              AttemptStatuses.RUNNING,
+              AttemptStatuses.WAITING,
+            ],
+          },
+        },
         data: {
           status: AttemptStatuses.CANCELLED,
           finishedAt: now,
@@ -449,7 +532,17 @@ export class PrismaExecutionRepository implements ExecutionRepository {
         },
       });
       await tx.executionJob.updateMany({
-        where: { runId, status: AttemptStatuses.WAITING },
+        where: {
+          runId,
+          status: {
+            in: [
+              AttemptStatuses.QUEUED,
+              AttemptStatuses.LEASED,
+              AttemptStatuses.RUNNING,
+              AttemptStatuses.WAITING,
+            ],
+          },
+        },
         data: { status: AttemptStatuses.CANCELLED },
       });
       return true;

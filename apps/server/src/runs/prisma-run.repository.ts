@@ -101,6 +101,91 @@ export class PrismaRunRepository implements RunRepository {
     return result.count === 1;
   }
 
+  async settleRecoveryBlocked(runId: string, token: string, reason: string): Promise<boolean> {
+    return this.prisma.$transaction(async (tx) => {
+      const run = await tx.run.findUnique({
+        where: { runId },
+        include: { events: { orderBy: { eventIndex: 'asc' } } },
+      });
+      if (!run || run.leaseToken !== token || !run.isActive) return false;
+      const persisted = (run.events
+        .map((event) => event.payload as Record<string, unknown>)
+        .find((event) => event.type === 'workflow:finished')?.result ?? run.result) as
+        | Record<string, unknown>
+        | undefined;
+      const settledResults = new Map<string, Record<string, unknown>>();
+      for (const row of run.events) {
+        const event = row.payload as Record<string, unknown>;
+        const result = event.result;
+        if (
+          event.type === 'step:finished' &&
+          result &&
+          typeof result === 'object' &&
+          !Array.isArray(result) &&
+          typeof (result as Record<string, unknown>).stepId === 'string'
+        ) {
+          settledResults.set(
+            (result as Record<string, unknown>).stepId as string,
+            result as Record<string, unknown>,
+          );
+        }
+      }
+      const result = persisted ?? {
+        success: false,
+        status: 'failed',
+        workflowId: run.workflowId,
+        results: [...settledResults.values()],
+        terminalReason: 'recovery_blocked',
+        terminalMessage: reason,
+      };
+      const status =
+        result.status === 'success'
+          ? 'finished'
+          : result.status === 'cancelled'
+            ? 'cancelled'
+            : 'failed';
+      const updated = await tx.run.updateMany({
+        where: {
+          runId,
+          leaseToken: token,
+          isActive: true,
+          status: { in: ['queued', 'running', 'waiting'] },
+        },
+        data: {
+          status,
+          isActive: false,
+          finishedAt: new Date(),
+          result: toInputJson(result),
+          ...(persisted && Array.isArray(persisted.results)
+            ? {
+                countsCompleted: persisted.results.filter(
+                  (item) => (item as Record<string, unknown>)?.status === 'completed',
+                ).length,
+                countsFailed: persisted.results.filter(
+                  (item) => (item as Record<string, unknown>)?.status === 'failed',
+                ).length,
+                countsSkipped: persisted.results.filter(
+                  (item) => (item as Record<string, unknown>)?.status === 'skipped',
+                ).length,
+              }
+            : {}),
+        },
+      });
+      if (updated.count !== 1) return false;
+      if (!persisted) {
+        await tx.runEvent.create({
+          data: {
+            runId,
+            eventIndex: (run.events[run.events.length - 1]?.eventIndex ?? -1) + 1,
+            type: 'workflow:finished',
+            payload: toInputJson({ type: 'workflow:finished', workflowRunId: runId, result }),
+          },
+        });
+      }
+      return true;
+    });
+  }
+
   async listRecoverableRunIds(
     now: Date,
     unleasedBefore: Date,

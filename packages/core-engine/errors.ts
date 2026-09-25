@@ -64,7 +64,11 @@ export interface ExecutionReason {
   message?: string;
 }
 
-export type RunTerminalReasonCode = 'step_failed' | 'user_cancelled' | 'engine_destroyed';
+export type RunTerminalReasonCode =
+  | 'step_failed'
+  | 'user_cancelled'
+  | 'engine_destroyed'
+  | 'recovery_blocked';
 
 /**
  * 工作流校验错误（启动前 DAG 校验失败时抛出）

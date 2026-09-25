@@ -11,14 +11,17 @@ import type { RecoveryJob } from '../execution/execution.repository.js';
 import type { RunRecord } from './runs.repository.js';
 
 export class RunRecoveryNotReadyError extends Error {
-  constructor(message: string) {
+  constructor(
+    message: string,
+    readonly permanent = true,
+  ) {
     super(message);
     this.name = 'RunRecoveryNotReadyError';
   }
 }
 
-function reject(reason: string): never {
-  throw new RunRecoveryNotReadyError(reason);
+function reject(reason: string, permanent = true): never {
+  throw new RunRecoveryNotReadyError(reason, permanent);
 }
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
@@ -148,7 +151,7 @@ export function buildRunRecoverySnapshot(
       continue;
     }
     if (latest.status === AttemptStatuses.WAITING && job.status === AttemptStatuses.WAITING) {
-      if (!latest.wakeReadyAt) reject(`步骤 ${job.stepId} 的 waiting Attempt 尚未被唤醒`);
+      if (!latest.wakeReadyAt) reject(`步骤 ${job.stepId} 的 waiting Attempt 尚未被唤醒`, false);
       if (step.kind !== undefined && step.kind !== 'plugin') {
         reject(`步骤 ${job.stepId} 不是可续跑的插件步骤`);
       }
@@ -182,7 +185,10 @@ export function buildRunRecoverySnapshot(
       nextAttemptByStep[job.stepId] = nextAttempt;
       continue;
     }
-    reject(`步骤 ${job.stepId} 处于 ${latest.status}，不能直接构建续跑快照`);
+    reject(
+      `步骤 ${job.stepId} 处于 ${latest.status}，不能直接构建续跑快照`,
+      latest.status !== AttemptStatuses.LEASED && latest.status !== AttemptStatuses.RUNNING,
+    );
   }
   for (const stepId of settled.keys()) {
     if (!seenJobs.has(stepId)) reject(`已结算步骤 ${stepId} 缺少 Job`);

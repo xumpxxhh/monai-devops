@@ -119,7 +119,18 @@ describe('ExecutionControlService', () => {
     });
     const result = await service.request('run-1', 'cancel', { mode: 'hard' });
     expect(result.status).toBe('applied');
-    expect(executions.cancelWaitingRun).toHaveBeenCalledWith('run-1', 'hard');
+    expect(executions.cancelWaitingRun).toHaveBeenCalledWith('run-1', 'hard', 'waiting');
+    expect(runs.update).not.toHaveBeenCalled();
+  });
+
+  it('atomically cancels an orphaned paused Run', async () => {
+    const { service, executions, runs } = createSubject({
+      engineStatus: 'unknown',
+      runStatus: 'paused',
+    });
+    const result = await service.request('run-1', 'cancel', { mode: 'hard' });
+    expect(result.status).toBe('applied');
+    expect(executions.cancelWaitingRun).toHaveBeenCalledWith('run-1', 'hard', 'paused');
     expect(runs.update).not.toHaveBeenCalled();
   });
 
