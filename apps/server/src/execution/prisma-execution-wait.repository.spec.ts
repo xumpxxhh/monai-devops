@@ -272,6 +272,7 @@ describeIfDb('PrismaExecutionRepository durable waits', () => {
         },
       }),
     ).toBe(true);
+    await prisma.run.update({ where: { runId }, data: { status: 'waiting' } });
     expect(await repository.expireWaits(new Date(now.getTime() + 6_000))).toBe(1);
     expect(
       await repository.signalWait(
@@ -285,6 +286,10 @@ describeIfDb('PrismaExecutionRepository durable waits', () => {
       where: { attemptId: execution.attemptId },
     });
     expect(attempt.status).toBe(AttemptStatuses.TIMED_OUT);
+    const run = await prisma.run.findUniqueOrThrow({ where: { runId } });
+    expect(run.status).toBe('failed');
+    expect(run.isActive).toBe(false);
+    expect(run.countsFailed).toBe(1);
     expect(
       await repository.acquireLease(
         execution.attemptId,
@@ -293,5 +298,37 @@ describeIfDb('PrismaExecutionRepository durable waits', () => {
         new Date(Date.now() + 60_000),
       ),
     ).toBe(false);
+  });
+
+  it('leaves a timed-out wait recoverable when an idempotent retry is available', async () => {
+    await prisma.executionJob.update({
+      where: { jobId: execution.jobId },
+      data: { retryPolicy: { maxAttempts: 2, backoffMs: 0 } },
+    });
+    const now = new Date();
+    expect(
+      await repository.registerWait({
+        execution,
+        leaseToken: 'token-1',
+        checkpoint: {
+          jobId: execution.jobId,
+          sourceAttemptId: execution.attemptId,
+          version: 1,
+          payload: {},
+          createdAt: now.toISOString(),
+        },
+        condition: {
+          kind: 'signal',
+          key: 'approval',
+          timeoutAt: new Date(now.getTime() + 5_000).toISOString(),
+        },
+      }),
+    ).toBe(true);
+    await prisma.run.update({ where: { runId }, data: { status: 'waiting' } });
+    expect(await repository.expireWaits(new Date(now.getTime() + 6_000))).toBe(1);
+    expect((await prisma.run.findUniqueOrThrow({ where: { runId } })).status).toBe('waiting');
+    expect((await repository.listJobsForRun(runId))[0]?.attempts[0]?.status).toBe(
+      AttemptStatuses.TIMED_OUT,
+    );
   });
 });

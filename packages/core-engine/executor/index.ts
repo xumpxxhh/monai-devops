@@ -1270,9 +1270,6 @@ export function createWorkflowExecutor(options: ExecutorOptions = {}) {
           meta,
         );
       }
-      if ('timeoutAt' in pluginResult.wait.condition) {
-        throw new Error('插件持久化等待暂不支持 timeoutAt');
-      }
       validateWakeCondition(pluginResult.wait.condition);
       const execution = context.execution;
       const checkpoint = {

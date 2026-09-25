@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import {
   AttemptStatuses,
+  resolveRetryPolicy,
   validateWakeCondition,
   type AttemptStatus,
 } from '@monai-devops/core-engine';
@@ -298,8 +299,19 @@ export class PrismaExecutionRepository implements ExecutionRepository {
           status: AttemptStatuses.WAITING,
           wakeReadyAt: null,
           waitTimeoutAt: { lte: now },
+          job: {
+            run: {
+              status: 'waiting',
+              OR: [{ leaseToken: null }, { leaseExpiresAt: { lt: now } }],
+            },
+          },
         },
-        select: { attemptId: true, jobId: true },
+        select: {
+          attemptId: true,
+          jobId: true,
+          attempt: true,
+          job: { select: { runId: true, idempotencyKey: true, retryPolicy: true } },
+        },
       });
       let expired = 0;
       for (const attempt of due) {
@@ -325,6 +337,33 @@ export class PrismaExecutionRepository implements ExecutionRepository {
           where: { jobId: attempt.jobId },
           data: { status: AttemptStatuses.TIMED_OUT },
         });
+        let canRetry = false;
+        try {
+          canRetry =
+            Boolean(attempt.job.idempotencyKey?.trim()) &&
+            attempt.attempt + 1 <
+              resolveRetryPolicy(
+                attempt.job.retryPolicy as { maxAttempts: number; backoffMs: number },
+              ).maxAttempts;
+        } catch {
+          // Invalid persisted retry policy cannot authorize a new Attempt.
+        }
+        if (!canRetry) {
+          await tx.run.updateMany({
+            where: {
+              runId: attempt.job.runId,
+              status: 'waiting',
+              isActive: true,
+              OR: [{ leaseToken: null }, { leaseExpiresAt: { lt: now } }],
+            },
+            data: {
+              status: 'failed',
+              isActive: false,
+              countsFailed: { increment: 1 },
+              finishedAt: now,
+            },
+          });
+        }
         expired += 1;
       }
       return expired;

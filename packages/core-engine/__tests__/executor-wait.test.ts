@@ -13,6 +13,8 @@ describe('durable plugin wait', () => {
     const calls: string[] = [];
     const events: WorkflowLifecycleEvent[] = [];
     const checkpoints: unknown[] = [];
+    const conditions: unknown[] = [];
+    const timeoutAt = new Date(Date.now() + 60_000).toISOString();
     let first = true;
     const executor = createWorkflowExecutor({
       maxParallelSteps: 2,
@@ -25,7 +27,7 @@ describe('durable plugin wait', () => {
             success: true,
             wait: {
               checkpoint: { cursor: 'saved' },
-              condition: { kind: 'signal' as const, key: 'continue' },
+              condition: { kind: 'signal' as const, key: 'continue', timeoutAt },
             },
           };
         }
@@ -40,8 +42,9 @@ describe('durable plugin wait', () => {
         }
         return { success: true, data: { stepId } };
       },
-      onStepWait: async (_step, _context, checkpoint) => {
+      onStepWait: async (_step, _context, checkpoint, condition) => {
         checkpoints.push(checkpoint);
+        conditions.push(condition);
       },
       observer: { onEvent: (event) => events.push(event) },
     });
@@ -58,6 +61,7 @@ describe('durable plugin wait', () => {
       WorkflowSuspendedError,
     );
     assert.deepEqual(calls, ['wait']);
+    assert.deepEqual(conditions, [{ kind: 'signal', key: 'continue', timeoutAt }]);
     assert.equal(events.filter((event) => event.type === 'step:finished').length, 0);
     assert.equal(events.filter((event) => event.type === 'workflow:finished').length, 0);
     assert.deepEqual(checkpoints, [

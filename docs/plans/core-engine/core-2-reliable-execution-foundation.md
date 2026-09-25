@@ -51,15 +51,15 @@
 
 - 终态仍由有序事件链投影，执行前授权已是同步强制闸门；
 - 嵌套子执行暂不写 Job/Attempt 表，避免在子 Run 不独立落表时破坏外键和 `(runId, stepId)` 唯一性；
-- 后台自动接管覆盖 queued Run、按显式重试策略允许恢复的 timed_out/failed Attempt、条件跳过的已结算分支，以及已 ready 且 checkpoint 有效的 waiting Attempt；paused Run 仅由显式 resume 接管。等待超时后的 Run 终态/重试、嵌套子工作流挂起、已有失败分支和非条件原因的跳过仍未完成，不能视为整个 Core-2 完成。拒绝原因记录日志，Run 保持原状态并短暂退避，避免阻塞后续可恢复 Run，之后重新校验。
+- 后台自动接管覆盖 queued Run、按显式重试策略允许恢复的 timed_out/failed Attempt、条件跳过的已结算分支，以及已 ready 且 checkpoint 有效的 waiting Attempt；paused Run 仅由显式 resume 接管。插件等待条件现可指定 `timeoutAt`：到期后原子标记 Attempt/Job 为 timed_out；有幂等键且仍有重试次数时保持 Run waiting 供恢复扫描创建下一 Attempt，否则同一事务将 Run 结算为 failed。嵌套子工作流挂起、已有失败分支和非条件原因的跳过仍未完成，不能视为整个 Core-2 完成。拒绝原因记录日志，Run 保持原状态并短暂退避，避免阻塞后续可恢复 Run，之后重新校验。
 - Run 事件可能裁剪，缺失已完成步骤时拒绝重建；旧 Run 若无私有初始 state 且无已完成 `set_state` 输出也拒绝重建。持久化 idempotency key 与显式 retry policy 是恢复准入条件，但外部副作用仍需插件实际履行幂等契约。
-- 插件主动挂起目前只适用于顶层 `mayWait` 步骤；首版插件等待条件不支持 `timeoutAt`，也不支持嵌套子工作流挂起。signal 唤醒服务已具备内部接口，面向外部事件/人工审批的授权入口不在本轮范围内。
+- 插件主动挂起目前只适用于顶层 `mayWait` 步骤；signal/timer 条件可选 `timeoutAt`，但不支持嵌套子工作流挂起。signal 唤醒服务已具备内部接口，面向外部事件/人工审批的授权入口不在本轮范围内。
 - 混合版本滚动部署中，旧服务实例不持有 Run lease；启用自动接管前需保证执行节点均升级到本协议，否则旧实例的副作用无法被新 lease 完全约束。
 - 控制命令已经跨进程持久化，但当前仍由内嵌 Executor 轮询；远程 Executor 协议留到 Core-3。
 
 ## 下一闭环
 
-1. 补 waiting 超时后的 Run 终态/重试与可配置 timeoutAt，再评估嵌套子工作流的挂起恢复；
+1. 评估嵌套子工作流的挂起恢复，以及超时失败时补齐与普通执行失败一致的终态事件/结果投影；
 2. 支持 paused 时仍在途的步骤与其他可安全续跑的跳过分支恢复，避免历史 Run 长期停留在 active 状态；
 3. 扩展故障注入、重复投递和长时间运行测试，并验证插件幂等契约。
 

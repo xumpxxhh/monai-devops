@@ -61,6 +61,8 @@ export interface PluginResult {
   /** 仅声明 mayWait 的插件步骤可返回；执行器持久化 checkpoint 后挂起 Run。 */
   wait?: {
     checkpoint: unknown;
-    condition: { kind: 'signal'; key: string } | { kind: 'timer'; wakeAt: string };
+    condition:
+      | { kind: 'signal'; key: string; timeoutAt?: string }
+      | { kind: 'timer'; wakeAt: string; timeoutAt?: string };
   };
 }
