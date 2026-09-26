@@ -46,7 +46,7 @@ PostgreSQL：Job/Attempt、lease、checkpoint、事件与控制命令的权威�
 
 每步合并时同时提交代码、迁移/配置示例、契约及集成测试、本文进度记录；不先建空协议或大规模抽象而长期没有可运行闭环。
 
-最新验证：新增 test DB 集成测试，经真实 HTTP 入口领取 `test-plugin` Attempt、回传完成消息，确认 PostgreSQL 中 Attempt 成功且结果返回 DAG/Run；同时修复跨运行域普通 JSON 对象被协议预检误拒的问题。此测试的 server 与 worker client 在同一测试进程内，不覆盖独立进程崩溃、断线和重启；3.2 的两进程故障门槛仍未完成。
+最新验证：test DB 集成测试经真实 HTTP 入口领取 `test-plugin` Attempt、回传完成消息，确认 PostgreSQL 中 Attempt 成功且结果返回 DAG/Run；独立启动实际 worker 入口的第二进程也已通过相同的成功路径。跨运行域普通 JSON 对象的协议预检误拒已修复。独立进程崩溃、断线和重启等故障路径仍未覆盖；3.2 的完整故障门槛尚未完成。
 
 ## 关键设计约束
 

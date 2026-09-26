@@ -1,3 +1,4 @@
+import { spawn } from 'node:child_process';
 import { jest } from '@jest/globals';
 import { ConfigService } from '@nestjs/config';
 import { Test } from '@nestjs/testing';
@@ -18,7 +19,7 @@ import type { RunStreamService } from './run-stream.service.js';
 const describeIfDb = process.env.DATABASE_URL?.trim() ? describe : describe.skip;
 
 describeIfDb('remote worker HTTP/database integration', () => {
-  jest.setTimeout(30_000);
+  jest.setTimeout(45_000);
   const token = 'integration-worker-token-at-least-32-characters';
   const config = {
     get: (key: string, fallback?: unknown) => {
@@ -43,7 +44,7 @@ describeIfDb('remote worker HTTP/database integration', () => {
     { request: jest.fn() } as never,
   );
   let app: NestExpressApplication;
-  let runId: string | undefined;
+  const runIds: string[] = [];
 
   beforeAll(async () => {
     assertTestDatabaseUrl();
@@ -67,7 +68,7 @@ describeIfDb('remote worker HTTP/database integration', () => {
     leases.onModuleDestroy();
     engine.onModuleDestroy();
     if (app) await app.close();
-    if (runId) await prisma.run.deleteMany({ where: { runId } });
+    if (runIds.length) await prisma.run.deleteMany({ where: { runId: { in: runIds } } });
     await prisma.$disconnect();
   });
 
@@ -77,7 +78,8 @@ describeIfDb('remote worker HTTP/database integration', () => {
       name: 'Remote HTTP integration',
       steps: [{ id: 'test', name: 'Remote test', plugin: 'test-plugin', config: { type: 'unit' } }],
     });
-    runId = submitted.runId;
+    const runId = submitted.runId;
+    runIds.push(runId);
     const address = app.getHttpServer().address() as { port: number };
     const worker = new WorkerClient({
       serverUrl: `http://127.0.0.1:${address.port}/api/v1/devops`,
@@ -85,6 +87,8 @@ describeIfDb('remote worker HTTP/database integration', () => {
       workerId: 'integration-worker',
       plugins: [testPlugin],
       claimWaitMs: 5_000,
+      fetchImpl: (input, init) =>
+        fetch(input, { ...init, headers: { ...init?.headers, connection: 'close' } }),
     });
     expect(await worker.runOnce()).toBe(true);
 
@@ -107,5 +111,61 @@ describeIfDb('remote worker HTTP/database integration', () => {
         where: { attemptId: attempt?.attemptId, kind: 'complete' },
       }),
     ).not.toBeNull();
+  });
+
+  it('runs the real worker entrypoint in a separate process', async () => {
+    const submitted = await manager.submitRun({
+      id: 'remote-process-integration',
+      name: 'Remote process integration',
+      steps: [{ id: 'test', name: 'Remote test', plugin: 'test-plugin', config: { type: 'unit' } }],
+    });
+    const runId = submitted.runId;
+    runIds.push(runId);
+    const address = app.getHttpServer().address() as { port: number };
+    const worker = spawn(process.execPath, ['--import', 'tsx', 'src/worker/main.ts'], {
+      cwd: process.cwd(),
+      env: {
+        ...process.env,
+        EXECUTOR_SERVER_URL: `http://127.0.0.1:${address.port}/api/v1/devops`,
+        EXECUTOR_WORKER_HTTP_TOKEN: token,
+        EXECUTOR_WORKER_ALLOWED_PLUGINS: 'test-plugin',
+        EXECUTOR_WORKER_ID: 'integration-process-worker',
+        EXECUTOR_WORKER_CLAIM_WAIT_MS: '1000',
+      },
+      stdio: ['ignore', 'pipe', 'pipe'],
+      windowsHide: true,
+    });
+    let stderr = '';
+    worker.stdout.resume();
+    worker.stderr.on('data', (chunk: Buffer) => {
+      stderr += chunk.toString();
+    });
+    try {
+      let run = await runs.findById(runId);
+      for (let i = 0; i < 300 && run?.status !== 'finished'; i++) {
+        if (worker.exitCode !== null) break;
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        run = await runs.findById(runId);
+      }
+      expect(worker.exitCode).toBeNull();
+      expect(run?.status).toBe('finished');
+      expect(run?.counts.completed).toBe(1);
+      const attempt = await prisma.executionAttempt.findFirst({ where: { job: { runId } } });
+      expect(attempt?.status).toBe('succeeded');
+      expect(
+        await prisma.executionAttemptMessage.findFirst({
+          where: { attemptId: attempt?.attemptId, kind: 'complete' },
+        }),
+      ).not.toBeNull();
+    } finally {
+      worker.kill();
+      if (worker.exitCode === null) {
+        await Promise.race([
+          new Promise<void>((resolve) => worker.once('exit', () => resolve())),
+          new Promise<void>((resolve) => setTimeout(resolve, 3_000)),
+        ]);
+      }
+      if (stderr) process.stderr.write(stderr);
+    }
   });
 });

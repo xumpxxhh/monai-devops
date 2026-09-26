@@ -53,7 +53,7 @@
 
 非生产环境可显式设置 `EXECUTOR_REMOTE_TEST_ENABLED=true`，并提供至少 32 字符的 `EXECUTOR_WORKER_HTTP_TOKEN`。这只将顶层 `test-plugin` 派发给独立 worker；派发输入仅保留 `config.type`，完成结果从持久化收据交回 DAG。其余插件保持本地执行，生产环境强制走本地路径。仍需两进程 PostgreSQL 故障集成测试、取消、日志、等待及生产信任边界验收。
 
-已有 test DB 集成测试通过真实 HTTP 领取、完成、持久化和 DAG 结算整条路径；worker client 与 server 在同一测试进程中运行，因此独立进程故障语义尚未由该测试证明。协议 JSON 预检接受来自不同 JavaScript 运行域的普通对象，仍拒绝自定义原型、循环和非有限值。
+已有 test DB 集成测试通过真实 HTTP 领取、完成、持久化和 DAG 结算整条路径；既覆盖进程内 worker client，也覆盖独立启动的实际 worker 入口。独立进程崩溃、断线和重启的故障语义尚未证明。协议 JSON 预检接受来自不同 JavaScript 运行域的普通对象，仍拒绝自定义原型、循环和非有限值。
 
 ## 信任边界与后续门槛
 

@@ -21,6 +21,9 @@ async function main(): Promise<void> {
     token: process.env.EXECUTOR_WORKER_HTTP_TOKEN ?? '',
     workerId: process.env.EXECUTOR_WORKER_ID ?? `${hostname()}-${process.pid}`,
     plugins,
+    claimWaitMs: process.env.EXECUTOR_WORKER_CLAIM_WAIT_MS
+      ? Number(process.env.EXECUTOR_WORKER_CLAIM_WAIT_MS)
+      : undefined,
   });
   const stopping = new AbortController();
   process.once('SIGINT', () => stopping.abort());

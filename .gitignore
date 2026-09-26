@@ -38,3 +38,6 @@ plugins/*/*.tsbuildinfo
 
 # 
 refers/*
+
+# local integration validation artifact
+/integration-validation-workflow.json
