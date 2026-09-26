@@ -15,6 +15,8 @@
     "dev:test": "node ./scripts/dev-with-test-env.mjs start --watch",
     "start": "nest start",
     "start:prod": "node dist/src/main",
+    "worker:dev": "node --import tsx src/worker/main.ts",
+    "worker:start": "node dist/src/worker/main.js",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "test": "node --experimental-vm-modules node_modules/jest/bin/jest.js",

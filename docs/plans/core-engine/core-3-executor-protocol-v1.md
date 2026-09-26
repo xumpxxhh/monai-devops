@@ -47,7 +47,9 @@
 
 活跃 Run 等待 worker 时，server 仅可携当前 Run lease token 使用数据库时钟 CAS 结算过期 Attempt/Job；续租或终态消息若先提交，超时 CAS 不得再写。赢得超时后等待器向 DAG 报错，由现有步骤重试策略决定是否创建下一 Attempt。失去 Run lease 的 server 不能代替恢复器结算 worker。
 
-服务端现有 opt-in HTTP 传输入口：`POST /{GLOBAL_API_PREFIX}/executor-workers/claim` 接收 `{ "workerId": "...", "waitMs": 0..20000 }`，返回 `{ "assignment": { "dispatch": ..., "claim": ... } | null }`；`POST /{GLOBAL_API_PREFIX}/executor-workers/messages` 接收单条 worker 消息并返回 CAS 决策。两者均要求 `Authorization: Bearer <EXECUTOR_WORKER_HTTP_TOKEN>`；未配置至少 32 字符凭证时返回 503。claim 只选择持有有效 Run lease、已绑定 dispatch 的 queued Attempt，并在同一事务启动 Attempt/Job；竞争领取只会成功一次。消息接口只从数据库装载 dispatch，不接受 worker 自带的 dispatch。生产入口必须经 TLS，凭证轮换、独立 worker 进程和取消通知仍需完成；未开启远程选路时没有生产任务可领取。
+服务端现有 opt-in HTTP 传输入口：`POST /{GLOBAL_API_PREFIX}/executor-workers/claim` 接收 `{ "workerId": "...", "waitMs": 0..20000 }`，返回 `{ "assignment": { "dispatch": ..., "claim": ... } | null }`；`POST /{GLOBAL_API_PREFIX}/executor-workers/messages` 接收单条 worker 消息并返回 CAS 决策。两者均要求 `Authorization: Bearer <EXECUTOR_WORKER_HTTP_TOKEN>`；未配置至少 32 字符凭证时返回 503。claim 只选择持有有效 Run lease、已绑定 dispatch 的 queued Attempt，并在同一事务启动 Attempt/Job；竞争领取只会成功一次。消息接口只从数据库装载 dispatch，不接受 worker 自带的 dispatch。生产入口必须经 TLS，凭证轮换与取消通知仍需完成；未开启远程选路时没有生产任务可领取。
+
+独立 worker 进程已提供 `pnpm --filter server worker:dev`（或构建后 `worker:start`）。它只通过上述 HTTP 接口访问 server，不连接 PostgreSQL；启动时必须配置 worker token、`EXECUTOR_SERVER_URL` 和 `EXECUTOR_WORKER_ALLOWED_PLUGINS`。当前仅加载 `test-plugin`/`print-plugin`，allowlist 之外的插件、版本、Secret 引用或 capability 会以失败结果结算，不会执行。运行中按序发送 heartbeat 和 complete；网络响应丢失时重发同一序号，租约被拒绝时终止执行。当前不发插件日志事件、不处理等待/主动取消、也不声称容器沙箱；这些仍是 3.2/3.3 后续验收项。非本机 HTTP 地址被 worker 拒绝，跨主机必须用 HTTPS。
 
 ## 信任边界与后续门槛
 
