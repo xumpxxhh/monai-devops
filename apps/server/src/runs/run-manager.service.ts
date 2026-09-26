@@ -583,6 +583,9 @@ export class RunManagerService implements OnModuleInit, OnModuleDestroy {
     try {
       run = await this.runRepository.findById(runId);
       if (!run) throw new RunRecoveryNotReadyError(`Run ${runId} 不存在`);
+      const runLeaseToken = this.runLeases.get(runId)?.token;
+      if (!runLeaseToken) throw new RunRecoveryNotReadyError(`Run ${runId} lease 不存在`, false);
+      await this.executionRepository.projectSettledWorkerAttempts(runId, runLeaseToken);
       const resume = await this.loadRecoverySnapshot(runId);
       this.managedRunIds.add(runId);
       this.fencedRunIds.add(runId);

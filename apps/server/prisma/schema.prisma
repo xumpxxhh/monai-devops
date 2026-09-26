@@ -95,6 +95,7 @@ model ExecutionAttempt {
   messageSequence Int          @default(0) @map("message_sequence")
   reason         Json?
   result         Json?
+  runProjectedAt DateTime?    @map("run_projected_at")
   waitKind       String?      @map("wait_kind")
   wakeKey        String?      @map("wake_key")
   wakeAt         DateTime?    @map("wake_at")

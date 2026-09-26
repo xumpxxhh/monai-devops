@@ -396,6 +396,156 @@ export class PrismaExecutionRepository implements ExecutionRepository {
     }));
   }
 
+  async projectSettledWorkerAttempts(runId: string, runLeaseToken: string): Promise<number> {
+    let projected = 0;
+    while (true) {
+      const advanced = await this.prisma.$transaction(async (tx) => {
+        const now = new Date();
+        const run = await tx.run.findUnique({
+          where: { runId },
+          include: { events: { orderBy: { eventIndex: 'asc' } } },
+        });
+        if (
+          !run ||
+          !run.isActive ||
+          run.leaseToken !== runLeaseToken ||
+          !run.leaseExpiresAt ||
+          run.leaseExpiresAt <= now
+        ) {
+          throw new Error(`Run lease unavailable for worker projection: ${runId}`);
+        }
+        const projectedCompletions = run.events.filter((row) => {
+          const payload = row.payload as Record<string, unknown>;
+          const result = payload.result as Record<string, unknown> | undefined;
+          return (
+            payload.type === 'step:finished' &&
+            payload.workflowRunId === runId &&
+            !payload.parent &&
+            result?.status === 'completed'
+          );
+        }).length;
+        if (projectedCompletions !== run.countsCompleted) {
+          throw new Error(`Run event/count mismatch before worker projection: ${runId}`);
+        }
+        const attempts = await tx.executionAttempt.findMany({
+          where: {
+            job: { runId },
+            status: { in: [AttemptStatuses.SUCCEEDED, AttemptStatuses.FAILED] },
+            runProjectedAt: null,
+          },
+          include: { job: true },
+          orderBy: { createdAt: 'asc' },
+        });
+        const attempt = attempts.find(
+          (item) => item.result !== null && item.job.status === item.status,
+        );
+        if (!attempt) return false;
+        const pluginResult = attempt.result;
+        if (
+          !pluginResult ||
+          typeof pluginResult !== 'object' ||
+          Array.isArray(pluginResult) ||
+          typeof (pluginResult as Record<string, unknown>).success !== 'boolean' ||
+          (pluginResult as Record<string, unknown>).success !==
+            (attempt.status === AttemptStatuses.SUCCEEDED)
+        ) {
+          throw new Error(`Invalid settled worker result: ${attempt.attemptId}`);
+        }
+        const workflow = run.workflowSnapshot as unknown as WorkflowDefinition;
+        const step = workflow.steps.find((item) => item.id === attempt.job.stepId);
+        if (!step || step.kind === 'set_state' || step.kind === 'workflow') {
+          throw new Error(`Invalid worker projection step: ${attempt.job.stepId}`);
+        }
+        const prior = run.events.find((row) => {
+          const payload = row.payload as Record<string, unknown>;
+          const result = payload.result as Record<string, unknown> | undefined;
+          const execution = result?.execution as Record<string, unknown> | undefined;
+          return payload.type === 'step:finished' && execution?.attemptId === attempt.attemptId;
+        });
+        if (prior) {
+          await tx.executionAttempt.update({
+            where: { attemptId: attempt.attemptId },
+            data: { runProjectedAt: now },
+          });
+          return true;
+        }
+        const execution = {
+          jobId: attempt.jobId,
+          attemptId: attempt.attemptId,
+          attempt: attempt.attempt,
+        };
+        const success = attempt.status === AttemptStatuses.SUCCEEDED;
+        const result = success
+          ? {
+              stepId: step.id,
+              execution,
+              status: 'completed',
+              success: true,
+              pluginResult,
+              result: (pluginResult as Record<string, unknown>).data ?? pluginResult,
+            }
+          : {
+              stepId: step.id,
+              execution,
+              status: 'failed',
+              success: false,
+              pluginResult,
+              error: {
+                name: 'RemotePluginError',
+                message: String(
+                  (pluginResult as Record<string, unknown>).message ?? 'Remote plugin failed',
+                ),
+              },
+              failureKind: 'plugin',
+              reason: {
+                code: (pluginResult as Record<string, unknown>).code ?? 'plugin',
+                category: 'business',
+                retryable: false,
+              },
+            };
+        const changed = await tx.$executeRaw`
+          UPDATE "runs"
+          SET "counts_completed" = "counts_completed" + ${success ? 1 : 0},
+              "counts_failed" = "counts_failed" + ${success ? 0 : 1},
+              "updated_at" = clock_timestamp()
+          WHERE "run_id" = ${runId}
+            AND "lease_token" = ${runLeaseToken}
+            AND "lease_expires_at" > clock_timestamp()
+            AND "is_active" = TRUE
+            AND "status" IN ('running', 'waiting')
+            AND "counts_completed" = ${run.countsCompleted}
+            AND "counts_failed" = ${run.countsFailed}
+        `;
+        if (changed !== 1) throw new Error(`Run lease lost during worker projection: ${runId}`);
+        await tx.runEvent.create({
+          data: {
+            runId,
+            eventIndex: (run.events[run.events.length - 1]?.eventIndex ?? -1) + 1,
+            type: 'step:finished',
+            payload: toInputJson({
+              type: 'step:finished',
+              workflowRunId: runId,
+              meta: {
+                workflowId: run.workflowId,
+                ...(run.traceId ? { traceId: run.traceId } : {}),
+              },
+              step,
+              execution,
+              result,
+            }),
+          },
+        });
+        await tx.executionAttempt.update({
+          where: { attemptId: attempt.attemptId },
+          data: { runProjectedAt: now },
+        });
+        return true;
+      });
+      if (!advanced) return projected;
+      projected += 1;
+    }
+  }
+
   async registerWait(input: RegisterExecutionWaitInput): Promise<boolean> {
     validateWakeCondition(input.condition);
     if (

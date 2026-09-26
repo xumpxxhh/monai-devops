@@ -188,6 +188,7 @@ describeIfDb('PrismaRunRepository integration', () => {
     const engine = { runWorkflow: jest.fn(async () => pending) } as unknown as EngineService;
     const executions = {
       listJobsForRun: jest.fn(async () => []),
+      projectSettledWorkerAttempts: jest.fn(async () => 0),
     } as unknown as ExecutionRepository;
     const streams = { fanOut: jest.fn() } as unknown as RunStreamService;
     const makeManager = () =>
@@ -241,7 +242,10 @@ describeIfDb('PrismaRunRepository integration', () => {
       repository,
       { fanOut: jest.fn() } as unknown as RunStreamService,
       config,
-      { listJobsForRun: jest.fn(async () => []) } as unknown as ExecutionRepository,
+      {
+        listJobsForRun: jest.fn(async () => []),
+        projectSettledWorkerAttempts: jest.fn(async () => 0),
+      } as unknown as ExecutionRepository,
       {} as ExecutionLeaseService,
       { request: jest.fn() } as never,
     );
@@ -268,7 +272,10 @@ describeIfDb('PrismaRunRepository integration', () => {
       repository,
       { fanOut: jest.fn() } as unknown as RunStreamService,
       config,
-      { listJobsForRun: jest.fn(async () => []) } as unknown as ExecutionRepository,
+      {
+        listJobsForRun: jest.fn(async () => []),
+        projectSettledWorkerAttempts: jest.fn(async () => 0),
+      } as unknown as ExecutionRepository,
       {} as ExecutionLeaseService,
       { request: jest.fn() } as never,
     );

@@ -84,6 +84,8 @@ export interface ExecutionRepository {
   /** 原子检查过期时间并将 Attempt/Job 一起转为 timed_out，防止与续租竞态。 */
   timeoutExpiredAttempt(attemptId: string, now: Date, reason: unknown): Promise<boolean>;
   listJobsForRun(runId: string): Promise<RecoveryJob[]>;
+  /** Under an active Run lease, project settled worker results missed before a server crash. */
+  projectSettledWorkerAttempts(runId: string, runLeaseToken: string): Promise<number>;
   registerWait(input: RegisterExecutionWaitInput): Promise<boolean>;
   signalWait(attemptId: string, key: string, payload: unknown, now: Date): Promise<boolean>;
   wakeDueTimers(now: Date): Promise<number>;

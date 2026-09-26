@@ -2,11 +2,14 @@ import { randomUUID } from 'node:crypto';
 import {
   AttemptStatuses,
   EXECUTOR_PROTOCOL_VERSION,
+  createWorkflowExecutor,
   type ExecutorDispatchV1,
   type ExecutorMessageV1,
 } from '@monai-devops/core-engine';
 import { assertTestDatabaseUrl } from '../common/storage/assert-test-database-url.js';
 import { PrismaService } from '../prisma/prisma.service.js';
+import { toRunRecord } from '../runs/run-record.mapper.js';
+import { buildRunRecoverySnapshot } from '../runs/run-recovery-snapshot.js';
 import { PrismaExecutionRepository } from './prisma-execution.repository.js';
 
 const describeIfDb = process.env.DATABASE_URL?.trim() ? describe : describe.skip;
@@ -46,7 +49,12 @@ describeIfDb('PrismaExecutionRepository worker progress inbox', () => {
         workflowId: request.workflowId,
         workflowName: 'Worker inbox test',
         status: 'running',
-        workflowSnapshot: { id: request.workflowId, name: 'Worker inbox test', steps: [] },
+        countsTotal: 1,
+        workflowSnapshot: {
+          id: request.workflowId,
+          name: 'Worker inbox test',
+          steps: [{ id: 'step', name: 'Step', plugin: 'test-plugin', config: {} }],
+        },
       },
     });
     await repository.ensureJob({
@@ -328,5 +336,55 @@ describeIfDb('PrismaExecutionRepository worker progress inbox', () => {
     expect(attempt.status).toBe(
       success.accepted ? AttemptStatuses.SUCCEEDED : AttemptStatuses.FAILED,
     );
+  });
+
+  it('projects a settled success once under the Run lease for DAG recovery', async () => {
+    const complete = {
+      ...progress('heartbeat', 1),
+      kind: 'complete' as const,
+      result: { success: true, data: { value: 42 } },
+    };
+    expect((await repository.acceptWorkerMessage(request, complete, 30_000)).accepted).toBe(true);
+    await prisma.run.update({
+      where: { runId: request.runId },
+      data: {
+        leaseOwner: 'server-2',
+        leaseToken: 'run-token',
+        leaseExpiresAt: new Date(Date.now() + 60_000),
+      },
+    });
+    await expect(repository.projectSettledWorkerAttempts(request.runId, 'wrong')).rejects.toThrow(
+      /Run lease unavailable/,
+    );
+    expect(await repository.projectSettledWorkerAttempts(request.runId, 'run-token')).toBe(1);
+    expect(await repository.projectSettledWorkerAttempts(request.runId, 'run-token')).toBe(0);
+    const row = await prisma.run.findUniqueOrThrow({
+      where: { runId: request.runId },
+      include: { events: { orderBy: { eventIndex: 'asc' } } },
+    });
+    expect(row.countsCompleted).toBe(1);
+    expect(row.events).toHaveLength(1);
+    const snapshot = buildRunRecoverySnapshot(
+      toRunRecord(row, row.events),
+      await repository.listJobsForRun(request.runId),
+    );
+    expect(snapshot.completedResults).toMatchObject([
+      { stepId: 'step', pluginResult: { success: true, data: { value: 42 } } },
+    ]);
+    let pluginCalls = 0;
+    const executor = createWorkflowExecutor({
+      pluginExecutor: async () => {
+        pluginCalls += 1;
+        return { success: true };
+      },
+    });
+    const resumed = await executor.executeWorkflow(
+      request.runId,
+      toRunRecord(row, row.events).workflowSnapshot,
+      {},
+      { resume: snapshot },
+    );
+    expect(resumed.success).toBe(true);
+    expect(pluginCalls).toBe(0);
   });
 });
