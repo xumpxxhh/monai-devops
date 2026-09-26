@@ -99,6 +99,8 @@ export class ExecutionLeaseService implements OnModuleDestroy {
   /** Return only a durable terminal receipt; abort promptly if the owning DAG stops. */
   async awaitWorkerTerminal(
     execution: ExecutionIdentity,
+    runId: string,
+    runLeaseToken: string,
     signal: AbortSignal,
     pollIntervalMs = 250,
   ): Promise<WorkerTerminalResult> {
@@ -113,6 +115,13 @@ export class ExecutionLeaseService implements OnModuleDestroy {
       const terminal = await this.repository.readWorkerTerminal(execution);
       aborted();
       if (terminal) return terminal;
+      const timedOut = await this.repository.timeoutExpiredWorkerAttempt(
+        execution,
+        runId,
+        runLeaseToken,
+      );
+      aborted();
+      if (timedOut) throw new Error(`Worker lease expired: ${execution.attemptId}`);
       await new Promise<void>((resolve, reject) => {
         const onAbort = () => {
           clearTimeout(timer);

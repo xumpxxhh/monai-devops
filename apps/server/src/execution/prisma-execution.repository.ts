@@ -375,6 +375,58 @@ export class PrismaExecutionRepository implements ExecutionRepository {
     };
   }
 
+  async timeoutExpiredWorkerAttempt(
+    execution: ExecutionIdentity,
+    runId: string,
+    runLeaseToken: string,
+  ): Promise<boolean> {
+    return this.prisma.$transaction(async (tx) => {
+      const reason = JSON.stringify({
+        code: 'executor_lease_expired',
+        category: 'infrastructure',
+        retryable: true,
+        message: 'Worker lease expired during active Run',
+      });
+      const changed = await tx.$executeRaw`
+        UPDATE "execution_attempts" AS attempt
+        SET "status" = ${AttemptStatuses.TIMED_OUT},
+            "finished_at" = clock_timestamp(),
+            "reason" = ${reason}::jsonb,
+            "lease_owner" = NULL,
+            "lease_token" = NULL,
+            "lease_expires_at" = NULL,
+            "heartbeat_at" = NULL
+        WHERE attempt."attempt_id" = ${execution.attemptId}
+          AND attempt."job_id" = ${execution.jobId}
+          AND attempt."attempt" = ${execution.attempt}
+          AND attempt."status" IN (${AttemptStatuses.LEASED}, ${AttemptStatuses.RUNNING})
+          AND attempt."lease_expires_at" < clock_timestamp()
+          AND EXISTS (
+            SELECT 1 FROM "execution_jobs" AS job
+            JOIN "runs" AS run ON run."run_id" = job."run_id"
+            WHERE job."job_id" = attempt."job_id"
+              AND job."run_id" = ${runId}
+              AND job."status" IN (${AttemptStatuses.LEASED}, ${AttemptStatuses.RUNNING})
+              AND run."status" = 'running'
+              AND run."is_active" = TRUE
+              AND run."lease_token" = ${runLeaseToken}
+              AND run."lease_expires_at" > clock_timestamp()
+          )
+      `;
+      if (changed !== 1) return false;
+      const job = await tx.executionJob.updateMany({
+        where: {
+          jobId: execution.jobId,
+          runId,
+          status: { in: [AttemptStatuses.LEASED, AttemptStatuses.RUNNING] },
+        },
+        data: { status: AttemptStatuses.TIMED_OUT },
+      });
+      if (job.count !== 1) throw new Error(`Worker timeout Job mismatch: ${execution.jobId}`);
+      return true;
+    });
+  }
+
   async transitionAttempt(
     attemptId: string,
     from: AttemptStatus,

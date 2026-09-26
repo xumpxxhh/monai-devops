@@ -45,6 +45,8 @@
 
 平台侧 fencing 只能防止旧 Attempt 改写平台状态；插件对外部系统的副作用仍须以稳定的 `idempotencyKey` 自行去重。Run lease 与 Attempt lease 独立：server 接管 Run 不得复用已终结的 Attempt，worker 重领必须取得新 token。
 
+活跃 Run 等待 worker 时，server 仅可携当前 Run lease token 使用数据库时钟 CAS 结算过期 Attempt/Job；续租或终态消息若先提交，超时 CAS 不得再写。赢得超时后等待器向 DAG 报错，由现有步骤重试策略决定是否创建下一 Attempt。失去 Run lease 的 server 不能代替恢复器结算 worker。
+
 ## 信任边界与后续门槛
 
 `secretRefs` 的前缀检查不能证明 `input.config/context` 没有明文密钥；3.3/3.4 必须在派发前施加能力授权、Secret 分类与脱敏，worker 身份与引用解析也必须有独立鉴权。不要将租约 token、Secret 值或敏感结果写入事件和普通日志。当前契约没有宣称远程 worker 隔离、传输加密或数据库持久化已经完成。

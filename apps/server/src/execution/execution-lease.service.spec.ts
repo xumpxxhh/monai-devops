@@ -159,6 +159,7 @@ describe('ExecutionLeaseService', () => {
       readWorkerTerminal: jest.fn(async () =>
         repository.readWorkerTerminal.mock.calls.length === 1 ? undefined : terminal,
       ),
+      timeoutExpiredWorkerAttempt: jest.fn(async () => false),
     };
     const service = new ExecutionLeaseService(
       repository as unknown as ExecutionRepository,
@@ -166,20 +167,50 @@ describe('ExecutionLeaseService', () => {
     );
     const execution = { jobId: 'run/step', attemptId: 'run/step/attempt-0', attempt: 0 };
     await expect(
-      service.awaitWorkerTerminal(execution, new AbortController().signal, 1),
+      service.awaitWorkerTerminal(execution, 'run', 'run-token', new AbortController().signal, 1),
     ).resolves.toEqual(terminal);
     expect(repository.readWorkerTerminal).toHaveBeenCalledTimes(2);
+    expect(repository.timeoutExpiredWorkerAttempt).toHaveBeenCalledWith(
+      execution,
+      'run',
+      'run-token',
+    );
+  });
+
+  it('ends the wait only after an expired worker lease is atomically settled', async () => {
+    const repository = {
+      readWorkerTerminal: jest.fn(async () => undefined),
+      timeoutExpiredWorkerAttempt: jest.fn(async () => true),
+    };
+    const service = new ExecutionLeaseService(
+      repository as unknown as ExecutionRepository,
+      { get: jest.fn((_key: string, fallback: unknown) => fallback) } as unknown as ConfigService,
+    );
+    const execution = { jobId: 'run/step', attemptId: 'run/step/attempt-0', attempt: 0 };
+    await expect(
+      service.awaitWorkerTerminal(execution, 'run', 'run-token', new AbortController().signal),
+    ).rejects.toThrow('Worker lease expired');
+    expect(repository.timeoutExpiredWorkerAttempt).toHaveBeenCalledTimes(1);
   });
 
   it('stops waiting promptly when the owning execution is aborted', async () => {
-    const repository = { readWorkerTerminal: jest.fn(async () => undefined) };
+    const repository = {
+      readWorkerTerminal: jest.fn(async () => undefined),
+      timeoutExpiredWorkerAttempt: jest.fn(async () => false),
+    };
     const service = new ExecutionLeaseService(
       repository as unknown as ExecutionRepository,
       { get: jest.fn((_key: string, fallback: unknown) => fallback) } as unknown as ConfigService,
     );
     const controller = new AbortController();
     const execution = { jobId: 'run/step', attemptId: 'run/step/attempt-0', attempt: 0 };
-    const waiting = service.awaitWorkerTerminal(execution, controller.signal, 10_000);
+    const waiting = service.awaitWorkerTerminal(
+      execution,
+      'run',
+      'run-token',
+      controller.signal,
+      10_000,
+    );
     controller.abort();
     await expect(waiting).rejects.toThrow('Worker result wait aborted');
     expect(repository.readWorkerTerminal).toHaveBeenCalledTimes(1);
@@ -203,6 +234,8 @@ describe('ExecutionLeaseService', () => {
           if (!context.execution) throw new Error('Execution identity missing');
           const receipt = await service.awaitWorkerTerminal(
             context.execution as ExecutionIdentity,
+            'remote-receipt-run',
+            'run-token',
             new AbortController().signal,
           );
           return receipt.result;
@@ -219,5 +252,51 @@ describe('ExecutionLeaseService', () => {
     expect(repository.readWorkerTerminal).toHaveBeenCalledWith(
       expect.objectContaining({ jobId: 'remote-receipt-run/step', attempt: 0 }),
     );
+  });
+
+  it('allows the DAG retry policy to replace a timed-out worker Attempt', async () => {
+    const repository = {
+      readWorkerTerminal: jest.fn(async (execution: ExecutionIdentity) =>
+        execution.attempt === 0
+          ? undefined
+          : { kind: 'complete' as const, result: { success: true, data: { retried: true } } },
+      ),
+      timeoutExpiredWorkerAttempt: jest.fn(async () => true),
+    };
+    const service = new ExecutionLeaseService(
+      repository as unknown as ExecutionRepository,
+      { get: jest.fn((_key: string, fallback: unknown) => fallback) } as unknown as ConfigService,
+    );
+    const executor = createWorkflowExecutor({
+      pluginAdapter: {
+        kind: 'remote',
+        execute: async (_name, _config, context) => {
+          if (!context.execution) throw new Error('Execution identity missing');
+          const receipt = await service.awaitWorkerTerminal(
+            context.execution as ExecutionIdentity,
+            'timeout-run',
+            'run-token',
+            new AbortController().signal,
+          );
+          return receipt.result;
+        },
+      },
+    });
+    const result = await executor.executeWorkflow('timeout-run', {
+      id: 'timeout-workflow',
+      name: 'Timeout workflow',
+      steps: [
+        {
+          id: 'step',
+          name: 'Step',
+          plugin: 'remote-plugin',
+          config: {},
+          retryPolicy: { maxAttempts: 2, backoffMs: 0 },
+        },
+      ],
+    });
+    expect(result.success).toBe(true);
+    expect(result.results[0]?.execution?.attempt).toBe(1);
+    expect(repository.timeoutExpiredWorkerAttempt).toHaveBeenCalledTimes(1);
   });
 });

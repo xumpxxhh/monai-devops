@@ -93,6 +93,12 @@ export interface ExecutionRepository {
   projectSettledWorkerAttempts(runId: string, runLeaseToken: string): Promise<number>;
   /** Only returns a terminal inbox receipt consistent with the authoritative Attempt/Job. */
   readWorkerTerminal(execution: ExecutionIdentity): Promise<WorkerTerminalResult | undefined>;
+  /** Under the live Run owner, race an expired worker lease against heartbeat/terminal CAS. */
+  timeoutExpiredWorkerAttempt(
+    execution: ExecutionIdentity,
+    runId: string,
+    runLeaseToken: string,
+  ): Promise<boolean>;
   registerWait(input: RegisterExecutionWaitInput): Promise<boolean>;
   /** Read-only confirmation that the same worker wait was already atomically persisted. */
   confirmRegisteredWorkerWait(

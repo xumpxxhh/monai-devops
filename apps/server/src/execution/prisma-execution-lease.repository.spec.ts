@@ -105,4 +105,87 @@ describeIfDb('PrismaExecutionRepository token-fenced leases', () => {
       'worker-2',
     );
   });
+
+  it('settles an expired worker Attempt/Job only under the live Run lease', async () => {
+    const execution = { jobId: `${runId}/step`, attemptId, attempt: 0 };
+    await prisma.run.update({
+      where: { runId },
+      data: {
+        leaseOwner: 'server-1',
+        leaseToken: 'run-token',
+        leaseExpiresAt: new Date(Date.now() + 60_000),
+      },
+    });
+    expect(
+      await repository.acquireLease(
+        attemptId,
+        'worker-1',
+        'worker-token',
+        new Date(Date.now() + 60_000),
+      ),
+    ).toBe(true);
+    expect(await repository.startLeasedAttempt(attemptId, 'worker-token')).toBe(true);
+    await repository.setJobStatus(execution.jobId, AttemptStatuses.RUNNING);
+    expect(await repository.timeoutExpiredWorkerAttempt(execution, runId, 'run-token')).toBe(false);
+    await prisma.executionAttempt.update({
+      where: { attemptId },
+      data: { leaseExpiresAt: new Date(Date.now() - 1000) },
+    });
+    expect(await repository.timeoutExpiredWorkerAttempt(execution, runId, 'wrong-token')).toBe(
+      false,
+    );
+    expect((await prisma.executionAttempt.findUniqueOrThrow({ where: { attemptId } })).status).toBe(
+      AttemptStatuses.RUNNING,
+    );
+    expect(await repository.timeoutExpiredWorkerAttempt(execution, runId, 'run-token')).toBe(true);
+    expect(await repository.timeoutExpiredWorkerAttempt(execution, runId, 'run-token')).toBe(false);
+    expect(
+      await repository.heartbeat(attemptId, 'worker-token', new Date(Date.now() + 60_000)),
+    ).toBe(false);
+    expect(
+      await repository.acquireLease(
+        attemptId,
+        'worker-2',
+        'next-token',
+        new Date(Date.now() + 60_000),
+      ),
+    ).toBe(false);
+    expect(await prisma.executionAttempt.findUniqueOrThrow({ where: { attemptId } })).toMatchObject(
+      {
+        status: AttemptStatuses.TIMED_OUT,
+        leaseOwner: null,
+        leaseToken: null,
+        reason: { code: 'executor_lease_expired', retryable: true },
+      },
+    );
+    expect(
+      (await prisma.executionJob.findUniqueOrThrow({ where: { jobId: execution.jobId } })).status,
+    ).toBe(AttemptStatuses.TIMED_OUT);
+  });
+
+  it('does not settle an expired worker after the Run owner loses its lease', async () => {
+    const execution = { jobId: `${runId}/step`, attemptId, attempt: 0 };
+    await prisma.run.update({
+      where: { runId },
+      data: { leaseToken: 'run-token', leaseExpiresAt: new Date(Date.now() - 1000) },
+    });
+    expect(
+      await repository.acquireLease(
+        attemptId,
+        'worker-1',
+        'worker-token',
+        new Date(Date.now() + 60_000),
+      ),
+    ).toBe(true);
+    expect(await repository.startLeasedAttempt(attemptId, 'worker-token')).toBe(true);
+    await repository.setJobStatus(execution.jobId, AttemptStatuses.RUNNING);
+    await prisma.executionAttempt.update({
+      where: { attemptId },
+      data: { leaseExpiresAt: new Date(Date.now() - 1000) },
+    });
+    expect(await repository.timeoutExpiredWorkerAttempt(execution, runId, 'run-token')).toBe(false);
+    expect((await prisma.executionAttempt.findUniqueOrThrow({ where: { attemptId } })).status).toBe(
+      AttemptStatuses.RUNNING,
+    );
+  });
 });
