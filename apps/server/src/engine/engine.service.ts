@@ -1,6 +1,6 @@
 import { Global, Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import type { PluginConfig, ZodType } from '@monai-devops/plugin-sdk';
+import type { PluginConfig, PluginContext, PluginResult, ZodType } from '@monai-devops/plugin-sdk';
 import {
   BUILTIN_STEP_KIND_DEFINITIONS,
   createEngine,
@@ -38,6 +38,11 @@ export class EngineService implements OnModuleInit, OnModuleDestroy {
   private embeddedRunHooksImpl?: EmbeddedRunHooks;
   private beforeStepExecuteImpl?: BeforeStepExecute;
   private onStepWaitImpl?: NonNullable<ExecutorOptions['onStepWait']>;
+  private pluginExecutionOverrideImpl?: (
+    name: string,
+    config: PluginConfig,
+    context: PluginContext,
+  ) => Promise<PluginResult | undefined>;
 
   constructor(private readonly config: ConfigService) {}
 
@@ -70,6 +75,8 @@ export class EngineService implements OnModuleInit, OnModuleDestroy {
         if (!this.onStepWaitImpl) throw new Error('Durable wait handler is unavailable');
         await this.onStepWaitImpl(step, context, checkpoint, condition);
       },
+      pluginExecutionOverride: (name, config, context) =>
+        this.pluginExecutionOverrideImpl?.(name, config, context) ?? Promise.resolve(undefined),
       observer: {
         onEvent: async (event) => {
           for (const handler of this.eventHandlers) {
@@ -101,6 +108,16 @@ export class EngineService implements OnModuleInit, OnModuleDestroy {
 
   setOnStepWait(hook: NonNullable<ExecutorOptions['onStepWait']>): void {
     this.onStepWaitImpl = hook;
+  }
+
+  setPluginExecutionOverride(
+    hook: (
+      name: string,
+      config: PluginConfig,
+      context: PluginContext,
+    ) => Promise<PluginResult | undefined>,
+  ): void {
+    this.pluginExecutionOverrideImpl = hook;
   }
 
   onModuleDestroy(): void {

@@ -10,7 +10,12 @@
  * @module engine
  */
 
-import type { PluginDefinition } from '@monai-devops/plugin-sdk';
+import type {
+  PluginConfig,
+  PluginContext,
+  PluginDefinition,
+  PluginResult,
+} from '@monai-devops/plugin-sdk';
 import { createPluginManager } from '../plugin/index.js';
 import {
   createWorkflowExecutor,
@@ -69,6 +74,12 @@ export interface EngineOptions {
   /** 资源取得后、step:start 与实际执行前的授权闸门。 */
   beforeStepExecute?: (step: WorkflowStep, context: ExecutionContext) => void | Promise<void>;
   onStepWait?: ExecutorOptions['onStepWait'];
+  /** Optional server-owned route; undefined keeps the trusted local plugin manager. */
+  pluginExecutionOverride?: (
+    name: string,
+    config: PluginConfig,
+    context: PluginContext,
+  ) => Promise<PluginResult | undefined>;
 }
 
 /** 资源等待队列项与 releaseHandles 的键：${workflowRunId}:${stepId} */
@@ -151,8 +162,10 @@ export function createEngine(options: EngineOptions = {}) {
     resolveWorkflow: options.resolveWorkflow,
     embeddedRunHooks: options.embeddedRunHooks,
     maxNestingDepth: options.maxNestingDepth,
-    pluginAdapter: createLocalPluginAdapter((name, config, ctx) =>
-      plugins.executePlugin(name, config, ctx),
+    pluginAdapter: createLocalPluginAdapter(
+      async (name, config, ctx) =>
+        (await options.pluginExecutionOverride?.(name, config, ctx)) ??
+        plugins.executePlugin(name, config, ctx),
     ),
     onStepWait: options.onStepWait,
     resolvePluginResultSchema: (name) => plugins.getPlugin(name)?.resultSchema,

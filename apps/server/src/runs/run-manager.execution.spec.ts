@@ -17,20 +17,36 @@ describe('RunManagerService execution projection', () => {
   const execution = { jobId: 'run-1/step-1', attemptId: 'run-1/step-1/attempt-0', attempt: 0 };
   const step = { id: 'step-1', name: 'Step 1', plugin: 'print', config: {} };
 
-  function createSubject() {
+  function createSubject(remoteEnabled = false, environment = 'development') {
     const repository = {
       ensureJob: jest.fn(async () => undefined),
       ensureAttempt: jest.fn(async () => undefined),
       transitionAttempt: jest.fn(async (_attemptId: string, _from: string) => true),
       setJobStatus: jest.fn(async () => undefined),
+      registerWorkerDispatch: jest.fn(async () => true),
     };
     const runRepository = { heartbeatRunLease: jest.fn(async () => true) };
-    const leases = { start: jest.fn(async () => undefined), stop: jest.fn() };
+    const leases = {
+      start: jest.fn(async () => undefined),
+      stop: jest.fn(),
+      awaitWorkerTerminal: jest.fn(async () => ({ kind: 'complete', result: { success: true } })),
+    };
+    const engine = {
+      cancelRun: jest.fn(async () => undefined),
+      getPlugin: jest.fn(() => ({ version: '1.0.0' })),
+    };
     const service = new RunManagerService(
-      { cancelRun: jest.fn(async () => undefined) } as unknown as EngineService,
+      engine as unknown as EngineService,
       runRepository as unknown as RunRepository,
       {} as RunStreamService,
-      { get: jest.fn() } as unknown as ConfigService,
+      {
+        get: jest.fn((key: string) => {
+          if (key === 'EXECUTOR_REMOTE_TEST_ENABLED') return remoteEnabled;
+          if (key === 'EXECUTOR_WORKER_HTTP_TOKEN') return 'x'.repeat(32);
+          if (key === 'APP_ENV') return environment;
+          return undefined;
+        }),
+      } as unknown as ConfigService,
       repository as unknown as ExecutionRepository,
       leases as unknown as ExecutionLeaseService,
       { request: jest.fn() } as never,
@@ -48,7 +64,7 @@ describe('RunManagerService execution projection', () => {
         projectExecutionState(event: WorkflowLifecycleEvent, runId: string): Promise<void>;
       }
     ).projectExecutionState.bind(service);
-    return { service, project, repository, leases, runRepository };
+    return { service, project, repository, leases, runRepository, engine };
   }
 
   it('loads a recovery snapshot from the Run and Job repositories without executing it', async () => {
@@ -91,15 +107,14 @@ describe('RunManagerService execution projection', () => {
     const authorize = (
       service as unknown as {
         authorizeStepExecution(
-          stepId: string,
-          retryPolicy: undefined,
+          candidate: typeof step,
           runId: unknown,
           identity: typeof execution,
         ): Promise<void>;
       }
     ).authorizeStepExecution.bind(service);
 
-    await authorize(step.id, undefined, 'run-1', execution);
+    await authorize(step, 'run-1', execution);
 
     expect(repository.ensureAttempt).toHaveBeenCalledWith(execution);
     expect(runRepository.heartbeatRunLease).toHaveBeenCalledWith(
@@ -120,13 +135,12 @@ describe('RunManagerService execution projection', () => {
       (
         service as unknown as {
           authorizeStepExecution(
-            stepId: string,
-            retryPolicy: undefined,
+            candidate: typeof step,
             runId: string,
             identity: typeof execution,
           ): Promise<void>;
         }
-      ).authorizeStepExecution(step.id, undefined, 'run-1', execution),
+      ).authorizeStepExecution(step, 'run-1', execution),
     ).rejects.toThrow(/Run lease unavailable/);
     expect(repository.ensureAttempt).not.toHaveBeenCalled();
     expect(leases.start).not.toHaveBeenCalled();
@@ -156,6 +170,101 @@ describe('RunManagerService execution projection', () => {
     );
     expect(leases.start).toHaveBeenCalledWith(execution);
     expect(repository.setJobStatus).toHaveBeenCalledWith(execution.jobId, AttemptStatuses.RUNNING);
+  });
+
+  it('keeps the experimental remote test Attempt queued until a worker claims it', async () => {
+    const { service, project, repository, leases } = createSubject(true);
+    const remoteStep = {
+      id: 'step-1',
+      name: 'Remote test',
+      plugin: 'test-plugin',
+      config: { type: 'unit' },
+    };
+    (service as unknown as { fencedRunIds: Set<string> }).fencedRunIds.add('run-1');
+    (service as unknown as { managedRunIds: Set<string> }).managedRunIds.add('run-1');
+    await (
+      service as unknown as {
+        authorizeStepExecution(
+          step: typeof remoteStep,
+          runId: string,
+          identity: typeof execution,
+        ): Promise<void>;
+      }
+    ).authorizeStepExecution(remoteStep, 'run-1', execution);
+    await project(
+      {
+        type: 'step:start',
+        workflowRunId: 'run-1',
+        meta: { workflowId: 'workflow-1' },
+        step: remoteStep,
+        execution,
+      },
+      'run-1',
+    );
+    expect(repository.ensureAttempt).toHaveBeenCalledWith(execution);
+    expect(leases.start).not.toHaveBeenCalled();
+    expect(repository.setJobStatus).not.toHaveBeenCalledWith(
+      execution.jobId,
+      AttemptStatuses.RUNNING,
+    );
+  });
+
+  it('keeps production on the local execution path even when the remote flag is set', async () => {
+    const { service, leases } = createSubject(true, 'production');
+    (service as unknown as { fencedRunIds: Set<string> }).fencedRunIds.add('run-1');
+    const remoteStep = {
+      id: 'step-1',
+      name: 'Remote test',
+      plugin: 'test-plugin',
+      config: { type: 'unit' },
+    };
+    await (
+      service as unknown as {
+        authorizeStepExecution(
+          step: typeof remoteStep,
+          runId: string,
+          identity: typeof execution,
+        ): Promise<void>;
+      }
+    ).authorizeStepExecution(remoteStep, 'run-1', execution);
+    expect(leases.start).toHaveBeenCalledWith(execution);
+  });
+
+  it('registers only sanitized test input and returns the durable worker result', async () => {
+    const { service, repository, leases } = createSubject(true);
+    (service as unknown as { fencedRunIds: Set<string> }).fencedRunIds.add('run-1');
+    (service as unknown as { managedRunIds: Set<string> }).managedRunIds.add('run-1');
+    const signal = new AbortController().signal;
+    const result = await (
+      service as unknown as {
+        executeRemoteTestPlugin(name: string, config: object, context: object): Promise<unknown>;
+      }
+    ).executeRemoteTestPlugin(
+      'test-plugin',
+      { type: 'unit', extra: 'not-forwarded' },
+      {
+        runId: 'run-1',
+        workflowId: 'workflow-1',
+        stepId: 'step-1',
+        execution,
+        signal,
+      },
+    );
+    expect(repository.registerWorkerDispatch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        execution,
+        input: { config: { type: 'unit' }, context: {} },
+        requiredCapabilities: [],
+      }),
+      'run-token',
+    );
+    expect(leases.awaitWorkerTerminal).toHaveBeenCalledWith(
+      execution,
+      'run-1',
+      'run-token',
+      signal,
+    );
+    expect(result).toEqual({ success: true });
   });
 
   it('persists a never-started condition skip as a terminal skipped attempt', async () => {

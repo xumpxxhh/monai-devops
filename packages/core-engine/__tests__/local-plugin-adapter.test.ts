@@ -54,4 +54,28 @@ describe('local plugin adapter', () => {
     assert.match(run.results[0]?.pluginResult?.message ?? '', /expected failure/);
     await engine.destroy();
   });
+
+  it('uses an explicit execution override only when it returns a result', async () => {
+    const engine = createEngine({
+      plugins: [
+        createPlugin({
+          name: 'route-test',
+          version: '1.0.0',
+          execute: async () => ({ success: true, data: { route: 'local' } }),
+        }),
+      ],
+      pluginExecutionOverride: async (_name, _config, context) =>
+        context.runId === 'remote-run' ? { success: true, data: { route: 'remote' } } : undefined,
+    });
+    const workflow = {
+      id: 'route-workflow',
+      name: 'Route workflow',
+      steps: [{ id: 'step', name: 'Step', plugin: 'route-test', config: {} }],
+    };
+    const remote = await engine.runWorkflow('remote-run', workflow);
+    const local = await engine.runWorkflow('local-run', workflow);
+    assert.deepEqual(remote.results[0]?.pluginResult?.data, { route: 'remote' });
+    assert.deepEqual(local.results[0]?.pluginResult?.data, { route: 'local' });
+    await engine.destroy();
+  });
 });

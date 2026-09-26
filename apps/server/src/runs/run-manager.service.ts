@@ -10,9 +10,17 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import {
+  getAbortSignal,
+  type PluginConfig,
+  type PluginContext,
+  type PluginResult,
+} from '@monai-devops/plugin-sdk';
+import {
   AttemptStatuses,
+  EXECUTOR_PROTOCOL_VERSION,
   WorkflowSuspendedError,
   defaultStateFromSchema,
+  isPluginStep,
   parseState,
   resolveRetryPolicy,
   SkipReasons,
@@ -25,10 +33,10 @@ import {
   type ExecutionCheckpoint,
   type ExecutionWakeCondition,
   type PluginStep,
-  type RetryPolicy,
   type WorkflowLifecycleEvent,
   type WorkflowRunResult,
   type WorkflowResumeSnapshot,
+  type WorkflowStep,
 } from '@monai-devops/core-engine';
 import {
   serializeWorkflowEvent,
@@ -226,11 +234,92 @@ export class RunManagerService implements OnModuleInit, OnModuleDestroy {
       onChildRunFinished: (childRunId, result) => this.onChildRunFinished(childRunId, result),
     });
     this.engineService.setBeforeStepExecute((step, context) =>
-      this.authorizeStepExecution(step.id, step.retryPolicy, context.runId, context.execution),
+      this.authorizeStepExecution(step, context.runId, context.execution),
     );
     this.engineService.setOnStepWait?.((step, context, checkpoint, condition) =>
       this.registerStepWait(step, context.runId, context.execution, checkpoint, condition),
     );
+    this.engineService.setPluginExecutionOverride?.((name, config, context) =>
+      this.executeRemoteTestPlugin(name, config, context),
+    );
+  }
+
+  private remoteTestEnabled(): boolean {
+    const enabled = this.config.get<string | boolean>('EXECUTOR_REMOTE_TEST_ENABLED');
+    const environment = this.config.get<string>('APP_ENV');
+    const workerToken = this.config.get<string>('EXECUTOR_WORKER_HTTP_TOKEN');
+    return (
+      (enabled === true || enabled === 'true') &&
+      typeof workerToken === 'string' &&
+      workerToken.length >= 32 &&
+      environment !== 'production' &&
+      process.env.NODE_ENV !== 'production'
+    );
+  }
+
+  private isRemoteStep(step: WorkflowStep, runId: string): boolean {
+    return (
+      this.remoteTestEnabled() &&
+      this.fencedRunIds.has(runId) &&
+      isPluginStep(step) &&
+      step.plugin === 'test-plugin'
+    );
+  }
+
+  private async executeRemoteTestPlugin(
+    name: string,
+    config: PluginConfig,
+    context: PluginContext,
+  ): Promise<PluginResult | undefined> {
+    const runId = context.runId;
+    const execution = context.execution as ExecutionIdentity | undefined;
+    if (
+      name !== 'test-plugin' ||
+      typeof runId !== 'string' ||
+      !this.managedRunIds.has(runId) ||
+      !this.fencedRunIds.has(runId) ||
+      !this.remoteTestEnabled()
+    ) {
+      return undefined;
+    }
+    if (
+      !execution ||
+      typeof context.workflowId !== 'string' ||
+      typeof context.stepId !== 'string'
+    ) {
+      throw new Error('Remote test execution identity unavailable');
+    }
+    const signal = getAbortSignal(context);
+    await (this.eventChains.get(runId) ?? Promise.resolve());
+    const runLease = this.runLeases.get(runId);
+    if (!signal || !runLease || !(await this.heartbeatRunLease(runId, runLease.token))) {
+      throw new Error(`Run lease or cancellation signal unavailable for remote step: ${runId}`);
+    }
+    const plugin = this.engineService.getPlugin(name);
+    if (!plugin) throw new Error(`Remote test plugin unavailable: ${name}`);
+    if (typeof config.type !== 'string') throw new Error('Remote test plugin type is invalid');
+    const dispatch = {
+      protocolVersion: EXECUTOR_PROTOCOL_VERSION,
+      runId,
+      workflowId: context.workflowId,
+      stepId: context.stepId,
+      execution,
+      plugin: { name, version: plugin.version },
+      idempotencyKey: execution.jobId,
+      policyVersion: 'experimental-test-v1',
+      requiredCapabilities: [],
+      input: { config: { type: config.type }, context: {} },
+    };
+    if (!(await this.executionRepository.registerWorkerDispatch(dispatch, runLease.token))) {
+      throw new Error(`Remote dispatch registration failed: ${execution.attemptId}`);
+    }
+    const terminal = await this.executionLeases.awaitWorkerTerminal(
+      execution,
+      runId,
+      runLease.token,
+      signal,
+    );
+    return terminal.result;
   }
 
   private async registerStepWait(
@@ -252,8 +341,7 @@ export class RunManagerService implements OnModuleInit, OnModuleDestroy {
   }
 
   private async authorizeStepExecution(
-    stepId: string,
-    retryPolicy: RetryPolicy | undefined,
+    step: WorkflowStep,
     runId: unknown,
     execution: ExecutionIdentity | undefined,
   ): Promise<void> {
@@ -265,11 +353,12 @@ export class RunManagerService implements OnModuleInit, OnModuleDestroy {
     await this.executionRepository.ensureJob({
       execution,
       runId,
-      stepId,
+      stepId: step.id,
       idempotencyKey: execution.jobId,
-      retryPolicy: resolveRetryPolicy(retryPolicy),
+      retryPolicy: resolveRetryPolicy(step.retryPolicy),
     });
     await this.executionRepository.ensureAttempt(execution);
+    if (this.isRemoteStep(step, runId)) return;
     await this.executionLeases.start(execution);
     await this.executionRepository.setJobStatus(execution.jobId, AttemptStatuses.RUNNING);
   }
@@ -829,6 +918,7 @@ export class RunManagerService implements OnModuleInit, OnModuleDestroy {
     }
 
     if (event.type === 'step:start') {
+      if (this.isRemoteStep(event.step, persistRunId)) return;
       await this.executionLeases.start(execution);
       await this.executionRepository.setJobStatus(execution.jobId, AttemptStatuses.RUNNING);
       return;

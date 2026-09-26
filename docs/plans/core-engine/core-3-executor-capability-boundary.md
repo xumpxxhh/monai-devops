@@ -1,6 +1,6 @@
 # Core-3：Executor 与能力边界（实施规划草案）
 
-> 状态：逐步实施中；3.0 的传输无关契约候选与测试已落地，尚未接入运行路径。远程传输、认证和部署方式仍待评审。
+> 状态：逐步实施中；3.2 已有默认关闭、仅非生产环境的 `test-plugin` 远程试验选路，尚未达到完整远程闭环验收。
 >
 > 基线：[共享内核前置提案](./shared-core-engine-prerequisites-draft.md)；依赖：[Core-2 可靠调度与恢复](./core-2-reliable-execution-foundation.md)。
 
@@ -29,7 +29,7 @@ PostgreSQL：Job/Attempt、lease、checkpoint、事件与控制命令的权威�
 
 协议字段和状态转换先形成类型、示例消息、错误码、兼容版本与测试向量，再选择具体传输。首版建议 worker 经受权 HTTP 长轮询向 server 领取任务并回传事件；worker 不直接连接 PostgreSQL。后续可替换传输，不改变上述权威语义。
 
-3.0 契约候选、消息示例、限额及权威边界见 [Executor 协议 v1](./core-3-executor-protocol-v1.md)。当前仅有纯预检，没有持久化 CAS 或 worker 实现。
+3.0 契约候选、消息示例、限额及权威边界见 [Executor 协议 v1](./core-3-executor-protocol-v1.md)。持久化 CAS、HTTP worker 与试验选路已落地；生产信任边界及故障集成验证仍缺。
 
 ## 单步闭环顺序
 
@@ -42,7 +42,7 @@ PostgreSQL：Job/Attempt、lease、checkpoint、事件与控制命令的权威�
 | 3.4 数据与治理   | deadline/取消宽限期、受限事件与日志、Secret 引用解析、较大结果/日志的对象引用接口                         | 无明文 Secret 落库/出现在事件；大对象超阈值不进入 Run JSON；引用可鉴权读取并有保留/清理策略；旧小结果兼容                 |
 | 3.5 退出验证     | 故障注入、兼容性、并发和长任务测试；分阶段开启与回滚手册                                                  | 本地路径回归无差异；远程路径达到下述退出标准并经人工集成验证                                                              |
 
-进度：3.0 的类型、拒绝码和契约测试已实现；传输与信任边界决策未定，故尚不视为完整验收。3.1 已将默认引擎的插件调用接入可信进程内 local adapter，并保留直接构造执行器的 `pluginExecutor` 兼容入口。进程内 logger、取消信号等仍以原对象传递，不经过远程 JSON 协议；现有步骤结算、等待、事件及资源钩子不变。3.2 已完成十一个内部子步：Attempt 领取/启动/续租 fencing；心跳/事件 inbox 与序号 CAS；`complete`/`wait` 的 Attempt/Job 原子结算；server 恢复取得 Run 独占 lease 后，对已结算但尚未投影的 worker 完成结果幂等补写 `step:finished` 和 Run 计数，再交给既有 DAG 快照恢复；DAG 的等待钩子可精确确认已持久化的远程 wait（身份、版本、payload、条件、当前 inbox 序号），不重复保存 checkpoint；持久层可按 Attempt 身份读取与 Job/最新 inbox 收据一致的完成或等待结果；运行中等待器可轮询该收据并在 DAG 取消时退出，已有注入式 adapter 测试验证完成结果回到 DAG；活跃 Run 持有者现可用数据库时钟和 CAS 将过期 worker Attempt/Job 原子结算为 timed_out，等待器只在赢得结算后报错，注入式 DAG 测试覆盖按策略重试；server 可在 Run lease 下将批准的 dispatch 不可变地绑定到 queued Attempt，回传消息必须与其一致，不能由 worker 修改 deadline/capability；默认关闭的 bearer HTTP 入口已可受权长轮询领取已绑定任务、以持久化 dispatch 接收消息，竞争领取只成功一次；独立 worker 进程可通过该入口领取任务、续租并回传完成结果，当前仅加载 test/print 示例插件，拒绝 Secret 和 capability，不声称沙箱隔离。数据库时钟约束租约和 deadline，已测试重复、跳号、旧 token、过期、并发与崩溃窗口。Run waiting 状态仍应由 DAG 确认挂起后更新，不能仅凭 worker 消息直接切换（可能有并行步骤）。生产环境尚未装配远程适配器或显式选路；worker 日志事件、等待、主动取消、凭证轮换及两进程故障集成验证尚缺，因此不能视作远程闭环。
+进度：3.0 的类型、拒绝码和契约测试已实现；传输与信任边界决策未定，故尚不视为完整验收。3.1 已将默认引擎的插件调用接入可信进程内 local adapter，并保留直接构造执行器的 `pluginExecutor` 兼容入口。进程内 logger、取消信号等仍以原对象传递，不经过远程 JSON 协议；现有步骤结算、等待、事件及资源钩子不变。3.2 已完成十一个内部子步：Attempt 领取/启动/续租 fencing；心跳/事件 inbox 与序号 CAS；`complete`/`wait` 的 Attempt/Job 原子结算；server 恢复取得 Run 独占 lease 后，对已结算但尚未投影的 worker 完成结果幂等补写 `step:finished` 和 Run 计数，再交给既有 DAG 快照恢复；DAG 的等待钩子可精确确认已持久化的远程 wait（身份、版本、payload、条件、当前 inbox 序号），不重复保存 checkpoint；持久层可按 Attempt 身份读取与 Job/最新 inbox 收据一致的完成或等待结果；运行中等待器可轮询该收据并在 DAG 取消时退出，已有注入式 adapter 测试验证完成结果回到 DAG；活跃 Run 持有者现可用数据库时钟和 CAS 将过期 worker Attempt/Job 原子结算为 timed_out，等待器只在赢得结算后报错，注入式 DAG 测试覆盖按策略重试；server 可在 Run lease 下将批准的 dispatch 不可变地绑定到 queued Attempt，回传消息必须与其一致，不能由 worker 修改 deadline/capability；默认关闭的 bearer HTTP 入口已可受权长轮询领取已绑定任务、以持久化 dispatch 接收消息，竞争领取只成功一次；独立 worker 进程可通过该入口领取任务、续租并回传完成结果，当前仅加载 test/print 示例插件，拒绝 Secret 和 capability，不声称沙箱隔离。数据库时钟约束租约和 deadline，已测试重复、跳号、旧 token、过期、并发与崩溃窗口。Run waiting 状态仍应由 DAG 确认挂起后更新，不能仅凭 worker 消息直接切换（可能有并行步骤）。现已装配非生产环境、默认关闭且需要有效 worker token 的顶层 `test-plugin` 远程试验选路：server 登记白名单裁剪后的 dispatch，worker 完成结果经持久化收据返回 DAG；其它插件及生产环境保持本地执行。worker 日志事件、等待、主动取消、凭证轮换及两进程故障集成验证尚缺，因此不能视作远程闭环。
 
 每步合并时同时提交代码、迁移/配置示例、契约及集成测试、本文进度记录；不先建空协议或大规模抽象而长期没有可运行闭环。
 
