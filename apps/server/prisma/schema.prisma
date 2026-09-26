@@ -94,6 +94,7 @@ model ExecutionAttempt {
   heartbeatAt    DateTime?    @map("heartbeat_at")
   messageSequence Int          @default(0) @map("message_sequence")
   reason         Json?
+  result         Json?
   waitKind       String?      @map("wait_kind")
   wakeKey        String?      @map("wake_key")
   wakeAt         DateTime?    @map("wake_at")

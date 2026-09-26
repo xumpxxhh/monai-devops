@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import {
+  AttemptStatuses,
   EXECUTOR_PROTOCOL_VERSION,
   type ExecutorDispatchV1,
   type ExecutorMessageV1,
@@ -65,6 +66,7 @@ describeIfDb('PrismaExecutionRepository worker progress inbox', () => {
       ),
     ).toBe(true);
     expect(await repository.startLeasedAttempt(execution.attemptId, 'token-1')).toBe(true);
+    await repository.setJobStatus(execution.jobId, AttemptStatuses.RUNNING);
   });
 
   afterEach(async () => {
@@ -85,13 +87,13 @@ describeIfDb('PrismaExecutionRepository worker progress inbox', () => {
   }
 
   it('persists ordered heartbeat and event once without projecting into RunEvent', async () => {
-    const heartbeat = await repository.acceptWorkerProgress(
+    const heartbeat = await repository.acceptWorkerMessage(
       request,
       progress('heartbeat', 1),
       30_000,
     );
     expect(heartbeat.accepted).toBe(true);
-    const event = await repository.acceptWorkerProgress(request, progress('event', 2), 30_000);
+    const event = await repository.acceptWorkerMessage(request, progress('event', 2), 30_000);
     expect(event.accepted).toBe(true);
     expect(
       await prisma.executionAttempt.findUnique({
@@ -108,19 +110,19 @@ describeIfDb('PrismaExecutionRepository worker progress inbox', () => {
       { sequence: 2, kind: 'event', eventType: 'plugin:log', payload: { line: 'ok' } },
     ]);
     expect(await prisma.runEvent.count({ where: { runId: request.runId } })).toBe(0);
-    expect(await repository.acceptWorkerProgress(request, progress('event', 2), 30_000)).toEqual({
+    expect(await repository.acceptWorkerMessage(request, progress('event', 2), 30_000)).toEqual({
       accepted: false,
       code: 'duplicate',
     });
   });
 
   it('rejects gaps, wrong tokens and expired leases without writing a message', async () => {
-    expect(await repository.acceptWorkerProgress(request, progress('event', 2), 30_000)).toEqual({
+    expect(await repository.acceptWorkerMessage(request, progress('event', 2), 30_000)).toEqual({
       accepted: false,
       code: 'out_of_order',
     });
     expect(
-      await repository.acceptWorkerProgress(
+      await repository.acceptWorkerMessage(
         request,
         { ...progress('event', 1), leaseToken: 'wrong' },
         30_000,
@@ -130,7 +132,7 @@ describeIfDb('PrismaExecutionRepository worker progress inbox', () => {
       where: { attemptId: request.execution.attemptId },
       data: { leaseExpiresAt: new Date(Date.now() - 1_000) },
     });
-    expect(await repository.acceptWorkerProgress(request, progress('event', 1), 30_000)).toEqual({
+    expect(await repository.acceptWorkerMessage(request, progress('event', 1), 30_000)).toEqual({
       accepted: false,
       code: 'expired_lease',
     });
@@ -143,8 +145,8 @@ describeIfDb('PrismaExecutionRepository worker progress inbox', () => {
 
   it('lets only one concurrent sender claim the same sequence', async () => {
     const results = await Promise.all([
-      repository.acceptWorkerProgress(request, progress('event', 1), 30_000),
-      repository.acceptWorkerProgress(request, progress('event', 1), 30_000),
+      repository.acceptWorkerMessage(request, progress('event', 1), 30_000),
+      repository.acceptWorkerMessage(request, progress('event', 1), 30_000),
     ]);
     expect(results.filter((result) => result.accepted)).toHaveLength(1);
     expect(results.filter((result) => !result.accepted)).toEqual([
@@ -159,7 +161,7 @@ describeIfDb('PrismaExecutionRepository worker progress inbox', () => {
 
   it('continues the sequence after takeover while fencing the previous token', async () => {
     expect(
-      (await repository.acceptWorkerProgress(request, progress('event', 1), 30_000)).accepted,
+      (await repository.acceptWorkerMessage(request, progress('event', 1), 30_000)).accepted,
     ).toBe(true);
     await prisma.executionAttempt.update({
       where: { attemptId: request.execution.attemptId },
@@ -174,13 +176,13 @@ describeIfDb('PrismaExecutionRepository worker progress inbox', () => {
       ),
     ).toBe(true);
     expect(await repository.startLeasedAttempt(request.execution.attemptId, 'token-2')).toBe(true);
-    expect(await repository.acceptWorkerProgress(request, progress('event', 2), 30_000)).toEqual({
+    expect(await repository.acceptWorkerMessage(request, progress('event', 2), 30_000)).toEqual({
       accepted: false,
       code: 'stale_lease',
     });
     expect(
       (
-        await repository.acceptWorkerProgress(
+        await repository.acceptWorkerMessage(
           request,
           { ...progress('event', 2), leaseToken: 'token-2' },
           30_000,
@@ -189,22 +191,142 @@ describeIfDb('PrismaExecutionRepository worker progress inbox', () => {
     ).toBe(true);
   });
 
-  it('does not accept terminal messages through the progress-only inbox', async () => {
+  it.each([
+    { success: true, status: AttemptStatuses.SUCCEEDED },
+    { success: false, status: AttemptStatuses.FAILED },
+  ])('atomically settles a $status completion once', async ({ success, status }) => {
+    const complete = {
+      ...progress('heartbeat', 1),
+      kind: 'complete' as const,
+      result: { success, data: { value: 42 } },
+    };
+    expect((await repository.acceptWorkerMessage(request, complete, 30_000)).accepted).toBe(true);
     expect(
-      await repository.acceptWorkerProgress(
-        request,
-        {
-          ...progress('heartbeat', 1),
-          kind: 'complete',
-          result: { success: true },
-        },
-        30_000,
-      ),
-    ).toEqual({ accepted: false, code: 'invalid_payload' });
+      await prisma.executionAttempt.findUniqueOrThrow({
+        where: { attemptId: request.execution.attemptId },
+      }),
+    ).toMatchObject({ status, messageSequence: 1, result: complete.result });
+    expect(
+      (await prisma.executionJob.findUniqueOrThrow({ where: { jobId: request.execution.jobId } }))
+        .status,
+    ).toBe(status);
+    expect(await repository.acceptWorkerMessage(request, complete, 30_000)).toEqual({
+      accepted: false,
+      code: 'duplicate',
+    });
     expect(
       await prisma.executionAttemptMessage.count({
         where: { attemptId: request.execution.attemptId },
       }),
-    ).toBe(0);
+    ).toBe(1);
+    expect(await prisma.runEvent.count({ where: { runId: request.runId } })).toBe(0);
+  });
+
+  it('atomically stores a wait checkpoint and leaves it wakeable once', async () => {
+    const wait = {
+      ...progress('heartbeat', 1),
+      kind: 'wait' as const,
+      checkpoint: { cursor: 3 },
+      condition: { kind: 'signal' as const, key: 'approved' },
+    };
+    const waitRequest = { ...request, requiredCapabilities: ['execution.wait'] };
+    expect((await repository.acceptWorkerMessage(waitRequest, wait, 30_000)).accepted).toBe(true);
+    expect(
+      await prisma.executionAttempt.findUniqueOrThrow({
+        where: { attemptId: request.execution.attemptId },
+      }),
+    ).toMatchObject({
+      status: AttemptStatuses.WAITING,
+      messageSequence: 1,
+      wakeKey: 'approved',
+      leaseExpiresAt: null,
+    });
+    expect(
+      await prisma.executionJob.findUniqueOrThrow({ where: { jobId: request.execution.jobId } }),
+    ).toMatchObject({
+      status: AttemptStatuses.WAITING,
+      checkpoint: {
+        jobId: request.execution.jobId,
+        sourceAttemptId: request.execution.attemptId,
+        version: 1,
+        payload: { cursor: 3 },
+      },
+    });
+    expect(await repository.acceptWorkerMessage(waitRequest, wait, 30_000)).toEqual({
+      accepted: false,
+      code: 'duplicate',
+    });
+    expect(
+      await repository.signalWait(
+        request.execution.attemptId,
+        'approved',
+        { yes: true },
+        new Date(),
+      ),
+    ).toBe(true);
+  });
+
+  it('rejects terminal writes from stale or expired leases without settling the job', async () => {
+    const complete = {
+      ...progress('heartbeat', 1),
+      kind: 'complete' as const,
+      result: { success: true },
+    };
+    expect(
+      await repository.acceptWorkerMessage(
+        request,
+        { ...complete, leaseToken: 'wrong-token' },
+        30_000,
+      ),
+    ).toEqual({ accepted: false, code: 'stale_lease' });
+    await prisma.executionAttempt.update({
+      where: { attemptId: request.execution.attemptId },
+      data: { leaseExpiresAt: new Date(Date.now() - 1_000) },
+    });
+    expect(await repository.acceptWorkerMessage(request, complete, 30_000)).toEqual({
+      accepted: false,
+      code: 'expired_lease',
+    });
+    expect(
+      await prisma.executionAttempt.findUniqueOrThrow({
+        where: { attemptId: request.execution.attemptId },
+      }),
+    ).toMatchObject({ status: AttemptStatuses.RUNNING, messageSequence: 0, result: null });
+    expect(
+      (await prisma.executionJob.findUniqueOrThrow({ where: { jobId: request.execution.jobId } }))
+        .status,
+    ).toBe(AttemptStatuses.RUNNING);
+  });
+
+  it('settles only one of two racing terminal messages', async () => {
+    const base = progress('heartbeat', 1);
+    const [success, failure] = await Promise.all([
+      repository.acceptWorkerMessage(
+        request,
+        { ...base, kind: 'complete', result: { success: true } },
+        30_000,
+      ),
+      repository.acceptWorkerMessage(
+        request,
+        { ...base, kind: 'complete', result: { success: false } },
+        30_000,
+      ),
+    ]);
+    expect([success, failure].filter((decision) => decision.accepted)).toHaveLength(1);
+    expect(
+      await prisma.executionAttemptMessage.count({
+        where: { attemptId: request.execution.attemptId },
+      }),
+    ).toBe(1);
+    const attempt = await prisma.executionAttempt.findUniqueOrThrow({
+      where: { attemptId: request.execution.attemptId },
+    });
+    const job = await prisma.executionJob.findUniqueOrThrow({
+      where: { jobId: request.execution.jobId },
+    });
+    expect(attempt.status).toBe(job.status);
+    expect(attempt.status).toBe(
+      success.accepted ? AttemptStatuses.SUCCEEDED : AttemptStatuses.FAILED,
+    );
   });
 });

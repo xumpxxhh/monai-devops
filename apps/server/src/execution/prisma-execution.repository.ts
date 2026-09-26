@@ -116,8 +116,8 @@ export class PrismaExecutionRepository implements ExecutionRepository {
     return result.count === 1;
   }
 
-  /** Durable, token-fenced inbox for nonterminal worker progress; not yet exposed as a transport. */
-  async acceptWorkerProgress(
+  /** Durable, token-fenced worker inbox; orchestration/Run projection remains server-owned. */
+  async acceptWorkerMessage(
     request: ExecutorDispatchV1,
     message: unknown,
     leaseTtlMs: number,
@@ -151,17 +151,42 @@ export class PrismaExecutionRepository implements ExecutionRepository {
       const decision = assessExecutorMessage(request, fence, message, now);
       if (!decision.accepted) return decision;
       const progress = message as ExecutorMessageV1;
-      if (progress.kind !== 'heartbeat' && progress.kind !== 'event') {
+      const terminal = progress.kind === 'complete' || progress.kind === 'wait';
+      const nextStatus =
+        progress.kind === 'complete'
+          ? progress.result.success
+            ? AttemptStatuses.SUCCEEDED
+            : AttemptStatuses.FAILED
+          : progress.kind === 'wait'
+            ? AttemptStatuses.WAITING
+            : AttemptStatuses.RUNNING;
+      const previousCheckpointVersion =
+        attempt.job.checkpoint &&
+        typeof attempt.job.checkpoint === 'object' &&
+        !Array.isArray(attempt.job.checkpoint)
+          ? Number((attempt.job.checkpoint as Record<string, unknown>).version ?? 0)
+          : 0;
+      if (
+        progress.kind === 'wait' &&
+        (!Number.isInteger(previousCheckpointVersion) || previousCheckpointVersion < 0)
+      ) {
         return { accepted: false, code: 'invalid_payload' };
       }
       const update = Prisma.sql`
         UPDATE "execution_attempts"
-        SET "message_sequence" = "message_sequence" + 1
+        SET "message_sequence" = "message_sequence" + 1,
+            "status" = ${nextStatus}
           ${
             progress.kind === 'heartbeat'
               ? Prisma.sql`, "heartbeat_at" = clock_timestamp(), "lease_expires_at" = clock_timestamp() + (${leaseTtlMs} * INTERVAL '1 millisecond')`
               : Prisma.empty
           }
+          ${
+            terminal
+              ? Prisma.sql`, "lease_owner" = NULL, "lease_expires_at" = NULL, "heartbeat_at" = NULL`
+              : Prisma.empty
+          }
+          ${progress.kind === 'complete' ? Prisma.sql`, "finished_at" = clock_timestamp()` : Prisma.empty}
         WHERE "attempt_id" = ${request.execution.attemptId}
           AND "job_id" = ${request.execution.jobId}
           AND "attempt" = ${request.execution.attempt}
@@ -194,6 +219,42 @@ export class PrismaExecutionRepository implements ExecutionRepository {
           new Date(),
         );
       }
+      if (progress.kind === 'complete') {
+        await tx.executionAttempt.update({
+          where: { attemptId: request.execution.attemptId },
+          data: { result: toInputJson(progress.result) },
+        });
+        await tx.executionJob.update({
+          where: { jobId: request.execution.jobId },
+          data: { status: nextStatus },
+        });
+      } else if (progress.kind === 'wait') {
+        const checkpoint = {
+          jobId: request.execution.jobId,
+          sourceAttemptId: request.execution.attemptId,
+          version: previousCheckpointVersion + 1,
+          payload: progress.checkpoint,
+          createdAt: now.toISOString(),
+        };
+        await tx.executionAttempt.update({
+          where: { attemptId: request.execution.attemptId },
+          data: {
+            waitKind: progress.condition.kind,
+            wakeKey: progress.condition.kind === 'signal' ? progress.condition.key : null,
+            wakeAt:
+              progress.condition.kind === 'timer' ? new Date(progress.condition.wakeAt) : null,
+            waitTimeoutAt: progress.condition.timeoutAt
+              ? new Date(progress.condition.timeoutAt)
+              : null,
+            wakeReadyAt: null,
+            wakePayload: Prisma.DbNull,
+          },
+        });
+        await tx.executionJob.update({
+          where: { jobId: request.execution.jobId },
+          data: { status: AttemptStatuses.WAITING, checkpoint: toInputJson(checkpoint) },
+        });
+      }
       await tx.executionAttemptMessage.create({
         data: {
           attemptId: request.execution.attemptId,
@@ -206,7 +267,11 @@ export class PrismaExecutionRepository implements ExecutionRepository {
               ? progress.payload === null
                 ? Prisma.JsonNull
                 : toInputJson(progress.payload)
-              : undefined,
+              : progress.kind === 'complete'
+                ? toInputJson(progress.result)
+                : progress.kind === 'wait'
+                  ? toInputJson({ checkpoint: progress.checkpoint, condition: progress.condition })
+                  : undefined,
           occurredAt: new Date(progress.occurredAt),
           receivedAt: now,
         },
