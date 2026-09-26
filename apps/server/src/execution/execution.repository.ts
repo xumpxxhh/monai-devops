@@ -5,6 +5,8 @@ import type {
   RetryPolicy,
   ExecutionWakeCondition,
   ExecutorDispatchV1,
+  ExecutorLeaseClaimV1,
+  ExecutorMessageDecision,
 } from '@monai-devops/core-engine';
 import type { PluginResult } from '@monai-devops/plugin-sdk';
 
@@ -52,6 +54,11 @@ export type WorkerTerminalResult =
   | { kind: 'complete'; result: PluginResult }
   | { kind: 'wait'; result: PluginResult };
 
+export interface ClaimedWorkerDispatch {
+  dispatch: ExecutorDispatchV1;
+  claim: ExecutorLeaseClaimV1;
+}
+
 export type ExecutionControlType = 'pause' | 'resume' | 'cancel';
 export type ExecutionControlStatus = 'pending' | 'applied' | 'rejected';
 
@@ -94,6 +101,14 @@ export interface ExecutionRepository {
   projectSettledWorkerAttempts(runId: string, runLeaseToken: string): Promise<number>;
   /** Bind the server-approved immutable dispatch to a queued Attempt under Run ownership. */
   registerWorkerDispatch(request: ExecutorDispatchV1, runLeaseToken: string): Promise<boolean>;
+  claimWorkerDispatch(
+    workerId: string,
+    leaseTtlMs: number,
+  ): Promise<ClaimedWorkerDispatch | undefined>;
+  acceptRegisteredWorkerMessage(
+    message: unknown,
+    leaseTtlMs: number,
+  ): Promise<ExecutorMessageDecision>;
   /** Only returns a terminal inbox receipt consistent with the authoritative Attempt/Job. */
   readWorkerTerminal(execution: ExecutionIdentity): Promise<WorkerTerminalResult | undefined>;
   /** Under the live Run owner, race an expired worker lease against heartbeat/terminal CAS. */

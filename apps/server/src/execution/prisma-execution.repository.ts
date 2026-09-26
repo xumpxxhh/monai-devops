@@ -1,8 +1,10 @@
 import { Injectable } from '@nestjs/common';
+import { randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import { Prisma } from '@prisma/client';
 import {
   AttemptStatuses,
+  EXECUTOR_PROTOCOL_VERSION,
   assessExecutorMessage,
   resolveRetryPolicy,
   validateExecutorDispatch,
@@ -17,6 +19,7 @@ import { PrismaService } from '../prisma/prisma.service.js';
 import { toInputJson } from '../prisma/prisma-json.js';
 import type {
   CreateExecutionJobInput,
+  ClaimedWorkerDispatch,
   ExecutionControlCommand,
   ExecutionRepository,
   RegisterExecutionWaitInput,
@@ -92,6 +95,104 @@ export class PrismaExecutionRepository implements ExecutionRepository {
         )
     `;
     return changed === 1;
+  }
+
+  async claimWorkerDispatch(
+    workerId: string,
+    leaseTtlMs: number,
+  ): Promise<ClaimedWorkerDispatch | undefined> {
+    if (
+      !workerId.trim() ||
+      workerId.length > 128 ||
+      !Number.isInteger(leaseTtlMs) ||
+      leaseTtlMs < 3_000
+    ) {
+      throw new Error('Invalid worker claim');
+    }
+    const token = randomUUID();
+    return this.prisma.$transaction(async (tx) => {
+      const rows = await tx.$queryRaw<
+        Array<{
+          attemptId: string;
+          jobId: string;
+          dispatch: unknown;
+          messageSequence: number;
+          leaseExpiresAt: Date;
+        }>
+      >`
+        WITH candidate AS (
+          SELECT attempt."attempt_id"
+          FROM "execution_attempts" AS attempt
+          JOIN "execution_jobs" AS job ON job."job_id" = attempt."job_id"
+          JOIN "runs" AS run ON run."run_id" = job."run_id"
+          WHERE attempt."status" = ${AttemptStatuses.QUEUED}
+            AND attempt."dispatch" IS NOT NULL
+            AND job."status" = ${AttemptStatuses.QUEUED}
+            AND run."status" = 'running'
+            AND run."is_active" = TRUE
+            AND run."lease_token" IS NOT NULL
+            AND run."lease_expires_at" > clock_timestamp()
+          ORDER BY attempt."created_at"
+          FOR UPDATE OF attempt SKIP LOCKED
+          LIMIT 1
+        )
+        UPDATE "execution_attempts" AS attempt
+        SET "status" = ${AttemptStatuses.RUNNING},
+            "lease_owner" = ${workerId},
+            "lease_token" = ${token},
+            "lease_expires_at" = clock_timestamp() + (${leaseTtlMs} * INTERVAL '1 millisecond'),
+            "heartbeat_at" = clock_timestamp(),
+            "started_at" = COALESCE(attempt."started_at", clock_timestamp())
+        FROM candidate
+        WHERE attempt."attempt_id" = candidate."attempt_id"
+        RETURNING attempt."attempt_id" AS "attemptId", attempt."job_id" AS "jobId",
+                  attempt."dispatch", attempt."message_sequence" AS "messageSequence",
+                  attempt."lease_expires_at" AS "leaseExpiresAt"
+      `;
+      const row = rows[0];
+      if (!row) return undefined;
+      const job = await tx.executionJob.updateMany({
+        where: { jobId: row.jobId, status: AttemptStatuses.QUEUED },
+        data: { status: AttemptStatuses.RUNNING },
+      });
+      if (job.count !== 1) throw new Error(`Worker claim Job mismatch: ${row.jobId}`);
+      validateExecutorDispatch(row.dispatch);
+      return {
+        dispatch: row.dispatch,
+        claim: {
+          protocolVersion: EXECUTOR_PROTOCOL_VERSION,
+          execution: row.dispatch.execution,
+          workerId,
+          leaseToken: token,
+          leaseExpiresAt: row.leaseExpiresAt.toISOString(),
+          nextSequence: row.messageSequence + 1,
+        },
+      };
+    });
+  }
+
+  async acceptRegisteredWorkerMessage(
+    message: unknown,
+    leaseTtlMs: number,
+  ): Promise<ExecutorMessageDecision> {
+    if (!message || typeof message !== 'object' || Array.isArray(message)) {
+      return { accepted: false, code: 'invalid_payload' };
+    }
+    const execution = (message as Record<string, unknown>).execution;
+    if (!execution || typeof execution !== 'object' || Array.isArray(execution)) {
+      return { accepted: false, code: 'invalid_identity' };
+    }
+    const attemptId = (execution as Record<string, unknown>).attemptId;
+    if (typeof attemptId !== 'string' || !attemptId.trim()) {
+      return { accepted: false, code: 'invalid_identity' };
+    }
+    const attempt = await this.prisma.executionAttempt.findUnique({
+      where: { attemptId },
+      select: { dispatch: true },
+    });
+    if (!attempt?.dispatch) return { accepted: false, code: 'invalid_identity' };
+    validateExecutorDispatch(attempt.dispatch);
+    return this.acceptWorkerMessage(attempt.dispatch, message, leaseTtlMs);
   }
 
   async acquireLease(

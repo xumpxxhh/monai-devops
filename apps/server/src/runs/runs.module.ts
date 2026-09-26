@@ -12,10 +12,11 @@ import { ExecutionRecoveryService } from '../execution/execution-recovery.servic
 import { ExecutionControlService } from '../execution/execution-control.service.js';
 import { ExecutionWakeService } from '../execution/execution-wake.service.js';
 import { RunRecoveryService } from './run-recovery.service.js';
+import { WorkerTransportController } from '../execution/worker-transport.controller.js';
 
 @Global()
 @Module({
-  controllers: [RunsController],
+  controllers: [RunsController, WorkerTransportController],
   providers: [
     PrismaRunRepository,
     PrismaExecutionRepository,

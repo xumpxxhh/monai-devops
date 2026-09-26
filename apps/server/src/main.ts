@@ -2,6 +2,7 @@ import './preload-env.js';
 import 'reflect-metadata';
 import { ValidationPipe } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
+import type { NestExpressApplication } from '@nestjs/platform-express';
 import { ConfigService } from '@nestjs/config';
 import { WsAdapter } from '@nestjs/platform-ws';
 import { AppModule } from './app.module.js';
@@ -9,7 +10,10 @@ import { AllExceptionsFilter } from './common/filters/all-exceptions.filter.js';
 import { parseDatabaseName } from './common/storage/assert-test-database-url.js';
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule);
+  const app = await NestFactory.create<NestExpressApplication>(AppModule, { bodyParser: false });
+  // Executor v1 accepts up to 1 MiB of JSON data; allow framing overhead before protocol validation.
+  app.useBodyParser('json', { limit: '2mb' });
+  app.useBodyParser('urlencoded', { extended: true, limit: '100kb' });
   app.useWebSocketAdapter(new WsAdapter(app));
   const config = app.get(ConfigService);
 
