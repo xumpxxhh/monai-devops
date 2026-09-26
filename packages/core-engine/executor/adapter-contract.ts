@@ -128,12 +128,10 @@ function jsonValue(value: unknown, seen = new WeakSet<object>(), depth = 0): boo
   if (typeof value !== 'object') return false;
   if (seen.has(value)) return false;
   try {
-    if (
-      !Array.isArray(value) &&
-      Object.getPrototypeOf(value) !== Object.prototype &&
-      Object.getPrototypeOf(value) !== null
-    ) {
-      return false;
+    if (!Array.isArray(value)) {
+      const prototype = Object.getPrototypeOf(value);
+      // JSON.parse may run in a different realm (for example an HTTP worker or VM test).
+      if (prototype !== null && Object.getPrototypeOf(prototype) !== null) return false;
     }
     seen.add(value);
     const children = Array.isArray(value) ? value : Object.values(value);

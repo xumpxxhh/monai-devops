@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { runInNewContext } from 'node:vm';
 import { describe, it } from 'node:test';
 import {
   EXECUTOR_DATA_MAX_BYTES,
@@ -71,6 +72,10 @@ function message(kind: ExecutorMessageV1['kind'] = 'heartbeat'): ExecutorMessage
 describe('Executor protocol v1', () => {
   it('accepts only a JSON-safe, identity-consistent dispatch', () => {
     assert.doesNotThrow(() => validateExecutorDispatch(request()));
+    const otherRealmInput = runInNewContext(
+      'JSON.parse(\'{"config":{"type":"unit"},"context":{}}\')',
+    );
+    assert.doesNotThrow(() => validateExecutorDispatch({ ...request(), input: otherRealmInput }));
     assert.throws(
       () => validateExecutorDispatch({ ...request(), protocolVersion: 2 }),
       /protocol version/,
