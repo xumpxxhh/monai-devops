@@ -92,6 +92,7 @@ model ExecutionAttempt {
   leaseToken     String?      @map("lease_token")
   leaseExpiresAt DateTime?    @map("lease_expires_at")
   heartbeatAt    DateTime?    @map("heartbeat_at")
+  messageSequence Int          @default(0) @map("message_sequence")
   reason         Json?
   waitKind       String?      @map("wait_kind")
   wakeKey        String?      @map("wake_key")
@@ -103,6 +104,7 @@ model ExecutionAttempt {
   startedAt      DateTime?    @map("started_at")
   finishedAt     DateTime?    @map("finished_at")
   job            ExecutionJob @relation(fields: [jobId], references: [jobId], onDelete: Cascade)
+  workerMessages ExecutionAttemptMessage[]
 
   @@unique([jobId, attempt])
   @@index([status, leaseExpiresAt])
@@ -110,6 +112,21 @@ model ExecutionAttempt {
   @@index([status, waitTimeoutAt])
   @@index([wakeKey, status])
   @@map("execution_attempts")
+}
+
+model ExecutionAttemptMessage {
+  attemptId      String           @map("attempt_id")
+  sequence       Int
+  kind           String
+  eventType      String?          @map("event_type")
+  payloadVersion Int?             @map("payload_version")
+  payload        Json?
+  occurredAt     DateTime         @map("occurred_at")
+  receivedAt     DateTime         @default(now()) @map("received_at")
+  attempt        ExecutionAttempt @relation(fields: [attemptId], references: [attemptId], onDelete: Cascade)
+
+  @@id([attemptId, sequence])
+  @@map("execution_attempt_messages")
 }
 
 model RunEvent {

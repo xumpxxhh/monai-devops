@@ -40,6 +40,8 @@ export interface ExecutorLeaseClaimV1 {
   workerId: string;
   leaseToken: string;
   leaseExpiresAt: string;
+  /** Server-persisted next message sequence; may be greater than 1 after a lease takeover. */
+  nextSequence: number;
 }
 
 interface ExecutorMessageBaseV1 {

@@ -2,9 +2,14 @@ import { Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import {
   AttemptStatuses,
+  assessExecutorMessage,
   resolveRetryPolicy,
+  validateExecutorDispatch,
   validateWakeCondition,
   type AttemptStatus,
+  type ExecutorDispatchV1,
+  type ExecutorMessageDecision,
+  type ExecutorMessageV1,
   type WorkflowDefinition,
 } from '@monai-devops/core-engine';
 import { PrismaService } from '../prisma/prisma.service.js';
@@ -109,6 +114,105 @@ export class PrismaExecutionRepository implements ExecutionRepository {
       data: { status: AttemptStatuses.RUNNING, startedAt: now },
     });
     return result.count === 1;
+  }
+
+  /** Durable, token-fenced inbox for nonterminal worker progress; not yet exposed as a transport. */
+  async acceptWorkerProgress(
+    request: ExecutorDispatchV1,
+    message: unknown,
+    leaseTtlMs: number,
+  ): Promise<ExecutorMessageDecision> {
+    validateExecutorDispatch(request);
+    if (!Number.isInteger(leaseTtlMs) || leaseTtlMs < 3_000) {
+      throw new Error('Invalid worker lease TTL');
+    }
+    return this.prisma.$transaction(async (tx) => {
+      const now = new Date();
+      const attempt = await tx.executionAttempt.findUnique({
+        where: { attemptId: request.execution.attemptId },
+        include: { job: true },
+      });
+      if (
+        !attempt ||
+        attempt.jobId !== request.execution.jobId ||
+        attempt.attempt !== request.execution.attempt ||
+        attempt.job.runId !== request.runId ||
+        attempt.job.stepId !== request.stepId
+      ) {
+        return { accepted: false, code: 'invalid_identity' };
+      }
+      const fence = {
+        execution: request.execution,
+        leaseToken: attempt.leaseToken ?? '',
+        leaseExpiresAt: attempt.leaseExpiresAt?.toISOString() ?? '',
+        lastSequence: attempt.messageSequence,
+        terminal: attempt.status !== AttemptStatuses.RUNNING,
+      };
+      const decision = assessExecutorMessage(request, fence, message, now);
+      if (!decision.accepted) return decision;
+      const progress = message as ExecutorMessageV1;
+      if (progress.kind !== 'heartbeat' && progress.kind !== 'event') {
+        return { accepted: false, code: 'invalid_payload' };
+      }
+      const update = Prisma.sql`
+        UPDATE "execution_attempts"
+        SET "message_sequence" = "message_sequence" + 1
+          ${
+            progress.kind === 'heartbeat'
+              ? Prisma.sql`, "heartbeat_at" = clock_timestamp(), "lease_expires_at" = clock_timestamp() + (${leaseTtlMs} * INTERVAL '1 millisecond')`
+              : Prisma.empty
+          }
+        WHERE "attempt_id" = ${request.execution.attemptId}
+          AND "job_id" = ${request.execution.jobId}
+          AND "attempt" = ${request.execution.attempt}
+          AND "status" = ${AttemptStatuses.RUNNING}
+          AND "lease_token" = ${progress.leaseToken}
+          AND "lease_expires_at" > clock_timestamp()
+          AND "message_sequence" = ${attempt.messageSequence}
+          ${
+            request.deadlineAt
+              ? Prisma.sql`AND ${new Date(request.deadlineAt)} > clock_timestamp()`
+              : Prisma.empty
+          }
+      `;
+      const changed = await tx.$executeRaw(update);
+      if (changed !== 1) {
+        const current = await tx.executionAttempt.findUnique({
+          where: { attemptId: request.execution.attemptId },
+        });
+        if (!current) return { accepted: false, code: 'invalid_identity' };
+        return assessExecutorMessage(
+          request,
+          {
+            execution: request.execution,
+            leaseToken: current.leaseToken ?? '',
+            leaseExpiresAt: current.leaseExpiresAt?.toISOString() ?? '',
+            lastSequence: current.messageSequence,
+            terminal: current.status !== AttemptStatuses.RUNNING,
+          },
+          message,
+          new Date(),
+        );
+      }
+      await tx.executionAttemptMessage.create({
+        data: {
+          attemptId: request.execution.attemptId,
+          sequence: progress.sequence,
+          kind: progress.kind,
+          eventType: progress.kind === 'event' ? progress.eventType : null,
+          payloadVersion: progress.kind === 'event' ? progress.payloadVersion : null,
+          payload:
+            progress.kind === 'event'
+              ? progress.payload === null
+                ? Prisma.JsonNull
+                : toInputJson(progress.payload)
+              : undefined,
+          occurredAt: new Date(progress.occurredAt),
+          receivedAt: now,
+        },
+      });
+      return decision;
+    });
   }
 
   async transitionAttempt(

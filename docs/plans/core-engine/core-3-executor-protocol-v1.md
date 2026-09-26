@@ -6,7 +6,7 @@
 
 ## 消息与状态
 
-`dispatch` 固定 `protocolVersion: 1`，携带 Run/Workflow/Step、确定性的 Job/Attempt 身份、插件名称和版本、幂等键、策略版本、所需能力、可选追踪 ID 与截止时间，以及 JSON 输入和 `secret://` 引用。`claim` 由服务端绑定 worker、Attempt、lease token 和到期时间；它不是插件输入。worker 按同一 token 发送从 1 开始严格递增的 `heartbeat`、`event`、`complete` 或 `wait`。`complete` 和 `wait` 互斥，均是终结当前 Attempt 的消息；等待条件和 checkpoint 必须在服务端持久化。`cancel` 带请求 ID、Attempt 和 token，属于尽力通知，不表示外部副作用已回滚。
+`dispatch` 固定 `protocolVersion: 1`，携带 Run/Workflow/Step、确定性的 Job/Attempt 身份、插件名称和版本、幂等键、策略版本、所需能力、可选追踪 ID 与截止时间，以及 JSON 输入和 `secret://` 引用。`claim` 由服务端绑定 worker、Attempt、lease token、到期时间与持久化的 `nextSequence`；它不是插件输入。worker 按同一 token 发送从 `nextSequence` 开始严格递增的 `heartbeat`、`event`、`complete` 或 `wait`，重领同一 Attempt 时序号不能归零。`complete` 和 `wait` 互斥，均是终结当前 Attempt 的消息；等待条件和 checkpoint 必须在服务端持久化。`cancel` 带请求 ID、Attempt 和 token，属于尽力通知，不表示外部副作用已回滚。
 
 ```json
 {
@@ -41,7 +41,7 @@
 
 ## 权威性、幂等与错误
 
-纯函数 `validateExecutorDispatch`、`assessExecutorMessage`、`assessExecutorCancel` 只是边界预检。真正接收消息时，server 必须在**同一个数据库事务/CAS**中再次校验 Attempt 身份、当前 token、租约和 deadline、递增序号、非终结状态，并写入事件或终结/等待状态；否则并发 worker 仍可穿透进程内检查。当前持久层仅完成 token/到期时间约束下的启动和续租；消息写入 CAS 尚未实现。重复序号返回 `duplicate`，旧 token 返回 `stale_lease`，过期租约返回 `expired_lease`，跳号返回 `out_of_order`，终结后新消息返回 `already_terminal`。其它拒绝码包括 `unsupported_version`、`invalid_identity`、`deadline_exceeded`、`invalid_payload`、`payload_too_large`、`wait_not_allowed`。重复终结消息只应返回既有结算结果，不得二次投影。取消是 stop hint，允许对已到期但尚未终结的 token 下发；不能以取消成功代替终结 CAS。
+纯函数 `validateExecutorDispatch`、`assessExecutorMessage`、`assessExecutorCancel` 只是边界预检。真正接收消息时，server 必须在**同一个数据库事务/CAS**中再次校验 Attempt 身份、当前 token、租约和 deadline、递增序号、非终结状态，并写入事件或终结/等待状态；否则并发 worker 仍可穿透进程内检查。当前持久层已完成启动/续租 fencing，以及心跳/事件的独立 inbox CAS；消息仅写入 `execution_attempt_messages`，不投影到 RunEvent。`complete`/`wait` 的原子结算与权威 Run 投影尚未实现，不能开放远程执行入口。重复序号返回 `duplicate`，旧 token 返回 `stale_lease`，过期租约返回 `expired_lease`，跳号返回 `out_of_order`，终结后新消息返回 `already_terminal`。其它拒绝码包括 `unsupported_version`、`invalid_identity`、`deadline_exceeded`、`invalid_payload`、`payload_too_large`、`wait_not_allowed`。重复终结消息只应返回既有结算结果，不得二次投影。取消是 stop hint，允许对已到期但尚未终结的 token 下发；不能以取消成功代替终结 CAS。
 
 平台侧 fencing 只能防止旧 Attempt 改写平台状态；插件对外部系统的副作用仍须以稳定的 `idempotencyKey` 自行去重。Run lease 与 Attempt lease 独立：server 接管 Run 不得复用已终结的 Attempt，worker 重领必须取得新 token。
 
