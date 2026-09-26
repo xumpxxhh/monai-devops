@@ -5,6 +5,7 @@ import type {
   RetryPolicy,
   ExecutionWakeCondition,
 } from '@monai-devops/core-engine';
+import type { PluginResult } from '@monai-devops/plugin-sdk';
 
 export interface CreateExecutionJobInput {
   execution: ExecutionIdentity;
@@ -46,6 +47,10 @@ export interface RegisterExecutionWaitInput {
   condition: ExecutionWakeCondition;
 }
 
+export type WorkerTerminalResult =
+  | { kind: 'complete'; result: PluginResult }
+  | { kind: 'wait'; result: PluginResult };
+
 export type ExecutionControlType = 'pause' | 'resume' | 'cancel';
 export type ExecutionControlStatus = 'pending' | 'applied' | 'rejected';
 
@@ -86,6 +91,8 @@ export interface ExecutionRepository {
   listJobsForRun(runId: string): Promise<RecoveryJob[]>;
   /** Under an active Run lease, project settled worker results missed before a server crash. */
   projectSettledWorkerAttempts(runId: string, runLeaseToken: string): Promise<number>;
+  /** Only returns a terminal inbox receipt consistent with the authoritative Attempt/Job. */
+  readWorkerTerminal(execution: ExecutionIdentity): Promise<WorkerTerminalResult | undefined>;
   registerWait(input: RegisterExecutionWaitInput): Promise<boolean>;
   /** Read-only confirmation that the same worker wait was already atomically persisted. */
   confirmRegisteredWorkerWait(

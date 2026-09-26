@@ -203,12 +203,17 @@ describeIfDb('PrismaExecutionRepository worker progress inbox', () => {
     { success: true, status: AttemptStatuses.SUCCEEDED },
     { success: false, status: AttemptStatuses.FAILED },
   ])('atomically settles a $status completion once', async ({ success, status }) => {
+    expect(await repository.readWorkerTerminal(request.execution)).toBeUndefined();
     const complete = {
       ...progress('heartbeat', 1),
       kind: 'complete' as const,
       result: { success, data: { value: 42 } },
     };
     expect((await repository.acceptWorkerMessage(request, complete, 30_000)).accepted).toBe(true);
+    expect(await repository.readWorkerTerminal(request.execution)).toEqual({
+      kind: 'complete',
+      result: complete.result,
+    });
     expect(
       await prisma.executionAttempt.findUniqueOrThrow({
         where: { attemptId: request.execution.attemptId },
@@ -239,6 +244,19 @@ describeIfDb('PrismaExecutionRepository worker progress inbox', () => {
     };
     const waitRequest = { ...request, requiredCapabilities: ['execution.wait'] };
     expect((await repository.acceptWorkerMessage(waitRequest, wait, 30_000)).accepted).toBe(true);
+    expect(await repository.readWorkerTerminal(request.execution)).toEqual({
+      kind: 'wait',
+      result: { success: true, wait: { checkpoint: wait.checkpoint, condition: wait.condition } },
+    });
+    await prisma.executionAttempt.update({
+      where: { attemptId: request.execution.attemptId },
+      data: { wakeKey: 'wrong' },
+    });
+    expect(await repository.readWorkerTerminal(request.execution)).toBeUndefined();
+    await prisma.executionAttempt.update({
+      where: { attemptId: request.execution.attemptId },
+      data: { wakeKey: 'approved' },
+    });
     expect(
       await prisma.executionAttempt.findUniqueOrThrow({
         where: { attemptId: request.execution.attemptId },
@@ -295,6 +313,20 @@ describeIfDb('PrismaExecutionRepository worker progress inbox', () => {
         new Date(),
       ),
     ).toBe(true);
+  });
+
+  it('does not expose a terminal receipt with mismatched identity or Job state', async () => {
+    const complete = {
+      ...progress('heartbeat', 1),
+      kind: 'complete' as const,
+      result: { success: true, data: { value: 1 } },
+    };
+    expect((await repository.acceptWorkerMessage(request, complete, 30_000)).accepted).toBe(true);
+    expect(
+      await repository.readWorkerTerminal({ ...request.execution, attempt: 1 }),
+    ).toBeUndefined();
+    await repository.setJobStatus(request.execution.jobId, AttemptStatuses.RUNNING);
+    expect(await repository.readWorkerTerminal(request.execution)).toBeUndefined();
   });
 
   it('rejects terminal writes from stale or expired leases without settling the job', async () => {

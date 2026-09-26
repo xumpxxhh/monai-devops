@@ -22,8 +22,13 @@ import type {
   RegisterExecutionWaitInput,
   RecoverableAttempt,
   RecoveryJob,
+  WorkerTerminalResult,
 } from './execution.repository.js';
-import type { ExecutionCheckpoint, ExecutionIdentity } from '@monai-devops/core-engine';
+import type {
+  ExecutionCheckpoint,
+  ExecutionIdentity,
+  ExecutionWakeCondition,
+} from '@monai-devops/core-engine';
 
 @Injectable()
 export class PrismaExecutionRepository implements ExecutionRepository {
@@ -279,6 +284,95 @@ export class PrismaExecutionRepository implements ExecutionRepository {
       });
       return decision;
     });
+  }
+
+  async readWorkerTerminal(
+    execution: ExecutionIdentity,
+  ): Promise<WorkerTerminalResult | undefined> {
+    const attempt = await this.prisma.executionAttempt.findUnique({
+      where: { attemptId: execution.attemptId },
+      include: { job: true, workerMessages: { orderBy: { sequence: 'desc' }, take: 1 } },
+    });
+    if (
+      !attempt ||
+      attempt.jobId !== execution.jobId ||
+      attempt.attempt !== execution.attempt ||
+      attempt.messageSequence < 1
+    ) {
+      return undefined;
+    }
+    const receipt = attempt.workerMessages[0];
+    if (!receipt || receipt.sequence !== attempt.messageSequence) return undefined;
+    if (receipt.kind === 'complete') {
+      if (
+        !attempt.result ||
+        typeof attempt.result !== 'object' ||
+        Array.isArray(attempt.result) ||
+        typeof attempt.result.success !== 'boolean' ||
+        attempt.result.success !== (attempt.status === AttemptStatuses.SUCCEEDED) ||
+        !isDeepStrictEqual(attempt.result, receipt.payload) ||
+        (attempt.status !== AttemptStatuses.SUCCEEDED &&
+          attempt.status !== AttemptStatuses.FAILED) ||
+        attempt.job.status !== attempt.status
+      ) {
+        return undefined;
+      }
+      return {
+        kind: 'complete',
+        result: attempt.result as unknown as WorkerTerminalResult['result'],
+      };
+    }
+    if (receipt.kind !== 'wait') return undefined;
+    const payload = receipt.payload;
+    const checkpoint = attempt.job.checkpoint;
+    if (
+      attempt.status !== AttemptStatuses.WAITING ||
+      attempt.job.status !== AttemptStatuses.WAITING ||
+      !payload ||
+      typeof payload !== 'object' ||
+      Array.isArray(payload) ||
+      !checkpoint ||
+      typeof checkpoint !== 'object' ||
+      Array.isArray(checkpoint)
+    ) {
+      return undefined;
+    }
+    const saved = checkpoint as Record<string, unknown>;
+    const message = payload as Record<string, unknown>;
+    if (
+      saved.jobId !== execution.jobId ||
+      saved.sourceAttemptId !== execution.attemptId ||
+      !Number.isInteger(saved.version) ||
+      !isDeepStrictEqual(saved.payload, message.checkpoint) ||
+      !message.condition ||
+      typeof message.condition !== 'object' ||
+      Array.isArray(message.condition)
+    ) {
+      return undefined;
+    }
+    const condition = message.condition as ExecutionWakeCondition;
+    try {
+      validateWakeCondition(condition);
+    } catch {
+      return undefined;
+    }
+    if (
+      attempt.waitKind !== condition.kind ||
+      attempt.waitTimeoutAt?.getTime() !==
+        (condition.timeoutAt ? new Date(condition.timeoutAt).getTime() : undefined) ||
+      (condition.kind === 'signal'
+        ? attempt.wakeKey !== condition.key
+        : attempt.wakeAt?.getTime() !== new Date(condition.wakeAt).getTime())
+    ) {
+      return undefined;
+    }
+    return {
+      kind: 'wait',
+      result: {
+        success: true,
+        wait: { checkpoint: message.checkpoint, condition },
+      } as WorkerTerminalResult['result'],
+    };
   }
 
   async transitionAttempt(

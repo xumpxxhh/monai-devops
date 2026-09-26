@@ -42,7 +42,7 @@ PostgreSQL：Job/Attempt、lease、checkpoint、事件与控制命令的权威�
 | 3.4 数据与治理   | deadline/取消宽限期、受限事件与日志、Secret 引用解析、较大结果/日志的对象引用接口                         | 无明文 Secret 落库/出现在事件；大对象超阈值不进入 Run JSON；引用可鉴权读取并有保留/清理策略；旧小结果兼容                 |
 | 3.5 退出验证     | 故障注入、兼容性、并发和长任务测试；分阶段开启与回滚手册                                                  | 本地路径回归无差异；远程路径达到下述退出标准并经人工集成验证                                                              |
 
-进度：3.0 的类型、拒绝码和契约测试已实现；传输与信任边界决策未定，故尚不视为完整验收。3.1 已将默认引擎的插件调用接入可信进程内 local adapter，并保留直接构造执行器的 `pluginExecutor` 兼容入口。进程内 logger、取消信号等仍以原对象传递，不经过远程 JSON 协议；现有步骤结算、等待、事件及资源钩子不变。3.2 已完成五个内部子步：Attempt 领取/启动/续租 fencing；心跳/事件 inbox 与序号 CAS；`complete`/`wait` 的 Attempt/Job 原子结算；server 恢复取得 Run 独占 lease 后，对已结算但尚未投影的 worker 完成结果幂等补写 `step:finished` 和 Run 计数，再交给既有 DAG 快照恢复；DAG 的等待钩子可精确确认已持久化的远程 wait（身份、版本、payload、条件、当前 inbox 序号），不重复保存 checkpoint。数据库时钟约束租约和 deadline，已测试重复、跳号、旧 token、过期、并发与崩溃窗口。Run waiting 状态仍应由 DAG 确认挂起后更新，不能仅凭 worker 消息直接切换（可能有并行步骤）。实时远程适配器尚未把结果交回运行中的 DAG，故仍不能开放经过认证的 worker 传输或显式选路，也不能视作远程闭环。
+进度：3.0 的类型、拒绝码和契约测试已实现；传输与信任边界决策未定，故尚不视为完整验收。3.1 已将默认引擎的插件调用接入可信进程内 local adapter，并保留直接构造执行器的 `pluginExecutor` 兼容入口。进程内 logger、取消信号等仍以原对象传递，不经过远程 JSON 协议；现有步骤结算、等待、事件及资源钩子不变。3.2 已完成六个内部子步：Attempt 领取/启动/续租 fencing；心跳/事件 inbox 与序号 CAS；`complete`/`wait` 的 Attempt/Job 原子结算；server 恢复取得 Run 独占 lease 后，对已结算但尚未投影的 worker 完成结果幂等补写 `step:finished` 和 Run 计数，再交给既有 DAG 快照恢复；DAG 的等待钩子可精确确认已持久化的远程 wait（身份、版本、payload、条件、当前 inbox 序号），不重复保存 checkpoint；持久层可按 Attempt 身份读取与 Job/最新 inbox 收据一致的完成或等待结果，供实时适配器消费。数据库时钟约束租约和 deadline，已测试重复、跳号、旧 token、过期、并发与崩溃窗口。Run waiting 状态仍应由 DAG 确认挂起后更新，不能仅凭 worker 消息直接切换（可能有并行步骤）。实时远程适配器尚未把结果交回运行中的 DAG，故仍不能开放经过认证的 worker 传输或显式选路，也不能视作远程闭环。
 
 每步合并时同时提交代码、迁移/配置示例、契约及集成测试、本文进度记录；不先建空协议或大规模抽象而长期没有可运行闭环。
 
