@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import { jest } from '@jest/globals';
 import { ConfigService } from '@nestjs/config';
 import { Test } from '@nestjs/testing';
@@ -20,12 +21,14 @@ const describeIfDb = process.env.DATABASE_URL?.trim() ? describe : describe.skip
 
 describeIfDb('remote worker HTTP/database integration', () => {
   jest.setTimeout(45_000);
-  const token = 'integration-worker-token-at-least-32-characters';
+  const token = `${randomUUID()}${randomUUID()}`;
+  let workerLeaseTtlMs = 30_000;
   const config = {
     get: (key: string, fallback?: unknown) => {
       if (key === 'EXECUTOR_REMOTE_TEST_ENABLED') return true;
       if (key === 'EXECUTOR_WORKER_HTTP_TOKEN') return token;
       if (key === 'APP_ENV') return 'local-test';
+      if (key === 'EXECUTOR_WORKER_LEASE_TTL_MS') return workerLeaseTtlMs;
       return fallback;
     },
   } as ConfigService;
@@ -158,14 +161,107 @@ describeIfDb('remote worker HTTP/database integration', () => {
         }),
       ).not.toBeNull();
     } finally {
-      worker.kill();
+      worker.kill('SIGKILL');
       if (worker.exitCode === null) {
-        await Promise.race([
-          new Promise<void>((resolve) => worker.once('exit', () => resolve())),
-          new Promise<void>((resolve) => setTimeout(resolve, 3_000)),
-        ]);
+        await new Promise<void>((resolve, reject) => {
+          const timeout = setTimeout(() => reject(new Error('Worker process did not exit')), 3_000);
+          worker.once('exit', () => {
+            clearTimeout(timeout);
+            resolve();
+          });
+        });
       }
       if (stderr) process.stderr.write(stderr);
+      // A claim already authorized before process exit may remain in the server's long poll.
+      await new Promise((resolve) => setTimeout(resolve, 1_100));
+    }
+  });
+
+  it('fences a crashed worker after its lease expires and rejects a late completion', async () => {
+    workerLeaseTtlMs = 3_000;
+    const submitted = await manager.submitRun({
+      id: 'remote-crash-integration',
+      name: 'Remote crash integration',
+      steps: [{ id: 'test', name: 'Remote test', plugin: 'test-plugin', config: { type: 'unit' } }],
+    });
+    const runId = submitted.runId;
+    runIds.push(runId);
+    const address = app.getHttpServer().address() as { port: number };
+    const worker = spawn(process.execPath, ['--import', 'tsx', 'src/worker/main.ts'], {
+      cwd: process.cwd(),
+      env: {
+        ...process.env,
+        EXECUTOR_SERVER_URL: `http://127.0.0.1:${address.port}/api/v1/devops`,
+        EXECUTOR_WORKER_HTTP_TOKEN: token,
+        EXECUTOR_WORKER_ALLOWED_PLUGINS: 'test-plugin',
+        EXECUTOR_WORKER_ID: 'crashing-process-worker',
+        EXECUTOR_WORKER_CLAIM_WAIT_MS: '1000',
+      },
+      stdio: 'ignore',
+      windowsHide: true,
+    });
+    try {
+      let attempt = await prisma.executionAttempt.findFirst({ where: { job: { runId } } });
+      for (let i = 0; i < 100 && attempt?.leaseOwner !== 'crashing-process-worker'; i++) {
+        if (worker.exitCode !== null) break;
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        attempt = await prisma.executionAttempt.findFirst({ where: { job: { runId } } });
+      }
+      expect(attempt?.leaseOwner).toBe('crashing-process-worker');
+      expect(attempt?.leaseToken).toBeTruthy();
+      expect(worker.exitCode).toBeNull();
+      const leaseToken = attempt!.leaseToken!;
+      const sequence = attempt!.messageSequence + 1;
+      worker.kill('SIGKILL');
+      await new Promise<void>((resolve, reject) => {
+        const timeout = setTimeout(() => reject(new Error('Crashed worker did not exit')), 3_000);
+        worker.once('exit', () => {
+          clearTimeout(timeout);
+          resolve();
+        });
+      });
+
+      let run = await runs.findById(runId);
+      for (let i = 0; i < 160 && run?.status === 'running'; i++) {
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        run = await runs.findById(runId);
+      }
+      expect(run?.status).toBe('failed');
+      const settled = await prisma.executionAttempt.findUnique({
+        where: { attemptId: attempt!.attemptId },
+      });
+      expect(settled?.status).toBe('timed_out');
+
+      const late = await fetch(
+        `http://127.0.0.1:${address.port}/api/v1/devops/executor-workers/messages`,
+        {
+          method: 'POST',
+          headers: {
+            authorization: `Bearer ${token}`,
+            'content-type': 'application/json',
+            connection: 'close',
+          },
+          body: JSON.stringify({
+            protocolVersion: 1,
+            execution: { jobId: attempt!.jobId, attemptId: attempt!.attemptId, attempt: 0 },
+            leaseToken,
+            sequence,
+            occurredAt: new Date().toISOString(),
+            kind: 'complete',
+            result: { success: true, data: { forged: true } },
+          }),
+        },
+      );
+      expect(late.ok).toBe(true);
+      expect(((await late.json()) as { accepted: boolean }).accepted).toBe(false);
+      expect(
+        await prisma.executionAttemptMessage.findFirst({
+          where: { attemptId: attempt!.attemptId, kind: 'complete' },
+        }),
+      ).toBeNull();
+    } finally {
+      workerLeaseTtlMs = 30_000;
+      if (worker.exitCode === null) worker.kill('SIGKILL');
     }
   });
 });
