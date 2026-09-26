@@ -2,7 +2,6 @@ import { randomUUID } from 'node:crypto';
 import { Inject, Injectable, Logger, OnModuleDestroy } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import {
-  AttemptStatuses,
   type ExecutionCheckpoint,
   type ExecutionIdentity,
   type ExecutionWakeCondition,
@@ -42,11 +41,7 @@ export class ExecutionLeaseService implements OnModuleDestroy {
     if (!acquired) {
       throw new Error(`Execution attempt lease unavailable: ${execution.attemptId}`);
     }
-    const running = await this.repository.transitionAttempt(
-      execution.attemptId,
-      AttemptStatuses.LEASED,
-      AttemptStatuses.RUNNING,
-    );
+    const running = await this.repository.startLeasedAttempt(execution.attemptId, token);
     if (!running) {
       throw new Error(`Execution attempt could not enter running state: ${execution.attemptId}`);
     }

@@ -1,6 +1,5 @@
 import { jest } from '@jest/globals';
 import { ConfigService } from '@nestjs/config';
-import { AttemptStatuses } from '@monai-devops/core-engine';
 import type { ExecutionRepository } from './execution.repository.js';
 import { ExecutionLeaseService } from './execution-lease.service.js';
 
@@ -10,7 +9,7 @@ describe('ExecutionLeaseService', () => {
       acquireLease: jest.fn(
         async (_attemptId: string, _owner: string, _token: string, _expires: Date) => true,
       ),
-      transitionAttempt: jest.fn(async () => true),
+      startLeasedAttempt: jest.fn(async () => true),
       heartbeat: jest.fn(async () => true),
     };
     const config = {
@@ -32,10 +31,9 @@ describe('ExecutionLeaseService', () => {
       expect.any(String),
       expect.any(Date),
     );
-    expect(repository.transitionAttempt).toHaveBeenCalledWith(
+    expect(repository.startLeasedAttempt).toHaveBeenCalledWith(
       execution.attemptId,
-      AttemptStatuses.LEASED,
-      AttemptStatuses.RUNNING,
+      repository.acquireLease.mock.calls[0]![2],
     );
     expect(service.has(execution.attemptId)).toBe(true);
 
@@ -56,12 +54,26 @@ describe('ExecutionLeaseService', () => {
     );
   });
 
+  it('does not activate a lease when the token-fenced start loses the race', async () => {
+    const repository = {
+      acquireLease: jest.fn(async () => true),
+      startLeasedAttempt: jest.fn(async () => false),
+    };
+    const service = new ExecutionLeaseService(
+      repository as unknown as ExecutionRepository,
+      { get: jest.fn((_key: string, fallback: unknown) => fallback) } as unknown as ConfigService,
+    );
+    const execution = { jobId: 'run/step', attemptId: 'run/step/attempt-0', attempt: 0 };
+    await expect(service.start(execution)).rejects.toThrow('could not enter running state');
+    expect(service.has(execution.attemptId)).toBe(false);
+  });
+
   it('registers a wait under the active lease token and stops heartbeats', async () => {
     const repository = {
       acquireLease: jest.fn(
         async (_attemptId: string, _owner: string, _token: string, _expires: Date) => true,
       ),
-      transitionAttempt: jest.fn(async () => true),
+      startLeasedAttempt: jest.fn(async () => true),
       registerWait: jest.fn(async () => true),
     };
     const service = new ExecutionLeaseService(

@@ -58,6 +58,7 @@ export class PrismaExecutionRepository implements ExecutionRepository {
     expiresAt: Date,
   ): Promise<boolean> {
     const now = new Date();
+    if (expiresAt <= now) return false;
     const result = await this.prisma.executionAttempt.updateMany({
       where: {
         attemptId,
@@ -82,13 +83,30 @@ export class PrismaExecutionRepository implements ExecutionRepository {
   }
 
   async heartbeat(attemptId: string, token: string, expiresAt: Date): Promise<boolean> {
+    const now = new Date();
+    if (expiresAt <= now) return false;
     const result = await this.prisma.executionAttempt.updateMany({
       where: {
         attemptId,
         leaseToken: token,
         status: { in: [AttemptStatuses.LEASED, AttemptStatuses.RUNNING] },
+        leaseExpiresAt: { gt: now },
       },
-      data: { heartbeatAt: new Date(), leaseExpiresAt: expiresAt },
+      data: { heartbeatAt: now, leaseExpiresAt: expiresAt },
+    });
+    return result.count === 1;
+  }
+
+  async startLeasedAttempt(attemptId: string, token: string): Promise<boolean> {
+    const now = new Date();
+    const result = await this.prisma.executionAttempt.updateMany({
+      where: {
+        attemptId,
+        status: AttemptStatuses.LEASED,
+        leaseToken: token,
+        leaseExpiresAt: { gt: now },
+      },
+      data: { status: AttemptStatuses.RUNNING, startedAt: now },
     });
     return result.count === 1;
   }

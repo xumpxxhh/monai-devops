@@ -69,6 +69,8 @@ export interface ExecutionRepository {
     token: string,
     expiresAt: Date,
   ): Promise<boolean>;
+  /** Only the live lease holder may move a claimed Attempt into running. */
+  startLeasedAttempt(attemptId: string, token: string): Promise<boolean>;
   heartbeat(attemptId: string, token: string, expiresAt: Date): Promise<boolean>;
   transitionAttempt(
     attemptId: string,

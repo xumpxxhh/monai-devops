@@ -41,7 +41,7 @@
 
 ## 权威性、幂等与错误
 
-纯函数 `validateExecutorDispatch`、`assessExecutorMessage`、`assessExecutorCancel` 只是边界预检。真正接收消息时，server 必须在**同一个数据库事务/CAS**中再次校验 Attempt 身份、当前 token、租约和 deadline、递增序号、非终结状态，并写入事件或终结/等待状态；否则并发 worker 仍可穿透进程内检查。重复序号返回 `duplicate`，旧 token 返回 `stale_lease`，过期租约返回 `expired_lease`，跳号返回 `out_of_order`，终结后新消息返回 `already_terminal`。其它拒绝码包括 `unsupported_version`、`invalid_identity`、`deadline_exceeded`、`invalid_payload`、`payload_too_large`、`wait_not_allowed`。重复终结消息只应返回既有结算结果，不得二次投影。取消是 stop hint，允许对已到期但尚未终结的 token 下发；不能以取消成功代替终结 CAS。
+纯函数 `validateExecutorDispatch`、`assessExecutorMessage`、`assessExecutorCancel` 只是边界预检。真正接收消息时，server 必须在**同一个数据库事务/CAS**中再次校验 Attempt 身份、当前 token、租约和 deadline、递增序号、非终结状态，并写入事件或终结/等待状态；否则并发 worker 仍可穿透进程内检查。当前持久层仅完成 token/到期时间约束下的启动和续租；消息写入 CAS 尚未实现。重复序号返回 `duplicate`，旧 token 返回 `stale_lease`，过期租约返回 `expired_lease`，跳号返回 `out_of_order`，终结后新消息返回 `already_terminal`。其它拒绝码包括 `unsupported_version`、`invalid_identity`、`deadline_exceeded`、`invalid_payload`、`payload_too_large`、`wait_not_allowed`。重复终结消息只应返回既有结算结果，不得二次投影。取消是 stop hint，允许对已到期但尚未终结的 token 下发；不能以取消成功代替终结 CAS。
 
 平台侧 fencing 只能防止旧 Attempt 改写平台状态；插件对外部系统的副作用仍须以稳定的 `idempotencyKey` 自行去重。Run lease 与 Attempt lease 独立：server 接管 Run 不得复用已终结的 Attempt，worker 重领必须取得新 token。
 

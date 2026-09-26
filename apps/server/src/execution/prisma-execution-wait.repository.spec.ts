@@ -155,7 +155,7 @@ describeIfDb('PrismaExecutionRepository durable waits', () => {
     ]);
   });
 
-  it('does not time out an Attempt that renewed after a stale recovery scan', async () => {
+  it('does not time out an Attempt reclaimed after a stale recovery scan', async () => {
     const now = new Date();
     await prisma.executionAttempt.update({
       where: { attemptId: execution.attemptId },
@@ -166,7 +166,16 @@ describeIfDb('PrismaExecutionRepository durable waits', () => {
     );
     expect(
       await repository.heartbeat(execution.attemptId, 'token-1', new Date(now.getTime() + 60_000)),
+    ).toBe(false);
+    expect(
+      await repository.acquireLease(
+        execution.attemptId,
+        'owner-2',
+        'token-2',
+        new Date(now.getTime() + 60_000),
+      ),
     ).toBe(true);
+    expect(await repository.startLeasedAttempt(execution.attemptId, 'token-2')).toBe(true);
     expect(
       await repository.timeoutExpiredAttempt(execution.attemptId, now, {
         code: 'executor_lease_expired',
