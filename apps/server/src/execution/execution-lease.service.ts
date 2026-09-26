@@ -6,7 +6,11 @@ import {
   type ExecutionIdentity,
   type ExecutionWakeCondition,
 } from '@monai-devops/core-engine';
-import { EXECUTION_REPOSITORY, type ExecutionRepository } from './execution.repository.js';
+import {
+  EXECUTION_REPOSITORY,
+  type ExecutionRepository,
+  type WorkerTerminalResult,
+} from './execution.repository.js';
 
 interface ActiveLease {
   token: string;
@@ -90,6 +94,38 @@ export class ExecutionLeaseService implements OnModuleDestroy {
 
   has(attemptId: string): boolean {
     return this.active.has(attemptId);
+  }
+
+  /** Return only a durable terminal receipt; abort promptly if the owning DAG stops. */
+  async awaitWorkerTerminal(
+    execution: ExecutionIdentity,
+    signal: AbortSignal,
+    pollIntervalMs = 250,
+  ): Promise<WorkerTerminalResult> {
+    if (!Number.isInteger(pollIntervalMs) || pollIntervalMs < 1) {
+      throw new Error('Invalid worker result polling interval');
+    }
+    const aborted = () => {
+      if (signal.aborted) throw new Error(`Worker result wait aborted: ${execution.attemptId}`);
+    };
+    while (true) {
+      aborted();
+      const terminal = await this.repository.readWorkerTerminal(execution);
+      aborted();
+      if (terminal) return terminal;
+      await new Promise<void>((resolve, reject) => {
+        const onAbort = () => {
+          clearTimeout(timer);
+          reject(new Error(`Worker result wait aborted: ${execution.attemptId}`));
+        };
+        const timer = setTimeout(() => {
+          signal.removeEventListener('abort', onAbort);
+          resolve();
+        }, pollIntervalMs);
+        signal.addEventListener('abort', onAbort, { once: true });
+        if (signal.aborted) onAbort();
+      });
+    }
   }
 
   onModuleDestroy(): void {

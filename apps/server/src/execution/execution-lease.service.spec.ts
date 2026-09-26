@@ -1,5 +1,6 @@
 import { jest } from '@jest/globals';
 import { ConfigService } from '@nestjs/config';
+import { createWorkflowExecutor, type ExecutionIdentity } from '@monai-devops/core-engine';
 import type { ExecutionRepository } from './execution.repository.js';
 import { ExecutionLeaseService } from './execution-lease.service.js';
 
@@ -150,5 +151,73 @@ describe('ExecutionLeaseService', () => {
         { kind: 'signal', key: 'continue' },
       ),
     ).rejects.toThrow('cannot enter waiting');
+  });
+
+  it('waits for the durable worker receipt before returning it to the caller', async () => {
+    const terminal = { kind: 'complete' as const, result: { success: true, data: { id: 1 } } };
+    const repository = {
+      readWorkerTerminal: jest.fn(async () =>
+        repository.readWorkerTerminal.mock.calls.length === 1 ? undefined : terminal,
+      ),
+    };
+    const service = new ExecutionLeaseService(
+      repository as unknown as ExecutionRepository,
+      { get: jest.fn((_key: string, fallback: unknown) => fallback) } as unknown as ConfigService,
+    );
+    const execution = { jobId: 'run/step', attemptId: 'run/step/attempt-0', attempt: 0 };
+    await expect(
+      service.awaitWorkerTerminal(execution, new AbortController().signal, 1),
+    ).resolves.toEqual(terminal);
+    expect(repository.readWorkerTerminal).toHaveBeenCalledTimes(2);
+  });
+
+  it('stops waiting promptly when the owning execution is aborted', async () => {
+    const repository = { readWorkerTerminal: jest.fn(async () => undefined) };
+    const service = new ExecutionLeaseService(
+      repository as unknown as ExecutionRepository,
+      { get: jest.fn((_key: string, fallback: unknown) => fallback) } as unknown as ConfigService,
+    );
+    const controller = new AbortController();
+    const execution = { jobId: 'run/step', attemptId: 'run/step/attempt-0', attempt: 0 };
+    const waiting = service.awaitWorkerTerminal(execution, controller.signal, 10_000);
+    controller.abort();
+    await expect(waiting).rejects.toThrow('Worker result wait aborted');
+    expect(repository.readWorkerTerminal).toHaveBeenCalledTimes(1);
+  });
+
+  it('hands a persisted worker completion back to the running DAG adapter', async () => {
+    const repository = {
+      readWorkerTerminal: jest.fn(async () => ({
+        kind: 'complete' as const,
+        result: { success: true, data: { remote: true } },
+      })),
+    };
+    const service = new ExecutionLeaseService(
+      repository as unknown as ExecutionRepository,
+      { get: jest.fn((_key: string, fallback: unknown) => fallback) } as unknown as ConfigService,
+    );
+    const executor = createWorkflowExecutor({
+      pluginAdapter: {
+        kind: 'remote',
+        execute: async (_name, _config, context) => {
+          if (!context.execution) throw new Error('Execution identity missing');
+          const receipt = await service.awaitWorkerTerminal(
+            context.execution as ExecutionIdentity,
+            new AbortController().signal,
+          );
+          return receipt.result;
+        },
+      },
+    });
+    const result = await executor.executeWorkflow('remote-receipt-run', {
+      id: 'remote-receipt-workflow',
+      name: 'Remote receipt workflow',
+      steps: [{ id: 'step', name: 'Step', plugin: 'remote-plugin', config: {} }],
+    });
+    expect(result.success).toBe(true);
+    expect(result.results[0]?.pluginResult?.data).toEqual({ remote: true });
+    expect(repository.readWorkerTerminal).toHaveBeenCalledWith(
+      expect.objectContaining({ jobId: 'remote-receipt-run/step', attempt: 0 }),
+    );
   });
 });
