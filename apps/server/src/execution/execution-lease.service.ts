@@ -69,8 +69,13 @@ export class ExecutionLeaseService implements OnModuleDestroy {
     condition: ExecutionWakeCondition,
   ): Promise<void> {
     const active = this.active.get(execution.attemptId);
+    if (!active) {
+      if (await this.repository.confirmRegisteredWorkerWait(execution, checkpoint, condition)) {
+        return;
+      }
+      throw new Error(`Execution attempt cannot enter waiting: ${execution.attemptId}`);
+    }
     if (
-      !active ||
       !(await this.repository.registerWait({
         execution,
         leaseToken: active.token,

@@ -87,6 +87,12 @@ export interface ExecutionRepository {
   /** Under an active Run lease, project settled worker results missed before a server crash. */
   projectSettledWorkerAttempts(runId: string, runLeaseToken: string): Promise<number>;
   registerWait(input: RegisterExecutionWaitInput): Promise<boolean>;
+  /** Read-only confirmation that the same worker wait was already atomically persisted. */
+  confirmRegisteredWorkerWait(
+    execution: ExecutionIdentity,
+    checkpoint: ExecutionCheckpoint,
+    condition: ExecutionWakeCondition,
+  ): Promise<boolean>;
   signalWait(attemptId: string, key: string, payload: unknown, now: Date): Promise<boolean>;
   wakeDueTimers(now: Date): Promise<number>;
   expireWaits(now: Date): Promise<number>;

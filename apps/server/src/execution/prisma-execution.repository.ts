@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { isDeepStrictEqual } from 'node:util';
 import { Prisma } from '@prisma/client';
 import {
   AttemptStatuses,
@@ -598,6 +599,55 @@ export class PrismaExecutionRepository implements ExecutionRepository {
       });
       return true;
     });
+  }
+
+  async confirmRegisteredWorkerWait(
+    execution: ExecutionIdentity,
+    checkpoint: ExecutionCheckpoint,
+    condition: RegisterExecutionWaitInput['condition'],
+  ): Promise<boolean> {
+    const attempt = await this.prisma.executionAttempt.findUnique({
+      where: { attemptId: execution.attemptId },
+      include: {
+        job: true,
+        workerMessages: { orderBy: { sequence: 'desc' }, take: 1 },
+      },
+    });
+    if (
+      !attempt ||
+      attempt.jobId !== execution.jobId ||
+      attempt.attempt !== execution.attempt ||
+      attempt.status !== AttemptStatuses.WAITING ||
+      attempt.job.status !== AttemptStatuses.WAITING ||
+      attempt.workerMessages[0]?.kind !== 'wait' ||
+      attempt.workerMessages[0].sequence !== attempt.messageSequence
+    ) {
+      return false;
+    }
+    const saved = attempt.job.checkpoint;
+    if (
+      !saved ||
+      typeof saved !== 'object' ||
+      Array.isArray(saved) ||
+      (saved as Record<string, unknown>).jobId !== execution.jobId ||
+      (saved as Record<string, unknown>).sourceAttemptId !== execution.attemptId ||
+      (saved as Record<string, unknown>).version !== checkpoint.version ||
+      !isDeepStrictEqual((saved as Record<string, unknown>).payload, checkpoint.payload)
+    ) {
+      return false;
+    }
+    if (attempt.waitKind !== condition.kind) return false;
+    if (condition.kind === 'signal' && attempt.wakeKey !== condition.key) return false;
+    if (
+      condition.kind === 'timer' &&
+      attempt.wakeAt?.getTime() !== new Date(condition.wakeAt).getTime()
+    ) {
+      return false;
+    }
+    return (
+      attempt.waitTimeoutAt?.getTime() ===
+      (condition.timeoutAt ? new Date(condition.timeoutAt).getTime() : undefined)
+    );
   }
 
   async signalWait(attemptId: string, key: string, payload: unknown, now: Date): Promise<boolean> {

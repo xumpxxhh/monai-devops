@@ -264,6 +264,29 @@ describeIfDb('PrismaExecutionRepository worker progress inbox', () => {
       accepted: false,
       code: 'duplicate',
     });
+    const checkpoint = {
+      jobId: request.execution.jobId,
+      sourceAttemptId: request.execution.attemptId,
+      version: 1,
+      payload: { cursor: 3 },
+      createdAt: new Date(Date.now() + 1000).toISOString(),
+    };
+    expect(
+      await repository.confirmRegisteredWorkerWait(request.execution, checkpoint, wait.condition),
+    ).toBe(true);
+    expect(
+      await repository.confirmRegisteredWorkerWait(
+        request.execution,
+        { ...checkpoint, payload: { cursor: 4 } },
+        wait.condition,
+      ),
+    ).toBe(false);
+    expect(
+      await repository.confirmRegisteredWorkerWait(request.execution, checkpoint, {
+        kind: 'signal',
+        key: 'different',
+      }),
+    ).toBe(false);
     expect(
       await repository.signalWait(
         request.execution.attemptId,

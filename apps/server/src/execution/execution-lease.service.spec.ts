@@ -102,4 +102,53 @@ describe('ExecutionLeaseService', () => {
     });
     expect(service.has(execution.attemptId)).toBe(false);
   });
+
+  it('confirms an already-persisted worker wait without acquiring a local lease', async () => {
+    const repository = {
+      confirmRegisteredWorkerWait: jest.fn(async () => true),
+      registerWait: jest.fn(async () => false),
+    };
+    const service = new ExecutionLeaseService(
+      repository as unknown as ExecutionRepository,
+      { get: jest.fn((_key: string, fallback: unknown) => fallback) } as unknown as ConfigService,
+    );
+    const execution = { jobId: 'run/step', attemptId: 'run/step/attempt-0', attempt: 0 };
+    const checkpoint = {
+      jobId: execution.jobId,
+      sourceAttemptId: execution.attemptId,
+      version: 1,
+      payload: { cursor: 1 },
+      createdAt: new Date().toISOString(),
+    };
+    const condition = { kind: 'signal' as const, key: 'continue' };
+    await service.registerWait(execution, checkpoint, condition);
+    expect(repository.confirmRegisteredWorkerWait).toHaveBeenCalledWith(
+      execution,
+      checkpoint,
+      condition,
+    );
+    expect(repository.registerWait).not.toHaveBeenCalled();
+  });
+
+  it('rejects a wait without a local lease or matching persisted worker receipt', async () => {
+    const repository = { confirmRegisteredWorkerWait: jest.fn(async () => false) };
+    const service = new ExecutionLeaseService(
+      repository as unknown as ExecutionRepository,
+      { get: jest.fn((_key: string, fallback: unknown) => fallback) } as unknown as ConfigService,
+    );
+    const execution = { jobId: 'run/step', attemptId: 'run/step/attempt-0', attempt: 0 };
+    await expect(
+      service.registerWait(
+        execution,
+        {
+          jobId: execution.jobId,
+          sourceAttemptId: execution.attemptId,
+          version: 1,
+          payload: {},
+          createdAt: new Date().toISOString(),
+        },
+        { kind: 'signal', key: 'continue' },
+      ),
+    ).rejects.toThrow('cannot enter waiting');
+  });
 });
