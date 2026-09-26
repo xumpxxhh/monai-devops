@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { Prisma } from '@prisma/client';
 import {
   AttemptStatuses,
   EXECUTOR_PROTOCOL_VERSION,
@@ -40,7 +41,7 @@ describeIfDb('PrismaExecutionRepository worker progress inbox', () => {
       plugin: { name: 'test-plugin', version: '1.0.0' },
       idempotencyKey: execution.jobId,
       policyVersion: 'test-policy',
-      requiredCapabilities: [],
+      requiredCapabilities: ['execution.wait'],
       input: { config: {}, context: {} },
     };
     await prisma.run.create({
@@ -49,6 +50,9 @@ describeIfDb('PrismaExecutionRepository worker progress inbox', () => {
         workflowId: request.workflowId,
         workflowName: 'Worker inbox test',
         status: 'running',
+        leaseOwner: 'server-1',
+        leaseToken: 'run-token',
+        leaseExpiresAt: new Date(Date.now() + 60_000),
         countsTotal: 1,
         workflowSnapshot: {
           id: request.workflowId,
@@ -65,6 +69,9 @@ describeIfDb('PrismaExecutionRepository worker progress inbox', () => {
       retryPolicy: { maxAttempts: 1, backoffMs: 0 },
     });
     await repository.ensureAttempt(execution);
+    expect(await repository.registerWorkerDispatch(request, 'wrong-run-token')).toBe(false);
+    expect(await repository.registerWorkerDispatch(request, 'run-token')).toBe(true);
+    expect(await repository.registerWorkerDispatch(request, 'run-token')).toBe(false);
     expect(
       await repository.acquireLease(
         execution.attemptId,
@@ -122,6 +129,42 @@ describeIfDb('PrismaExecutionRepository worker progress inbox', () => {
       accepted: false,
       code: 'duplicate',
     });
+  });
+
+  it('rejects worker progress whose dispatch changes server-approved capability or deadline', async () => {
+    const heartbeat = progress('heartbeat', 1);
+    expect(
+      await repository.acceptWorkerMessage(
+        { ...request, requiredCapabilities: [] },
+        heartbeat,
+        30_000,
+      ),
+    ).toEqual({ accepted: false, code: 'invalid_payload' });
+    expect(
+      await repository.acceptWorkerMessage(
+        { ...request, deadlineAt: new Date(Date.now() + 60_000).toISOString() },
+        heartbeat,
+        30_000,
+      ),
+    ).toEqual({ accepted: false, code: 'invalid_payload' });
+    expect(
+      await prisma.executionAttemptMessage.count({
+        where: { attemptId: request.execution.attemptId },
+      }),
+    ).toBe(0);
+  });
+
+  it('rejects progress if the authoritative dispatch is absent', async () => {
+    await prisma.executionAttempt.update({
+      where: { attemptId: request.execution.attemptId },
+      data: { dispatch: Prisma.DbNull },
+    });
+    expect(await repository.acceptWorkerMessage(request, progress('heartbeat', 1), 30_000)).toEqual(
+      {
+        accepted: false,
+        code: 'invalid_payload',
+      },
+    );
   });
 
   it('rejects gaps, wrong tokens and expired leases without writing a message', async () => {

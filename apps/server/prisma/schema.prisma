@@ -93,6 +93,7 @@ model ExecutionAttempt {
   leaseExpiresAt DateTime?    @map("lease_expires_at")
   heartbeatAt    DateTime?    @map("heartbeat_at")
   messageSequence Int          @default(0) @map("message_sequence")
+  dispatch        Json?
   reason         Json?
   result         Json?
   runProjectedAt DateTime?    @map("run_projected_at")

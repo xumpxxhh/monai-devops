@@ -62,6 +62,38 @@ export class PrismaExecutionRepository implements ExecutionRepository {
     });
   }
 
+  async registerWorkerDispatch(
+    request: ExecutorDispatchV1,
+    runLeaseToken: string,
+  ): Promise<boolean> {
+    validateExecutorDispatch(request);
+    const dispatch = JSON.stringify(request);
+    const changed = await this.prisma.$executeRaw`
+      UPDATE "execution_attempts" AS attempt
+      SET "dispatch" = ${dispatch}::jsonb
+      WHERE attempt."attempt_id" = ${request.execution.attemptId}
+        AND attempt."job_id" = ${request.execution.jobId}
+        AND attempt."attempt" = ${request.execution.attempt}
+        AND attempt."status" = ${AttemptStatuses.QUEUED}
+        AND attempt."dispatch" IS NULL
+        AND EXISTS (
+          SELECT 1 FROM "execution_jobs" AS job
+          JOIN "runs" AS run ON run."run_id" = job."run_id"
+          WHERE job."job_id" = attempt."job_id"
+            AND job."run_id" = ${request.runId}
+            AND job."step_id" = ${request.stepId}
+            AND job."idempotency_key" = ${request.idempotencyKey}
+            AND job."status" = ${AttemptStatuses.QUEUED}
+            AND run."workflow_id" = ${request.workflowId}
+            AND run."status" = 'running'
+            AND run."is_active" = TRUE
+            AND run."lease_token" = ${runLeaseToken}
+            AND run."lease_expires_at" > clock_timestamp()
+        )
+    `;
+    return changed === 1;
+  }
+
   async acquireLease(
     attemptId: string,
     ownerId: string,
@@ -146,6 +178,12 @@ export class PrismaExecutionRepository implements ExecutionRepository {
         attempt.job.stepId !== request.stepId
       ) {
         return { accepted: false, code: 'invalid_identity' };
+      }
+      if (
+        !attempt.dispatch ||
+        !isDeepStrictEqual(attempt.dispatch, JSON.parse(JSON.stringify(request)))
+      ) {
+        return { accepted: false, code: 'invalid_payload' };
       }
       const fence = {
         execution: request.execution,

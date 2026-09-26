@@ -4,6 +4,7 @@ import type {
   ExecutionIdentity,
   RetryPolicy,
   ExecutionWakeCondition,
+  ExecutorDispatchV1,
 } from '@monai-devops/core-engine';
 import type { PluginResult } from '@monai-devops/plugin-sdk';
 
@@ -91,6 +92,8 @@ export interface ExecutionRepository {
   listJobsForRun(runId: string): Promise<RecoveryJob[]>;
   /** Under an active Run lease, project settled worker results missed before a server crash. */
   projectSettledWorkerAttempts(runId: string, runLeaseToken: string): Promise<number>;
+  /** Bind the server-approved immutable dispatch to a queued Attempt under Run ownership. */
+  registerWorkerDispatch(request: ExecutorDispatchV1, runLeaseToken: string): Promise<boolean>;
   /** Only returns a terminal inbox receipt consistent with the authoritative Attempt/Job. */
   readWorkerTerminal(execution: ExecutionIdentity): Promise<WorkerTerminalResult | undefined>;
   /** Under the live Run owner, race an expired worker lease against heartbeat/terminal CAS. */
