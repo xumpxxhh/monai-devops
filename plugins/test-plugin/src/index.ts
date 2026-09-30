@@ -1,8 +1,17 @@
-import { createPlugin, getLogger, sleep, throwIfAborted, z } from '@monai-devops/plugin-sdk';
+import {
+  createPlugin,
+  getContext,
+  getLogger,
+  PluginContextKeys,
+  PluginFailureCodes,
+  sleep,
+  throwIfAborted,
+  z,
+} from '@monai-devops/plugin-sdk';
 import type { PluginContext, PluginResult } from '@monai-devops/plugin-sdk';
 
 const configSchema = z.object({
-  type: z.enum(['unit', 'integration', 'e2e']),
+  type: z.enum(['unit', 'integration', 'e2e', 'wait', 'failure']),
 });
 
 /**
@@ -14,6 +23,28 @@ async function executeTestPlugin(
 ): Promise<PluginResult> {
   const { type } = config;
   const log = getLogger(context);
+
+  if (type === 'failure') {
+    log.error('测试故障已触发');
+    return {
+      success: false,
+      code: PluginFailureCodes.PLUGIN_EXECUTION_ERROR,
+      message: '测试插件故障',
+    };
+  }
+
+  if (type === 'wait') {
+    const checkpoint = getContext(context, PluginContextKeys.checkpoint);
+    if (!checkpoint) {
+      log.info('测试等待已登记');
+      return {
+        success: true,
+        wait: { checkpoint: { stage: 'approval' }, condition: { kind: 'signal', key: 'approved' } },
+      };
+    }
+    log.info('测试等待已唤醒');
+    return { success: true, data: { type, message: '等待已唤醒' } };
+  }
 
   log.info('开始执行测试', { type });
   await sleep(3000, context);
@@ -57,7 +88,7 @@ export const testPlugin = createPlugin({
   description: '这是一个测试插件',
   configSchema,
   resultSchema: z.object({
-    type: z.enum(['unit', 'integration', 'e2e']),
+    type: z.enum(['unit', 'integration', 'e2e', 'wait', 'failure']),
     message: z.string(),
   }),
   execute: executeTestPlugin,

@@ -163,12 +163,13 @@ export function buildRunRecoverySnapshot(
         checkpoint.sourceAttemptId !== identity.attemptId ||
         !Number.isInteger(checkpoint.version) ||
         (checkpoint.version as number) < 1 ||
-        latest.attempt >= resolveRetryPolicy(step.retryPolicy).maxAttempts
+        latest.attempt + (latest.remoteDispatch ? 1 : 0) >=
+          resolveRetryPolicy(step.retryPolicy).maxAttempts
       ) {
         reject(`步骤 ${job.stepId} 的 waiting checkpoint 无效`);
       }
       readyWaitsByStep[job.stepId] = {
-        attempt: latest.attempt,
+        attempt: latest.attempt + (latest.remoteDispatch ? 1 : 0),
         checkpoint: job.checkpoint!,
         ...(latest.wakePayload !== undefined ? { wakePayload: latest.wakePayload } : {}),
       };

@@ -1,6 +1,6 @@
 # Core-3：Executor 与能力边界（实施规划草案）
 
-> 状态：逐步实施中；3.2 已有默认关闭、仅非生产环境的 `test-plugin` 远程试验选路，尚未达到完整远程闭环验收。
+> 状态：3.2 非生产环境 `test-plugin` 最小远程闭环已完成；成功、失败、等待唤醒、日志、硬取消、worker/服务端进程崩溃与重启、租约接管及消息重试均有 PostgreSQL 集成验证。生产开放仍取决于 3.3/3.4 的能力与数据治理。
 >
 > 基线：[共享内核前置提案](./shared-core-engine-prerequisites-draft.md)；依赖：[Core-2 可靠调度与恢复](./core-2-reliable-execution-foundation.md)。
 
@@ -42,11 +42,13 @@ PostgreSQL：Job/Attempt、lease、checkpoint、事件与控制命令的权威�
 | 3.4 数据与治理   | deadline/取消宽限期、受限事件与日志、Secret 引用解析、较大结果/日志的对象引用接口                         | 无明文 Secret 落库/出现在事件；大对象超阈值不进入 Run JSON；引用可鉴权读取并有保留/清理策略；旧小结果兼容                 |
 | 3.5 退出验证     | 故障注入、兼容性、并发和长任务测试；分阶段开启与回滚手册                                                  | 本地路径回归无差异；远程路径达到下述退出标准并经人工集成验证                                                              |
 
-进度：3.0 的类型、拒绝码和契约测试已实现；传输与信任边界决策未定，故尚不视为完整验收。3.1 已将默认引擎的插件调用接入可信进程内 local adapter，并保留直接构造执行器的 `pluginExecutor` 兼容入口。进程内 logger、取消信号等仍以原对象传递，不经过远程 JSON 协议；现有步骤结算、等待、事件及资源钩子不变。3.2 已完成十一个内部子步：Attempt 领取/启动/续租 fencing；心跳/事件 inbox 与序号 CAS；`complete`/`wait` 的 Attempt/Job 原子结算；server 恢复取得 Run 独占 lease 后，对已结算但尚未投影的 worker 完成结果幂等补写 `step:finished` 和 Run 计数，再交给既有 DAG 快照恢复；DAG 的等待钩子可精确确认已持久化的远程 wait（身份、版本、payload、条件、当前 inbox 序号），不重复保存 checkpoint；持久层可按 Attempt 身份读取与 Job/最新 inbox 收据一致的完成或等待结果；运行中等待器可轮询该收据并在 DAG 取消时退出，已有注入式 adapter 测试验证完成结果回到 DAG；活跃 Run 持有者现可用数据库时钟和 CAS 将过期 worker Attempt/Job 原子结算为 timed_out，等待器只在赢得结算后报错，注入式 DAG 测试覆盖按策略重试；server 可在 Run lease 下将批准的 dispatch 不可变地绑定到 queued Attempt，回传消息必须与其一致，不能由 worker 修改 deadline/capability；默认关闭的 bearer HTTP 入口已可受权长轮询领取已绑定任务、以持久化 dispatch 接收消息，竞争领取只成功一次；独立 worker 进程可通过该入口领取任务、续租并回传完成结果，当前仅加载 test/print 示例插件，拒绝 Secret 和 capability，不声称沙箱隔离。数据库时钟约束租约和 deadline，已测试重复、跳号、旧 token、过期、并发与崩溃窗口。Run waiting 状态仍应由 DAG 确认挂起后更新，不能仅凭 worker 消息直接切换（可能有并行步骤）。现已装配非生产环境、默认关闭且需要有效 worker token 的顶层 `test-plugin` 远程试验选路：server 登记白名单裁剪后的 dispatch，worker 完成结果经持久化收据返回 DAG；其它插件及生产环境保持本地执行。worker 日志事件、等待、主动取消、凭证轮换及其余两进程故障集成验证尚缺，因此不能视作远程闭环。
+进度：3.0 已实现类型、拒绝码和契约测试，生产传输/信任边界留待 3.3/3.4；3.1 已将默认引擎插件调用接入可信进程内 local adapter，并保留兼容入口。3.2 已完成默认关闭的非生产 `test-plugin` 最小远程闭环：server 在 Run lease 下登记不可变、白名单裁剪的 dispatch；独立 worker 经 bearer HTTP 领取、续租、顺序回传受限日志、完成或等待；数据库以 CAS 结算 Attempt/Job，DAG 消费持久化收据。远程 wait 的 checkpoint/条件原子保存，signal 唤醒后创建下一 Attempt。worker 失联由持有 Run 的 server 超时结算；server 失联由新 owner 接管，已落库结果与日志幂等补投影。硬取消会 fence Attempt/Job 和迟到消息，但不回滚外部副作用。其它插件及生产环境保持本地执行；这里不声称 worker 具有沙箱隔离或生产 Secret 能力。
 
 每步合并时同时提交代码、迁移/配置示例、契约及集成测试、本文进度记录；不先建空协议或大规模抽象而长期没有可运行闭环。
 
-最新验证：test DB 集成测试经真实 HTTP 入口领取 `test-plugin` Attempt、回传完成消息，确认 PostgreSQL 中 Attempt 成功且结果返回 DAG/Run；独立启动实际 worker 入口的第二进程也已通过成功路径。新增故障注入：worker 领取后被强制终止，活跃 Run 持有者在租约到期后结算 Attempt 为 `timed_out`，Run 失败，旧 token 的迟到完成消息被拒绝且不产生完成收据。跨运行域普通 JSON 对象的协议预检误拒已修复。测试库已验证旧 Run lease 过期、新 manager 接管时，已持久化但未投影的 worker 完成结果仅补写一次，且插件不重跑。完成消息已落库但 HTTP 响应丢失时，worker 以同序号重发并收到 `duplicate`，Run/收据均只结算一次。真实 server 进程重启、持续断线后的重连、取消和远程等待等故障/控制路径仍未覆盖；3.2 尚未完整验收。
+验证记录：test DB 已通过真实 HTTP 领取与回传、独立 worker 进程成功执行及崩溃超时、旧 token 拒绝、Run lease 接管后的完成结果幂等补投影、HTTP 完成响应丢失后的同序号去重。新增同一 HTTP/数据库链路的失败、日志、远程 wait/signal/新 Attempt、硬取消与迟到完成拒绝、持续断线后的原序号重连测试。故障注入还覆盖独立 HTTP 传输进程重启，以及持有 Run 的服务进程与 HTTP 入口同时重启后由新进程接管、同一 Attempt 完成并只投影一次。后者暴露的暂态恢复固定延后 30 秒问题已修复为按恢复轮询间隔重试。
+
+凭证轮换、通用 capability/Secret 授权与大对象治理分别留在 3.3/3.4，不能据此宣称生产可用。3.2 的“完成”仅指默认关闭、受限 `test-plugin` 的最小远程闭环；不代表已开放通用插件或生产环境。
 
 ## 关键设计约束
 

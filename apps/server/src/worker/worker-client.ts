@@ -177,6 +177,27 @@ export class WorkerClient {
       Math.max(500, Math.floor(leaseTtlMs / 3)),
     );
     interval.unref?.();
+    const mayWait =
+      dispatch.plugin.name === 'test-plugin' &&
+      dispatch.requiredCapabilities.length === 1 &&
+      dispatch.requiredCapabilities[0] === 'execution.wait';
+    let logChain: Promise<void> = Promise.resolve();
+    const log = (level: string, message: string, stream?: 'stdout' | 'stderr') => {
+      // Never forward arbitrary logger data or unbounded text from an untrusted plugin.
+      const payload = {
+        level,
+        message: message.slice(0, 4_096),
+        timestamp: Date.now(),
+        ...(stream ? { stream } : {}),
+      };
+      logChain = logChain.then(() =>
+        send('event', {
+          eventType: 'plugin:log',
+          payloadVersion: 1,
+          payload,
+        }),
+      );
+    };
     try {
       const plugin = this.plugins.get(dispatch.plugin.name);
       let result: PluginResult;
@@ -184,7 +205,7 @@ export class WorkerClient {
         !plugin ||
         plugin.version !== dispatch.plugin.version ||
         Object.keys(dispatch.secretRefs ?? {}).length > 0 ||
-        dispatch.requiredCapabilities.length > 0
+        (dispatch.requiredCapabilities.length > 0 && !mayWait)
       ) {
         result = {
           success: false,
@@ -196,6 +217,14 @@ export class WorkerClient {
           result = await plugin.execute(dispatch.input.config, {
             ...dispatch.input.context,
             [PluginContextKeys.signal]: controller.signal,
+            [PluginContextKeys.logger]: {
+              debug: (message: string) => log('debug', message),
+              info: (message: string) => log('info', message),
+              warn: (message: string) => log('warn', message),
+              error: (message: string) => log('error', message),
+              append: (message: string, stream?: 'stdout' | 'stderr') =>
+                log('info', message, stream),
+            },
           });
         } catch (error) {
           result = {
@@ -206,9 +235,16 @@ export class WorkerClient {
         }
       }
       clearInterval(interval);
+      await logChain;
       await messageChain;
       if (result.wait) {
-        // This first worker has no execution.wait capability; never pretend the wait was persisted.
+        if (mayWait) {
+          await send('wait', {
+            checkpoint: result.wait.checkpoint,
+            condition: result.wait.condition,
+          });
+          return;
+        }
         result = {
           success: false,
           code: PluginFailureCodes.PLUGIN_CONFIG_INVALID,

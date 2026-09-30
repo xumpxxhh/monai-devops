@@ -8,7 +8,7 @@ import { EXECUTION_REPOSITORY, type ExecutionRepository } from './execution.repo
 export class WorkerTransportController {
   constructor(
     @Inject(EXECUTION_REPOSITORY) private readonly repository: ExecutionRepository,
-    private readonly config: ConfigService,
+    @Inject(ConfigService) private readonly config: ConfigService,
   ) {}
 
   private authorize(header: string | undefined): void {

@@ -26,6 +26,7 @@ import type {
   RecoverableAttempt,
   RecoveryJob,
   WorkerTerminalResult,
+  WorkerLogReceipt,
 } from './execution.repository.js';
 import type {
   ExecutionCheckpoint,
@@ -514,6 +515,39 @@ export class PrismaExecutionRepository implements ExecutionRepository {
     };
   }
 
+  async listWorkerLogsForRun(runId: string): Promise<WorkerLogReceipt[]> {
+    const rows = await this.prisma.executionAttemptMessage.findMany({
+      where: { kind: 'event', eventType: 'plugin:log', attempt: { job: { runId } } },
+      include: { attempt: { include: { job: { select: { stepId: true } } } } },
+      orderBy: [{ receivedAt: 'asc' }, { sequence: 'asc' }],
+    });
+    return rows.flatMap((row) => {
+      const payload = row.payload;
+      if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return [];
+      const log = payload as Record<string, unknown>;
+      if (
+        !['debug', 'info', 'warn', 'error'].includes(String(log.level)) ||
+        typeof log.message !== 'string' ||
+        typeof log.timestamp !== 'number' ||
+        !Number.isFinite(log.timestamp)
+      )
+        return [];
+      return [
+        {
+          attemptId: row.attemptId,
+          stepId: row.attempt.job.stepId,
+          sequence: row.sequence,
+          log: {
+            level: log.level as WorkerLogReceipt['log']['level'],
+            message: log.message.slice(0, 4_096),
+            timestamp: log.timestamp,
+            ...(log.stream === 'stdout' || log.stream === 'stderr' ? { stream: log.stream } : {}),
+          },
+        },
+      ];
+    });
+  }
+
   async timeoutExpiredWorkerAttempt(
     execution: ExecutionIdentity,
     runId: string,
@@ -562,6 +596,51 @@ export class PrismaExecutionRepository implements ExecutionRepository {
         data: { status: AttemptStatuses.TIMED_OUT },
       });
       if (job.count !== 1) throw new Error(`Worker timeout Job mismatch: ${execution.jobId}`);
+      return true;
+    });
+  }
+
+  async cancelWorkerAttempt(
+    execution: ExecutionIdentity,
+    runId: string,
+    runLeaseToken: string,
+  ): Promise<boolean> {
+    return this.prisma.$transaction(async (tx) => {
+      const changed = await tx.$executeRaw`
+        UPDATE "execution_attempts" AS attempt
+        SET "status" = ${AttemptStatuses.CANCELLED},
+            "finished_at" = clock_timestamp(),
+            "lease_owner" = NULL,
+            "lease_token" = NULL,
+            "lease_expires_at" = NULL,
+            "heartbeat_at" = NULL
+        WHERE attempt."attempt_id" = ${execution.attemptId}
+          AND attempt."job_id" = ${execution.jobId}
+          AND attempt."attempt" = ${execution.attempt}
+          AND attempt."status" IN (${AttemptStatuses.QUEUED}, ${AttemptStatuses.LEASED}, ${AttemptStatuses.RUNNING})
+          AND EXISTS (
+            SELECT 1 FROM "execution_jobs" AS job
+            JOIN "runs" AS run ON run."run_id" = job."run_id"
+            WHERE job."job_id" = attempt."job_id"
+              AND job."run_id" = ${runId}
+              AND job."status" IN (${AttemptStatuses.QUEUED}, ${AttemptStatuses.LEASED}, ${AttemptStatuses.RUNNING})
+              AND run."is_active" = TRUE
+              AND run."lease_token" = ${runLeaseToken}
+              AND run."lease_expires_at" > clock_timestamp()
+          )
+      `;
+      if (changed !== 1) return false;
+      const job = await tx.executionJob.updateMany({
+        where: {
+          jobId: execution.jobId,
+          runId,
+          status: {
+            in: [AttemptStatuses.QUEUED, AttemptStatuses.LEASED, AttemptStatuses.RUNNING],
+          },
+        },
+        data: { status: AttemptStatuses.CANCELLED },
+      });
+      if (job.count !== 1) throw new Error(`Worker cancellation Job mismatch: ${execution.jobId}`);
       return true;
     });
   }
@@ -678,6 +757,7 @@ export class PrismaExecutionRepository implements ExecutionRepository {
         reason: attempt.reason ?? undefined,
         wakeReadyAt: attempt.wakeReadyAt ?? undefined,
         wakePayload: attempt.wakePayload ?? undefined,
+        remoteDispatch: attempt.dispatch !== null,
       })),
     }));
   }

@@ -8,6 +8,7 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { ExecutionRecoveryService } from '../execution/execution-recovery.service.js';
 import { RunManagerService } from './run-manager.service.js';
+import { RunRecoveryNotReadyError } from './run-recovery-snapshot.js';
 import { RUN_REPOSITORY, type RunRepository } from './runs.repository.js';
 
 /** 周期扫描失联 Run；只分发已通过独占认领和快照校验的执行。 */
@@ -70,7 +71,11 @@ export class RunRecoveryService implements OnApplicationBootstrap, OnModuleDestr
           }
           this.blockedReasons.set(runId, {
             reason: message,
-            retryAt: Date.now() + Math.max(30_000, this.pollMs * 6),
+            retryAt:
+              Date.now() +
+              (error instanceof RunRecoveryNotReadyError && !error.permanent
+                ? this.pollMs
+                : Math.max(30_000, this.pollMs * 6)),
           });
         }
       }

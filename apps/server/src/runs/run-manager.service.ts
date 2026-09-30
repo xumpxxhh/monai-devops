@@ -11,6 +11,7 @@ import {
 import { ConfigService } from '@nestjs/config';
 import {
   getAbortSignal,
+  PluginContextKeys,
   type PluginConfig,
   type PluginContext,
   type PluginResult,
@@ -30,6 +31,7 @@ import {
   WorkflowValidationError,
   type WorkflowDefinition,
   type ExecutionIdentity,
+  type ExecutorJsonObject,
   type ExecutionCheckpoint,
   type ExecutionWakeCondition,
   type PluginStep,
@@ -42,6 +44,7 @@ import {
   serializeWorkflowEvent,
   serializeWorkflowRunResult,
   runStatusFromWorkflowResult,
+  type SerializedWorkflowLifecycleEvent,
 } from '../common/serialization/serialize-workflow-event.js';
 import {
   normalizeWorkflowIds,
@@ -298,6 +301,25 @@ export class RunManagerService implements OnModuleInit, OnModuleDestroy {
     const plugin = this.engineService.getPlugin(name);
     if (!plugin) throw new Error(`Remote test plugin unavailable: ${name}`);
     if (typeof config.type !== 'string') throw new Error('Remote test plugin type is invalid');
+    const run = await this.runRepository.findById(runId);
+    const step = run?.workflowSnapshot.steps.find((candidate) => candidate.id === context.stepId);
+    if (!step || !isPluginStep(step) || step.plugin !== name) {
+      throw new Error(`Remote test step snapshot unavailable: ${context.stepId}`);
+    }
+    const mayWait = step.mayWait === true;
+    if (mayWait && resolveRetryPolicy(step.retryPolicy).maxAttempts < 2) {
+      throw new Error('Remote wait requires retryPolicy.maxAttempts >= 2');
+    }
+    const remoteContext = JSON.parse(
+      JSON.stringify({
+        ...(context[PluginContextKeys.checkpoint] !== undefined
+          ? { [PluginContextKeys.checkpoint]: context[PluginContextKeys.checkpoint] }
+          : {}),
+        ...(context[PluginContextKeys.wakePayload] !== undefined
+          ? { [PluginContextKeys.wakePayload]: context[PluginContextKeys.wakePayload] }
+          : {}),
+      }),
+    ) as ExecutorJsonObject;
     const dispatch = {
       protocolVersion: EXECUTOR_PROTOCOL_VERSION,
       runId,
@@ -307,19 +329,74 @@ export class RunManagerService implements OnModuleInit, OnModuleDestroy {
       plugin: { name, version: plugin.version },
       idempotencyKey: execution.jobId,
       policyVersion: 'experimental-test-v1',
-      requiredCapabilities: [],
-      input: { config: { type: config.type }, context: {} },
+      requiredCapabilities: mayWait ? ['execution.wait'] : [],
+      input: { config: { type: config.type }, context: remoteContext },
     };
     if (!(await this.executionRepository.registerWorkerDispatch(dispatch, runLease.token))) {
       throw new Error(`Remote dispatch registration failed: ${execution.attemptId}`);
     }
-    const terminal = await this.executionLeases.awaitWorkerTerminal(
-      execution,
-      runId,
-      runLease.token,
-      signal,
-    );
-    return terminal.result;
+    let cancellation: Promise<boolean> | undefined;
+    const onAbort = () => {
+      cancellation ??= this.executionRepository.cancelWorkerAttempt(
+        execution,
+        runId,
+        runLease.token,
+      );
+    };
+    signal.addEventListener('abort', onAbort, { once: true });
+    if (signal.aborted) onAbort();
+    try {
+      const terminal = await this.executionLeases.awaitWorkerTerminal(
+        execution,
+        runId,
+        runLease.token,
+        signal,
+      );
+      await this.projectWorkerLogsForRun(runId, runLease.token);
+      return terminal.result;
+    } finally {
+      signal.removeEventListener('abort', onAbort);
+      if (cancellation) await cancellation;
+    }
+  }
+
+  private async projectWorkerLogsForRun(runId: string, runLeaseToken: string): Promise<void> {
+    await (this.eventChains.get(runId) ?? Promise.resolve());
+    if (!(await this.heartbeatRunLease(runId, runLeaseToken))) return;
+    const receipts = await this.executionRepository.listWorkerLogsForRun(runId);
+    if (receipts.length === 0) return;
+    const run = await this.runRepository.findById(runId);
+    if (!run) return;
+    const events = [...run.events];
+    for (const receipt of receipts) {
+      if (
+        events.some(
+          (event) =>
+            event.workerAttemptId === receipt.attemptId &&
+            typeof event.workerSequence === 'number' &&
+            receipt.sequence >= event.workerSequence &&
+            receipt.sequence <=
+              (typeof event.sequenceEnd === 'number' ? event.sequenceEnd : event.workerSequence),
+        )
+      )
+        continue;
+      const step = run.workflowSnapshot.steps.find((candidate) => candidate.id === receipt.stepId);
+      if (!step) continue;
+      const event: SerializedWorkflowLifecycleEvent = {
+        type: 'plugin:log',
+        workflowRunId: runId,
+        meta: { workflowId: run.workflowId, ...(run.traceId ? { traceId: run.traceId } : {}) },
+        step,
+        log: receipt.log,
+        workerAttemptId: receipt.attemptId,
+        workerSequence: receipt.sequence,
+        sequence: receipt.sequence,
+      };
+      const offset = await this.runRepository.appendEvent(runId, event);
+      const persisted = offset === undefined ? event : { ...event, offset };
+      events.push(persisted);
+      this.runStream.fanOut(runId, { type: 'event', event: persisted });
+    }
   }
 
   private async registerStepWait(
@@ -674,6 +751,7 @@ export class RunManagerService implements OnModuleInit, OnModuleDestroy {
       if (!run) throw new RunRecoveryNotReadyError(`Run ${runId} 不存在`);
       const runLeaseToken = this.runLeases.get(runId)?.token;
       if (!runLeaseToken) throw new RunRecoveryNotReadyError(`Run ${runId} lease 不存在`, false);
+      await this.projectWorkerLogsForRun(runId, runLeaseToken);
       await this.executionRepository.projectSettledWorkerAttempts(runId, runLeaseToken);
       const resume = await this.loadRecoverySnapshot(runId);
       this.managedRunIds.add(runId);

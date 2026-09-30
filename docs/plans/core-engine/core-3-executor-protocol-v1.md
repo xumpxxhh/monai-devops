@@ -49,14 +49,14 @@
 
 服务端现有 opt-in HTTP 传输入口：`POST /{GLOBAL_API_PREFIX}/executor-workers/claim` 接收 `{ "workerId": "...", "waitMs": 0..20000 }`，返回 `{ "assignment": { "dispatch": ..., "claim": ... } | null }`；`POST /{GLOBAL_API_PREFIX}/executor-workers/messages` 接收单条 worker 消息并返回 CAS 决策。两者均要求 `Authorization: Bearer <EXECUTOR_WORKER_HTTP_TOKEN>`；未配置至少 32 字符凭证时返回 503。claim 只选择持有有效 Run lease、已绑定 dispatch 的 queued Attempt，并在同一事务启动 Attempt/Job；竞争领取只会成功一次。消息接口只从数据库装载 dispatch，不接受 worker 自带的 dispatch。生产入口必须经 TLS，凭证轮换与取消通知仍需完成；未开启远程选路时没有生产任务可领取。
 
-独立 worker 进程已提供 `pnpm --filter server worker:dev`（或构建后 `worker:start`）。它只通过上述 HTTP 接口访问 server，不连接 PostgreSQL；启动时必须配置 worker token、`EXECUTOR_SERVER_URL` 和 `EXECUTOR_WORKER_ALLOWED_PLUGINS`。当前仅加载 `test-plugin`/`print-plugin`，allowlist 之外的插件、版本、Secret 引用或 capability 会以失败结果结算，不会执行。运行中按序发送 heartbeat 和 complete；网络响应丢失时重发同一序号，租约被拒绝时终止执行。当前不发插件日志事件、不处理等待/主动取消、也不声称容器沙箱；这些仍是 3.2/3.3 后续验收项。非本机 HTTP 地址被 worker 拒绝，跨主机必须用 HTTPS。
+独立 worker 进程已提供 `pnpm --filter server worker:dev`（或构建后 `worker:start`）。它只通过上述 HTTP 接口访问 server，不连接 PostgreSQL；启动时必须配置 worker token、`EXECUTOR_SERVER_URL` 和 `EXECUTOR_WORKER_ALLOWED_PLUGINS`。当前仅加载 `test-plugin`/`print-plugin`；实验路由只批准 `test-plugin` 的 `execution.wait`，其它 capability、Secret、版本不符或非 allowlist 插件不执行。worker 按序发送 heartbeat、受限 `plugin:log` 事件、`complete` 或 `wait`；传输失败以原序号重试，租约被拒绝时终止。server 在 Run lease 下把 worker 日志幂等投影到 Run，硬取消对 Attempt/Job 做持久化 fencing；worker 通过下一次心跳或回传发现取消，不提供即时控制推送，也不声称容器沙箱。非本机 HTTP 地址被 worker 拒绝，跨主机必须用 HTTPS。
 
-非生产环境可显式设置 `EXECUTOR_REMOTE_TEST_ENABLED=true`，并提供至少 32 字符的 `EXECUTOR_WORKER_HTTP_TOKEN`。这只将顶层 `test-plugin` 派发给独立 worker；派发输入仅保留 `config.type`，完成结果从持久化收据交回 DAG。其余插件保持本地执行，生产环境强制走本地路径。仍需两进程 PostgreSQL 故障集成测试、取消、日志、等待及生产信任边界验收。
+非生产环境可显式设置 `EXECUTOR_REMOTE_TEST_ENABLED=true`，并提供至少 32 字符的 `EXECUTOR_WORKER_HTTP_TOKEN`。这只将顶层 `test-plugin` 派发给独立 worker；派发输入仅保留 `config.type` 和允许的 checkpoint/wake payload，完成结果从持久化收据交回 DAG。远程等待被 signal 唤醒后创建下一 Attempt，而不是复用已 waiting 的旧 Attempt；因此该试验步骤若设置 `mayWait: true`，还须设置 `retryPolicy.maxAttempts >= 2`。其余插件保持本地执行，生产环境强制走本地路径。
 
-已有 test DB 集成测试通过真实 HTTP 领取、完成、持久化和 DAG 结算整条路径；既覆盖进程内 worker client，也覆盖独立启动的实际 worker 入口。worker 进程在领取后崩溃的测试证明租约到期由活跃 Run 持有者结算，旧 token 的迟到完成消息不能再写入；测试库已验证旧 Run lease 失效后由新 manager 补投影、完成 Run 且不重跑插件；完成响应丢失后的同序号重发已通过真实 HTTP/数据库验证，仅产生一条完成收据及 Run 投影。真实 server 进程重启、持续断线重连、取消和远程等待仍待验证。协议 JSON 预检接受来自不同 JavaScript 运行域的普通对象，仍拒绝自定义原型、循环和非有限值。
+test DB 集成测试覆盖真实 HTTP 领取/完成、独立 worker 进程、worker 崩溃后的超时与旧 token 拒绝、新 manager 接管后的完成补投影、响应丢失与持续断线后的同序号重试、插件失败与日志、远程 wait/signal/新 Attempt、硬取消与迟到消息拒绝。独立 HTTP server 子进程重启和 Run owner/HTTP 同进程重启的故障注入均已通过；暂时不可恢复的 Run 改为按扫描间隔重试，不再固定延后 30 秒。协议 JSON 预检接受来自不同 JavaScript 运行域的普通对象，仍拒绝自定义原型、循环和非有限值。
 
 ## 信任边界与后续门槛
 
 `secretRefs` 的前缀检查不能证明 `input.config/context` 没有明文密钥；3.3/3.4 必须在派发前施加能力授权、Secret 分类与脱敏，worker 身份与引用解析也必须有独立鉴权。不要将租约 token、Secret 值或敏感结果写入事件和普通日志。当前独立 worker 仅提供进程隔离；数据库持久化已实现，但生产传输加密和密钥治理未完成。
 
-3.1 已把默认引擎的现有插件管理器包入可信进程内 adapter，保留 live logger/AbortSignal 与旧错误转换。3.2 的试验选路只允许白名单裁剪后的 `test-plugin` 输入；仍需两进程 PostgreSQL 故障集成测试、取消、日志、等待以及生产信任边界验收。
+3.1 已把默认引擎的现有插件管理器包入可信进程内 adapter，保留 live logger/AbortSignal 与旧错误转换。3.2 的非生产试验选路只允许白名单裁剪后的 `test-plugin` 输入，最小远程闭环已验收；生产信任边界属于后续 3.3/3.4 门槛。

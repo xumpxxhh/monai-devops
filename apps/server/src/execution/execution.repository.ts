@@ -9,6 +9,7 @@ import type {
   ExecutorMessageDecision,
 } from '@monai-devops/core-engine';
 import type { PluginResult } from '@monai-devops/plugin-sdk';
+import type { PluginLogEntry } from '@monai-devops/plugin-sdk';
 
 export interface CreateExecutionJobInput {
   execution: ExecutionIdentity;
@@ -40,6 +41,7 @@ export interface RecoveryJob {
     reason?: unknown;
     wakeReadyAt?: Date;
     wakePayload?: unknown;
+    remoteDispatch?: boolean;
   }>;
 }
 
@@ -57,6 +59,13 @@ export type WorkerTerminalResult =
 export interface ClaimedWorkerDispatch {
   dispatch: ExecutorDispatchV1;
   claim: ExecutorLeaseClaimV1;
+}
+
+export interface WorkerLogReceipt {
+  attemptId: string;
+  stepId: string;
+  sequence: number;
+  log: PluginLogEntry;
 }
 
 export type ExecutionControlType = 'pause' | 'resume' | 'cancel';
@@ -111,8 +120,15 @@ export interface ExecutionRepository {
   ): Promise<ExecutorMessageDecision>;
   /** Only returns a terminal inbox receipt consistent with the authoritative Attempt/Job. */
   readWorkerTerminal(execution: ExecutionIdentity): Promise<WorkerTerminalResult | undefined>;
+  listWorkerLogsForRun(runId: string): Promise<WorkerLogReceipt[]>;
   /** Under the live Run owner, race an expired worker lease against heartbeat/terminal CAS. */
   timeoutExpiredWorkerAttempt(
+    execution: ExecutionIdentity,
+    runId: string,
+    runLeaseToken: string,
+  ): Promise<boolean>;
+  /** Fence an in-flight remote Attempt when the active Run is hard-cancelled. */
+  cancelWorkerAttempt(
     execution: ExecutionIdentity,
     runId: string,
     runLeaseToken: string,

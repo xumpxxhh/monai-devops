@@ -24,8 +24,16 @@ describe('RunManagerService execution projection', () => {
       transitionAttempt: jest.fn(async (_attemptId: string, _from: string) => true),
       setJobStatus: jest.fn(async () => undefined),
       registerWorkerDispatch: jest.fn(async () => true),
+      listWorkerLogsForRun: jest.fn(async () => []),
+      cancelWorkerAttempt: jest.fn(async () => true),
     };
-    const runRepository = { heartbeatRunLease: jest.fn(async () => true) };
+    const runRepository = {
+      heartbeatRunLease: jest.fn(async () => true),
+      findById: jest.fn(async () => ({
+        workflowSnapshot: { steps: [{ ...step, plugin: 'test-plugin' }] },
+        events: [],
+      })),
+    };
     const leases = {
       start: jest.fn(async () => undefined),
       stop: jest.fn(),

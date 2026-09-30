@@ -1486,7 +1486,10 @@ export function createWorkflowExecutor(options: ExecutorOptions = {}) {
               resume.nextAttemptByStep[stepId] !== ready.attempt) ||
             !ready.checkpoint ||
             ready.checkpoint.jobId !== execution.jobId ||
-            ready.checkpoint.sourceAttemptId !== execution.attemptId ||
+            (ready.checkpoint.sourceAttemptId !== execution.attemptId &&
+              (ready.attempt === 0 ||
+                ready.checkpoint.sourceAttemptId !==
+                  createExecutionIdentity(workflowRunId, stepId, ready.attempt - 1).attemptId)) ||
             !Number.isInteger(ready.checkpoint.version) ||
             ready.checkpoint.version < 1
           ) {
