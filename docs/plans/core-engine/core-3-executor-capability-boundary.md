@@ -46,7 +46,7 @@ PostgreSQL：Job/Attempt、lease、checkpoint、事件与控制命令的权威�
 
 每步合并时同时提交代码、迁移/配置示例、契约及集成测试、本文进度记录；不先建空协议或大规模抽象而长期没有可运行闭环。
 
-最新验证：test DB 集成测试经真实 HTTP 入口领取 `test-plugin` Attempt、回传完成消息，确认 PostgreSQL 中 Attempt 成功且结果返回 DAG/Run；独立启动实际 worker 入口的第二进程也已通过成功路径。新增故障注入：worker 领取后被强制终止，活跃 Run 持有者在租约到期后结算 Attempt 为 `timed_out`，Run 失败，旧 token 的迟到完成消息被拒绝且不产生完成收据。跨运行域普通 JSON 对象的协议预检误拒已修复。测试库已验证旧 Run lease 过期、新 manager 接管时，已持久化但未投影的 worker 完成结果仅补写一次，且插件不重跑。真实 server 进程重启、断线重连、取消和远程等待等故障/控制路径仍未覆盖；3.2 尚未完整验收。
+最新验证：test DB 集成测试经真实 HTTP 入口领取 `test-plugin` Attempt、回传完成消息，确认 PostgreSQL 中 Attempt 成功且结果返回 DAG/Run；独立启动实际 worker 入口的第二进程也已通过成功路径。新增故障注入：worker 领取后被强制终止，活跃 Run 持有者在租约到期后结算 Attempt 为 `timed_out`，Run 失败，旧 token 的迟到完成消息被拒绝且不产生完成收据。跨运行域普通 JSON 对象的协议预检误拒已修复。测试库已验证旧 Run lease 过期、新 manager 接管时，已持久化但未投影的 worker 完成结果仅补写一次，且插件不重跑。完成消息已落库但 HTTP 响应丢失时，worker 以同序号重发并收到 `duplicate`，Run/收据均只结算一次。真实 server 进程重启、持续断线后的重连、取消和远程等待等故障/控制路径仍未覆盖；3.2 尚未完整验收。
 
 ## 关键设计约束
 

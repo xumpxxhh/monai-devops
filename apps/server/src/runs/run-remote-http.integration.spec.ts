@@ -20,7 +20,7 @@ import type { RunStreamService } from './run-stream.service.js';
 const describeIfDb = process.env.DATABASE_URL?.trim() ? describe : describe.skip;
 
 describeIfDb('remote worker HTTP/database integration', () => {
-  jest.setTimeout(45_000);
+  jest.setTimeout(60_000);
   const token = `${randomUUID()}${randomUUID()}`;
   let workerLeaseTtlMs = 30_000;
   const config = {
@@ -114,6 +114,64 @@ describeIfDb('remote worker HTTP/database integration', () => {
         where: { attemptId: attempt?.attemptId, kind: 'complete' },
       }),
     ).not.toBeNull();
+  });
+
+  it('retries a lost completion response with the same sequence without double settlement', async () => {
+    const submitted = await manager.submitRun({
+      id: 'remote-lost-response-integration',
+      name: 'Remote lost response integration',
+      steps: [{ id: 'test', name: 'Remote test', plugin: 'test-plugin', config: { type: 'unit' } }],
+    });
+    const runId = submitted.runId;
+    runIds.push(runId);
+    const address = app.getHttpServer().address() as { port: number };
+    const completions: Array<{ sequence: number; decision: { accepted: boolean; code?: string } }> =
+      [];
+    const worker = new WorkerClient({
+      serverUrl: `http://127.0.0.1:${address.port}/api/v1/devops`,
+      token,
+      workerId: 'lost-response-worker',
+      plugins: [testPlugin],
+      claimWaitMs: 5_000,
+      fetchImpl: async (input, init) => {
+        const response = await fetch(input, {
+          ...init,
+          headers: { ...init?.headers, connection: 'close' },
+        });
+        if (!String(input).endsWith('/messages')) return response;
+        const message = JSON.parse(String(init?.body)) as { kind: string; sequence: number };
+        if (message.kind !== 'complete') return response;
+        const decision = (await response.clone().json()) as {
+          accepted: boolean;
+          code?: string;
+        };
+        completions.push({ sequence: message.sequence, decision });
+        if (completions.length === 1) throw new Error('completion response lost after commit');
+        return response;
+      },
+    });
+    expect(await worker.runOnce()).toBe(true);
+    expect(completions).toMatchObject([
+      { sequence: expect.any(Number), decision: { accepted: true } },
+      { sequence: expect.any(Number), decision: { accepted: false, code: 'duplicate' } },
+    ]);
+    expect(completions[1]?.sequence).toBe(completions[0]?.sequence);
+
+    let run = await runs.findById(runId);
+    for (let i = 0; i < 100 && run?.status !== 'finished'; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      run = await runs.findById(runId);
+    }
+    expect(run?.status).toBe('finished');
+    expect(run?.counts.completed).toBe(1);
+    expect(run?.events.filter((event) => event.type === 'step:finished')).toHaveLength(1);
+    const attempt = await prisma.executionAttempt.findFirst({ where: { job: { runId } } });
+    expect(attempt?.status).toBe('succeeded');
+    expect(
+      await prisma.executionAttemptMessage.count({
+        where: { attemptId: attempt?.attemptId, kind: 'complete' },
+      }),
+    ).toBe(1);
   });
 
   it('runs the real worker entrypoint in a separate process', async () => {
