@@ -4,6 +4,7 @@ import type { ConfigService } from '@nestjs/config';
 import { getContext, PluginContextKeys } from '@monai-devops/plugin-sdk';
 import {
   AttemptStatuses,
+  EXECUTOR_PROTOCOL_VERSION,
   createExecutionIdentity,
   createWorkflowExecutor,
   SkipReasons,
@@ -800,6 +801,128 @@ describeIfDb('Run recovery integration', () => {
       }),
     ).toEqual([{ status: AttemptStatuses.TIMED_OUT }, { status: AttemptStatuses.SUCCEEDED }]);
     leases.onModuleDestroy();
+    manager.onModuleDestroy();
+  });
+  it('projects a completed worker receipt after Run lease takeover without replaying the plugin', async () => {
+    runId = randomUUID();
+    const workflow: WorkflowDefinition = {
+      id: 'remote-takeover-integration',
+      name: 'Remote takeover integration',
+      steps: [{ id: 'remote', name: 'Remote', plugin: 'test-plugin', config: { type: 'unit' } }],
+    };
+    const execution = createExecutionIdentity(runId, 'remote', 0);
+    await runs.save({
+      runId,
+      workflowId: workflow.id,
+      workflowSnapshot: workflow,
+      status: 'running',
+      counts: { total: 1, completed: 0, failed: 0, skipped: 0 },
+      createdAt: new Date(Date.now() - 60_000),
+      events: [],
+    });
+    expect(
+      await runs.acquireRunLease(
+        runId,
+        'old-server',
+        'old-run-token',
+        new Date(Date.now() + 60_000),
+      ),
+    ).toBe(true);
+    await executions.ensureJob({
+      execution,
+      runId,
+      stepId: 'remote',
+      idempotencyKey: execution.jobId,
+      retryPolicy: { maxAttempts: 1, backoffMs: 0 },
+    });
+    await executions.ensureAttempt(execution);
+    const dispatch = {
+      protocolVersion: EXECUTOR_PROTOCOL_VERSION,
+      runId,
+      workflowId: workflow.id,
+      stepId: 'remote',
+      execution,
+      plugin: { name: 'test-plugin', version: '1.0.0' },
+      idempotencyKey: execution.jobId,
+      policyVersion: 'recovery-test',
+      requiredCapabilities: [],
+      input: { config: { type: 'unit' }, context: {} },
+    };
+    expect(await executions.registerWorkerDispatch(dispatch, 'old-run-token')).toBe(true);
+    const claimed = await executions.claimWorkerDispatch('worker-before-restart', 30_000);
+    expect(claimed?.dispatch).toEqual(dispatch);
+    const pluginResult = { success: true, data: { type: 'unit', message: 'worker completed' } };
+    expect(
+      await executions.acceptRegisteredWorkerMessage(
+        {
+          protocolVersion: EXECUTOR_PROTOCOL_VERSION,
+          execution,
+          leaseToken: claimed!.claim.leaseToken,
+          sequence: claimed!.claim.nextSequence,
+          occurredAt: new Date().toISOString(),
+          kind: 'complete',
+          result: pluginResult,
+        },
+        30_000,
+      ),
+    ).toMatchObject({ accepted: true });
+    expect((await runs.findById(runId))?.counts.completed).toBe(0);
+    await prisma.run.update({
+      where: { runId },
+      data: { leaseExpiresAt: new Date(Date.now() - 1_000) },
+    });
+
+    const calls: string[] = [];
+    let onEvent: ((event: WorkflowLifecycleEvent) => void | Promise<void>) | undefined;
+    const executor = createWorkflowExecutor({
+      pluginExecutor: async (name) => {
+        calls.push(name);
+        return { success: true };
+      },
+      observer: { onEvent: (event) => onEvent?.(event) },
+    });
+    const engine = {
+      onEvent: (handler: typeof onEvent) => {
+        onEvent = handler;
+      },
+      setEmbeddedRunHooks: jest.fn(),
+      setBeforeStepExecute: jest.fn(),
+      runWorkflow: (id: string, definition: WorkflowDefinition, context: object, options: object) =>
+        executor.executeWorkflow(id, definition, context, options),
+    } as unknown as EngineService;
+    const manager = new RunManagerService(
+      engine,
+      runs,
+      { fanOut: jest.fn() } as unknown as RunStreamService,
+      config,
+      executions,
+      {
+        start: jest.fn(async () => undefined),
+        stop: jest.fn(),
+      } as unknown as ExecutionLeaseService,
+      { request: jest.fn() } as never,
+    );
+    manager.onModuleInit();
+    const recovery = new RunRecoveryService(
+      { listRecoverableRunIds: async () => [runId] } as unknown as RunRepository,
+      new ExecutionRecoveryService(executions),
+      manager,
+      config,
+    );
+    await recovery.scan();
+    for (let i = 0; i < 100; i++) {
+      if ((await runs.findById(runId))?.status === 'finished') break;
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    const run = await runs.findById(runId);
+    expect(run?.status).toBe('finished');
+    expect(run?.counts.completed).toBe(1);
+    expect(run?.result?.results[0]?.pluginResult).toEqual(pluginResult);
+    expect(run?.events.filter((event) => event.type === 'step:finished')).toHaveLength(1);
+    expect(calls).toEqual([]);
+    expect(
+      await prisma.executionAttempt.findUnique({ where: { attemptId: execution.attemptId } }),
+    ).toMatchObject({ status: AttemptStatuses.SUCCEEDED, runProjectedAt: expect.any(Date) });
     manager.onModuleDestroy();
   });
 });
