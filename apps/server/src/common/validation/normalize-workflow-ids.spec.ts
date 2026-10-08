@@ -16,12 +16,14 @@ describe('normalizeWorkflowIds', () => {
           config: { type: 'wait' },
           mayWait: true,
           requestedCapabilities: ['execution.wait'],
+          secretRefs: { apiKey: 'secret://env/API_KEY' },
         },
       ],
     });
     expect(result.steps[0]).toMatchObject({
       mayWait: true,
       requestedCapabilities: ['execution.wait'],
+      secretRefs: { apiKey: 'secret://env/API_KEY' },
     });
   });
 
@@ -35,11 +37,13 @@ describe('normalizeWorkflowIds', () => {
           config: { type: 'wait' },
           mayWait: true,
           requestedCapabilities: ['execution.wait'],
+          secretRefs: { apiKey: 'secret://env/API_KEY' },
         },
       ],
     });
     expect(validateSync(dto, { whitelist: true, forbidNonWhitelisted: true })).toEqual([]);
     expect(dto.steps[0]?.requestedCapabilities).toEqual(['execution.wait']);
+    expect(dto.steps[0]?.secretRefs).toEqual({ apiKey: 'secret://env/API_KEY' });
   });
   it('generates workflow and step ids when omitted on create', () => {
     const result = normalizeWorkflowIds({

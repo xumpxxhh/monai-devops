@@ -28,6 +28,7 @@ describeIfDb('remote worker HTTP/database integration', () => {
   const token = `${randomUUID()}${randomUUID()}`;
   let workerLeaseTtlMs = 30_000;
   let allowedCapabilities = 'execution.wait';
+  let namedIdentities: string | undefined;
   const config = {
     get: (key: string, fallback?: unknown) => {
       if (key === 'EXECUTOR_REMOTE_TEST_ENABLED') return true;
@@ -35,6 +36,7 @@ describeIfDb('remote worker HTTP/database integration', () => {
       if (key === 'APP_ENV') return 'local-test';
       if (key === 'EXECUTOR_WORKER_LEASE_TTL_MS') return workerLeaseTtlMs;
       if (key === 'EXECUTOR_ALLOWED_CAPABILITIES') return allowedCapabilities;
+      if (key === 'EXECUTOR_WORKER_IDENTITIES_JSON') return namedIdentities;
       return fallback;
     },
   } as ConfigService;
@@ -121,6 +123,122 @@ describeIfDb('remote worker HTTP/database integration', () => {
         where: { attemptId: attempt?.attemptId, kind: 'complete' },
       }),
     ).not.toBeNull();
+  });
+
+  it('keeps a large result out of Run JSON and serves its object only to the named worker', async () => {
+    const workerId = 'object-worker';
+    namedIdentities = JSON.stringify([
+      {
+        workerId,
+        tokens: [token],
+        plugins: [{ name: 'test-plugin', version: '1.0.0', capabilities: ['execution.wait'] }],
+      },
+    ]);
+    try {
+      const submitted = await manager.submitRun({
+        id: 'remote-object-integration',
+        name: 'Remote object integration',
+        steps: [
+          {
+            id: 'test',
+            name: 'Remote large result',
+            plugin: 'test-plugin',
+            config: { type: 'large' },
+          },
+        ],
+      });
+      runIds.push(submitted.runId);
+      const address = app.getHttpServer().address() as { port: number };
+      const serverUrl = `http://127.0.0.1:${address.port}/api/v1/devops`;
+      const worker = new WorkerClient({
+        serverUrl,
+        token,
+        workerId,
+        plugins: [testPlugin],
+        claimWaitMs: 5_000,
+      });
+      expect(await worker.runOnce()).toBe(true);
+      let run = await runs.findById(submitted.runId);
+      for (let i = 0; i < 100 && run?.status !== 'finished'; i++) {
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        run = await runs.findById(submitted.runId);
+      }
+      expect(run?.status).toBe('finished');
+      expect(JSON.stringify(run)).not.toContain('x'.repeat(100));
+      const attempt = await prisma.executionAttempt.findFirstOrThrow({
+        where: { job: { runId: submitted.runId } },
+      });
+      const ref = (attempt.result as { data: { objectRef: { objectId: string } } }).data.objectRef;
+      expect(ref.objectId).toBeTruthy();
+      const response = await fetch(`${serverUrl}/executor-workers/objects/${ref.objectId}`, {
+        headers: { authorization: `Bearer ${token}` },
+      });
+      expect(response.status).toBe(200);
+      const object = (await response.json()) as { bodyBase64: string };
+      expect(Buffer.from(object.bodyBase64, 'base64').toString()).toContain('x'.repeat(100));
+    } finally {
+      namedIdentities = undefined;
+    }
+  });
+
+  it('resolves a Secret reference inside the named worker without persisting its value', async () => {
+    const workerId = 'secret-worker';
+    const secret = 'integration-secret-value-123';
+    namedIdentities = JSON.stringify([
+      {
+        workerId,
+        tokens: [token],
+        plugins: [
+          {
+            name: 'test-plugin',
+            version: '1.0.0',
+            capabilities: ['execution.wait', 'secret.read'],
+          },
+        ],
+      },
+    ]);
+    allowedCapabilities = 'execution.wait,secret.read';
+    try {
+      const submitted = await manager.submitRun({
+        id: 'remote-secret-integration',
+        name: 'Remote Secret integration',
+        steps: [
+          {
+            id: 'test',
+            name: 'Resolve Secret',
+            plugin: 'test-plugin',
+            config: { type: 'secret' },
+            secretRefs: { apiKey: 'secret://env/API_KEY' },
+          },
+        ],
+      });
+      runIds.push(submitted.runId);
+      const address = app.getHttpServer().address() as { port: number };
+      const worker = new WorkerClient({
+        serverUrl: `http://127.0.0.1:${address.port}/api/v1/devops`,
+        token,
+        workerId,
+        plugins: [testPlugin],
+        secretEnv: { API_KEY: secret },
+        claimWaitMs: 5_000,
+      });
+      expect(await worker.runOnce()).toBe(true);
+      let run = await runs.findById(submitted.runId);
+      for (let i = 0; i < 100 && run?.status !== 'finished'; i++) {
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        run = await runs.findById(submitted.runId);
+      }
+      expect(run?.status).toBe('finished');
+      expect(JSON.stringify(run)).not.toContain(secret);
+      const attempt = await prisma.executionAttempt.findFirstOrThrow({
+        where: { job: { runId: submitted.runId } },
+        include: { workerMessages: true },
+      });
+      expect(JSON.stringify(attempt)).not.toContain(secret);
+    } finally {
+      namedIdentities = undefined;
+      allowedCapabilities = 'execution.wait';
+    }
   });
 
   it('retries a lost completion response with the same sequence without double settlement', async () => {

@@ -1,6 +1,6 @@
 # Core-3 Executor 协议 v1（3.0 契约候选）
 
-> 状态：实验性 `test-plugin` 远程选路已接入运行路径；默认关闭且生产禁用。worker 身份、Secret 来源和生产部署边界尚未完成。
+> 状态：实验性 `test-plugin` 远程选路及 3.4 数据治理闭环已接入运行路径；默认关闭且生产禁用。Run 用户身份、多租户授权和生产部署边界尚未完成。
 
 类型与预检实现位于 `packages/core-engine/executor/adapter-contract.ts`。协议与传输无关，当前只定义顶层插件步骤的单个 Attempt；DAG、Run lease、控制命令和权威投影仍由 server 持有。local adapter 是可信进程内执行，不提供隔离承诺。
 
@@ -37,7 +37,7 @@
 }
 ```
 
-不支持的版本必须拒绝，不能静默降级。所有数据必须是有限、无环的 JSON 值。输入、完成结果、等待 checkpoint 各限 1 MiB；事件 payload 限 64 KiB（UTF-8 序列化字节）。超过阈值的对象引用属于 3.4，v1 当前不接受大对象内联。事件版本是正整数；事件序号不可跳跃或倒退。
+不支持的版本必须拒绝，不能静默降级。所有数据必须是有限、无环的 JSON 值。输入与等待 checkpoint 各限 1 MiB；完成结果原始协议上限 1 MiB，但实验性 HTTP 传输只允许 64 KiB 内联，更大结果须先上传对象并以引用完成。事件 payload 限 64 KiB，日志超过 4096 字符须以对象引用事件回报。单对象上限 1 MiB。事件版本是正整数；事件序号不可跳跃或倒退。
 
 ## 权威性、幂等与错误
 
@@ -49,7 +49,7 @@
 
 服务端现有 opt-in HTTP 传输入口：`POST /{GLOBAL_API_PREFIX}/executor-workers/claim` 接收 `{ "workerId": "...", "waitMs": 0..20000, "plugins": [{ "name": "...", "version": "...", "capabilities": [] }] }`，返回 `{ "assignment": { "dispatch": ..., "claim": ... } | null }`；`POST /{GLOBAL_API_PREFIX}/executor-workers/messages` 接收单条 worker 消息并返回 CAS 决策。两者均要求 `Authorization: Bearer <EXECUTOR_WORKER_HTTP_TOKEN>`；未配置至少 32 字符凭证时返回 503。claim 只选择持有有效 Run lease、已绑定 dispatch，且插件版本与全部所需 capability 均被 worker 提供的 queued Attempt，并在同一事务启动 Attempt/Job；竞争领取只会成功一次。消息接口只从数据库装载 dispatch，不接受 worker 自带的 dispatch。生产入口必须经 TLS，凭证轮换与取消通知仍需完成；未开启远程选路时没有生产任务可领取。
 
-独立 worker 进程已提供 `pnpm --filter server worker:dev`（或构建后 `worker:start`）。它只通过上述 HTTP 接口访问 server，不连接 PostgreSQL；启动时必须配置 worker token、`EXECUTOR_SERVER_URL` 和 `EXECUTOR_WORKER_ALLOWED_PLUGINS`。当前仅加载 `test-plugin`/`print-plugin`；实验路由只允许 `test-plugin`，其 `execution.wait` 仍须经三方授权。worker 按序发送 heartbeat、受限 `plugin:log` 事件、`complete` 或 `wait`；传输失败以原序号重试，租约被拒绝时终止。server 在 Run lease 下把 worker 日志幂等投影到 Run，硬取消对 Attempt/Job 做持久化 fencing；worker 通过下一次心跳或回传发现取消，不提供即时控制推送，也不声称容器沙箱。非本机 HTTP 地址被 worker 拒绝，跨主机必须用 HTTPS。旧 worker 未上报插件能力时 claim 会收到 400，需升级 worker；目前使用共享 bearer，能力上报尚不能证明独立身份。
+独立 worker 进程已提供 `pnpm --filter server worker:dev`（或构建后 `worker:start`）。它只通过上述 HTTP 接口访问 server，不连接 PostgreSQL；启动时必须配置 worker token、`EXECUTOR_SERVER_URL` 和 `EXECUTOR_WORKER_ALLOWED_PLUGINS`。当前仅加载 `test-plugin`/`print-plugin`；实验路由只允许 `test-plugin`，其 `execution.wait` 与 `secret.read` 须经三方授权。worker 按序发送 heartbeat、受限 `plugin:log` 事件、`complete` 或 `wait`；传输失败以原序号重试，租约被拒绝时终止。server 在 Run lease 下把 worker 日志幂等投影到 Run，硬取消按配置立即或在宽限期后对 Attempt/Job 做持久化 fencing；worker 通过下一次心跳或回传发现取消，不提供即时控制推送，也不声称容器沙箱。非本机 HTTP 地址被 worker 拒绝，跨主机必须用 HTTPS。旧 worker 未上报插件能力时 claim 会收到 400，需升级 worker；共享 bearer 仅为实验兼容，Secret 与对象接口要求命名 Worker 凭据。
 
 非生产环境可显式设置 `EXECUTOR_REMOTE_TEST_ENABLED=true`，并提供至少 32 字符的 `EXECUTOR_WORKER_HTTP_TOKEN`。这只将顶层 `test-plugin` 派发给独立 worker；派发输入仅保留 `config.type` 和允许的 checkpoint/wake payload，完成结果从持久化收据交回 DAG。capability 默认拒绝，须在插件 manifest 声明、步骤请求及 `EXECUTOR_ALLOWED_CAPABILITIES` 中同时允许；`mayWait: true` 隐含请求 `execution.wait`，还须设置 `retryPolicy.maxAttempts >= 2`。远程等待被 signal 唤醒后创建下一 Attempt，而不是复用已 waiting 的旧 Attempt。其余插件保持本地执行，生产环境强制走本地路径。
 
@@ -57,12 +57,16 @@ test DB 集成测试覆盖真实 HTTP 领取/完成、独立 worker 进程、wor
 
 ## 信任边界与后续门槛
 
-3.4 的远程试验路径现在由 server 写入绝对 `deadlineAt`（默认 5 分钟，可配置）。worker 到点 abort 插件，持久化 inbox 的 CAS 拒绝超过 deadline 的消息；若 worker 未及时停止，由现有 lease 超时机制最终结算。该 deadline 不代替取消宽限期，也不承诺回滚外部副作用。
+3.4 的远程试验路径由 server 写入绝对 `deadlineAt`（默认 5 分钟，可配置）。worker 到点 abort 插件，持久化 inbox 的 CAS 拒绝超过 deadline 的消息；若 worker 未及时停止，由现有 lease 超时机制最终结算。hard cancel 默认立即 fence；显式配置 `EXECUTOR_CANCEL_GRACE_MS` 后，server 持久化截止时间，Worker 心跳/日志收到 `cancel_requested` 协作退出，截止后扫描器以数据库时钟 fence Attempt/Job。宽限期内已完成的 Attempt 可以正常结算，外部副作用无法回滚。
 
-实验性 HTTP 传输的事件子集进一步收紧为版本 1 的 `plugin:log`，payload 只含 `level/message/timestamp` 和可选 `stream`；单条最多 4096 字符、每个 Attempt 最多 100 条。worker 和服务端均执行限制，服务端在数据库事务内按 Attempt 已存事件计数拒绝超额日志。通用事件扩展需另行定义容量及敏感数据策略。
+实验性 HTTP 传输的事件子集收紧为版本 1 的 `plugin:log`，payload 只含 `level/message/timestamp`、可选 `stream` 和已授权的 `objectRef`；内联单条最多 4096 字符、每个 Attempt 最多 100 条。长日志先上传对象，事件只保留短占位与引用。worker 和服务端均执行限制，服务端在数据库事务内按 Attempt 已存事件计数拒绝超额日志。通用事件扩展需另行定义容量及敏感数据策略。
+
+结果/日志对象记录在 PostgreSQL，引用包含版本、对象 ID、类型、字节数、SHA-256 与到期时间；上传须匹配当前 Attempt 的 Worker 身份和 lease token，完成/事件须引用同一 Attempt 的对象，读取须匹配命名 Worker 凭据。对象保留 7 天，启动时及每小时清理；旧小结果及短日志保持内联。公开 Run API 不提供对象下载，因为当前没有用户级授权。
+
+实验性 Secret 来源是 Worker 环境：插件步骤 `secretRefs` 只允许 `secret://env/NAME`，隐含 `secret.read`；server 派发前校验插件声明、环境允许列表和命名 Worker 资格。Worker 仅解析 `EXECUTOR_WORKER_SECRET_NAMES` 白名单内的环境变量，值不经 server；直接出现在日志的值被替换，直接出现在结果的值导致通用失败。不能据此声称抵御同进程恶意插件对环境、凭据或编码后数据的主动窃取。
 
 3.3 实验路径可用 `EXECUTOR_WORKER_IDENTITIES_JSON` 替代共享 bearer：JSON 数组中的每个身份包含 `workerId`、一至两个至少 32 字符的 `tokens` 和允许的插件名称/版本/capability 报价。认证 token 绑定 `workerId`；claim 报价只能是服务端允许集的子集；消息回传必须匹配 Attempt 当前 lease owner。轮换时先配置新旧两个 token，切换 worker 后删除旧 token。共享 `EXECUTOR_WORKER_HTTP_TOKEN` 仅为现有实验链路兼容；如配置命名身份，它不再生效。此配置不等于 Run 用户身份授权、Secret 授权或生产凭据管理。
 
-`secretRefs` 的前缀检查不能证明 `input.config/context` 没有明文密钥；3.3 第一轮已为实验路径施加 capability 派发授权，但 Secret 分类与脱敏、Run/worker 身份绑定及引用解析仍须独立鉴权。不要将租约 token、Secret 值或敏感结果写入事件和普通日志。当前独立 worker 仅提供进程隔离；数据库持久化已实现，但生产传输加密和密钥治理未完成。
+`secretRefs` 的前缀检查不能证明任意工作流 `config/context` 没有用户自行写入的明文密钥；实验选路只把白名单裁剪后的 `config.type` 传给 Worker。不要将租约 token、Secret 值或敏感结果写入事件和普通日志。当前独立 worker 仅提供进程隔离；生产传输加密、用户授权和密钥治理未完成。
 
-3.1 已把默认引擎的现有插件管理器包入可信进程内 adapter，保留 live logger/AbortSignal 与旧错误转换。3.2 的非生产试验选路只允许白名单裁剪后的 `test-plugin` 输入，最小远程闭环已验收；生产信任边界属于后续 3.3/3.4 门槛。
+3.1 已把默认引擎的现有插件管理器包入可信进程内 adapter，保留 live logger/AbortSignal 与旧错误转换。3.2–3.4 的非生产试验选路只允许白名单裁剪后的 `test-plugin` 输入；生产信任边界和灰度退出验证仍待完成。

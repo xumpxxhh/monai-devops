@@ -131,6 +131,10 @@ export class WorkflowDraftStepDto implements WorkflowDraftStep {
   @IsArray()
   @IsString({ each: true })
   requestedCapabilities?: string[];
+
+  @IsOptional()
+  @IsObject()
+  secretRefs?: Record<string, string>;
 }
 
 export class WorkflowDraftDto implements WorkflowDraft {

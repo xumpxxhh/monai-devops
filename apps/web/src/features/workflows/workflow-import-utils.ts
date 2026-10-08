@@ -104,6 +104,7 @@ function cloneStepToDraft(
       ...(step.requestedCapabilities !== undefined
         ? { requestedCapabilities: step.requestedCapabilities }
         : {}),
+      ...(step.secretRefs !== undefined ? { secretRefs: step.secretRefs } : {}),
     };
   }
   return {

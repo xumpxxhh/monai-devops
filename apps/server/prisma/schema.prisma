@@ -84,33 +84,36 @@ model ExecutionJob {
 }
 
 model ExecutionAttempt {
-  attemptId      String       @id @map("attempt_id")
-  jobId          String       @map("job_id")
-  attempt        Int
-  status         String
-  leaseOwner     String?      @map("lease_owner")
-  leaseToken     String?      @map("lease_token")
-  leaseExpiresAt DateTime?    @map("lease_expires_at")
-  heartbeatAt    DateTime?    @map("heartbeat_at")
-  messageSequence Int          @default(0) @map("message_sequence")
-  dispatch        Json?
-  reason         Json?
-  result         Json?
-  runProjectedAt DateTime?    @map("run_projected_at")
-  waitKind       String?      @map("wait_kind")
-  wakeKey        String?      @map("wake_key")
-  wakeAt         DateTime?    @map("wake_at")
-  waitTimeoutAt  DateTime?    @map("wait_timeout_at")
-  wakeReadyAt    DateTime?    @map("wake_ready_at")
-  wakePayload    Json?        @map("wake_payload")
-  createdAt      DateTime     @default(now()) @map("created_at")
-  startedAt      DateTime?    @map("started_at")
-  finishedAt     DateTime?    @map("finished_at")
-  job            ExecutionJob @relation(fields: [jobId], references: [jobId], onDelete: Cascade)
-  workerMessages ExecutionAttemptMessage[]
+  attemptId        String                    @id @map("attempt_id")
+  jobId            String                    @map("job_id")
+  attempt          Int
+  status           String
+  leaseOwner       String?                   @map("lease_owner")
+  leaseToken       String?                   @map("lease_token")
+  leaseExpiresAt   DateTime?                 @map("lease_expires_at")
+  cancelGraceUntil DateTime?                 @map("cancel_grace_until")
+  heartbeatAt      DateTime?                 @map("heartbeat_at")
+  messageSequence  Int                       @default(0) @map("message_sequence")
+  dispatch         Json?
+  reason           Json?
+  result           Json?
+  runProjectedAt   DateTime?                 @map("run_projected_at")
+  waitKind         String?                   @map("wait_kind")
+  wakeKey          String?                   @map("wake_key")
+  wakeAt           DateTime?                 @map("wake_at")
+  waitTimeoutAt    DateTime?                 @map("wait_timeout_at")
+  wakeReadyAt      DateTime?                 @map("wake_ready_at")
+  wakePayload      Json?                     @map("wake_payload")
+  createdAt        DateTime                  @default(now()) @map("created_at")
+  startedAt        DateTime?                 @map("started_at")
+  finishedAt       DateTime?                 @map("finished_at")
+  job              ExecutionJob              @relation(fields: [jobId], references: [jobId], onDelete: Cascade)
+  workerMessages   ExecutionAttemptMessage[]
+  objects          ExecutorObject[]
 
   @@unique([jobId, attempt])
   @@index([status, leaseExpiresAt])
+  @@index([cancelGraceUntil])
   @@index([status, wakeAt])
   @@index([status, waitTimeoutAt])
   @@index([wakeKey, status])
@@ -130,6 +133,24 @@ model ExecutionAttemptMessage {
 
   @@id([attemptId, sequence])
   @@map("execution_attempt_messages")
+}
+
+model ExecutorObject {
+  objectId    String           @id @map("object_id")
+  attemptId   String           @map("attempt_id")
+  workerId    String           @map("worker_id")
+  kind        String
+  content     Bytes
+  contentType String           @map("content_type")
+  sizeBytes   Int              @map("size_bytes")
+  sha256      String
+  expiresAt   DateTime         @map("expires_at")
+  createdAt   DateTime         @default(now()) @map("created_at")
+  attempt     ExecutionAttempt @relation(fields: [attemptId], references: [attemptId], onDelete: Cascade)
+
+  @@index([expiresAt])
+  @@index([attemptId, workerId])
+  @@map("executor_objects")
 }
 
 model RunEvent {

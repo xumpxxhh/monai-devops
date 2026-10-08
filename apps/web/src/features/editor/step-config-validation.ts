@@ -117,6 +117,7 @@ export type DraftStepNodeData = EditorNodeConfigData & {
   retryPolicy?: WorkflowStep['retryPolicy'];
   mayWait?: boolean;
   requestedCapabilities?: string[];
+  secretRefs?: Record<string, string>;
   inputState?: unknown;
   loop?: {
     maxIterations: number;
@@ -166,6 +167,7 @@ export function nodeDataToDraftStep(
     ...(data.requestedCapabilities !== undefined
       ? { requestedCapabilities: data.requestedCapabilities }
       : {}),
+    ...(data.secretRefs !== undefined ? { secretRefs: data.secretRefs } : {}),
   };
 }
 

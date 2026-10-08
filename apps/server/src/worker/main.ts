@@ -13,6 +13,18 @@ async function main(): Promise<void> {
       .filter(Boolean),
   );
   const plugins = [testPlugin, printPlugin].filter((plugin) => allowed.has(plugin.name));
+  const secretNames = (process.env.EXECUTOR_WORKER_SECRET_NAMES ?? '')
+    .split(',')
+    .map((name) => name.trim())
+    .filter(Boolean);
+  if (secretNames.some((name) => !/^[A-Z][A-Z0-9_]{0,127}$/.test(name))) {
+    throw new Error('Invalid worker Secret environment allowlist');
+  }
+  const secretEnv = Object.fromEntries(
+    secretNames
+      .map((name) => [name, process.env[name]])
+      .filter((entry) => typeof entry[1] === 'string'),
+  ) as Record<string, string>;
   if (plugins.length === 0 || plugins.length !== allowed.size) {
     throw new Error('Worker allowlist must name only available test-plugin/print-plugin entries');
   }
@@ -21,6 +33,7 @@ async function main(): Promise<void> {
     token: process.env.EXECUTOR_WORKER_HTTP_TOKEN ?? '',
     workerId: process.env.EXECUTOR_WORKER_ID ?? `${hostname()}-${process.pid}`,
     plugins,
+    secretEnv,
     claimWaitMs: process.env.EXECUTOR_WORKER_CLAIM_WAIT_MS
       ? Number(process.env.EXECUTOR_WORKER_CLAIM_WAIT_MS)
       : undefined,

@@ -428,6 +428,36 @@ describe('backward compat / helpers', () => {
     );
   });
 
+  it('accepts only opaque environment Secret references on plugin steps', () => {
+    const workflow: WorkflowDefinition = {
+      id: 'w',
+      name: 'w',
+      steps: [
+        {
+          id: 'p',
+          name: 'p',
+          plugin: 'p',
+          config: {},
+          secretRefs: { apiKey: 'secret://env/API_KEY' },
+        },
+      ],
+    };
+    assert.doesNotThrow(() => validateStepKinds(workflow));
+    assert.throws(
+      () =>
+        validateStepKinds({
+          ...workflow,
+          steps: [
+            {
+              ...workflow.steps[0]!,
+              secretRefs: { apiKey: 'plain-value' },
+            } as WorkflowDefinition['steps'][number],
+          ],
+        }),
+      WorkflowValidationError,
+    );
+  });
+
   it('deriveChildRunId stays within length and charset', () => {
     const id = deriveChildRunId('parent-run-abcdefghijklmnop', 'step-id-verylongname', 0);
     assert.ok(id.length < 128);

@@ -48,4 +48,18 @@ describe('executor capability authorization', () => {
       ),
     ).toThrow('execution.wait (environment)');
   });
+
+  it('implicitly requires secret.read for any Secret reference', () => {
+    const secretStep = { ...step, secretRefs: { apiKey: 'secret://env/API_KEY' } };
+    expect(() => authorizeExecutorCapabilities(plugin, secretStep, 'secret.read')).toThrow(
+      'secret.read (plugin)',
+    );
+    expect(
+      authorizeExecutorCapabilities(
+        { ...plugin, capabilities: [...plugin.capabilities, 'secret.read'] },
+        secretStep,
+        'secret.read',
+      ),
+    ).toEqual(['secret.read']);
+  });
 });

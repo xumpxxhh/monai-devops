@@ -11,7 +11,7 @@ import {
 import type { PluginContext, PluginResult } from '@monai-devops/plugin-sdk';
 
 const configSchema = z.object({
-  type: z.enum(['unit', 'integration', 'e2e', 'wait', 'failure']),
+  type: z.enum(['unit', 'integration', 'e2e', 'wait', 'failure', 'secret', 'large']),
 });
 
 /**
@@ -23,6 +23,20 @@ async function executeTestPlugin(
 ): Promise<PluginResult> {
   const { type } = config;
   const log = getLogger(context);
+
+  if (type === 'secret') {
+    const secrets = context.executorSecrets as Record<string, unknown> | undefined;
+    const present = typeof secrets?.apiKey === 'string' && secrets.apiKey.length > 0;
+    log.info('测试 Secret 引用已解析');
+    return {
+      success: present,
+      data: { type, message: present ? 'Secret resolved' : 'Secret unavailable' },
+    };
+  }
+
+  if (type === 'large') {
+    return { success: true, data: { type, message: 'Large result', blob: 'x'.repeat(70_000) } };
+  }
 
   if (type === 'failure') {
     log.error('测试故障已触发');
@@ -85,11 +99,11 @@ async function executeTestPlugin(
 export const testPlugin = createPlugin({
   name: 'test-plugin',
   version: '1.0.0',
-  capabilities: ['execution.wait'],
+  capabilities: ['execution.wait', 'secret.read'],
   description: '这是一个测试插件',
   configSchema,
   resultSchema: z.object({
-    type: z.enum(['unit', 'integration', 'e2e', 'wait', 'failure']),
+    type: z.enum(['unit', 'integration', 'e2e', 'wait', 'failure', 'secret', 'large']),
     message: z.string(),
   }),
   execute: executeTestPlugin,

@@ -21,6 +21,7 @@ export function authorizeExecutorCapabilities(
 ): string[] {
   const required = new Set<string>();
   if (step.mayWait) required.add('execution.wait');
+  if (Object.keys(step.secretRefs ?? {}).length > 0) required.add('secret.read');
   for (const capability of step.requestedCapabilities ?? []) required.add(capability);
   const declared = new Set(plugin.capabilities ?? []);
   const allowed = new Set(

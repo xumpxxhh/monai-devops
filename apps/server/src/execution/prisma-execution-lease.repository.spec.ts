@@ -188,4 +188,41 @@ describeIfDb('PrismaExecutionRepository token-fenced leases', () => {
       AttemptStatuses.RUNNING,
     );
   });
+
+  it('preserves a pending cancellation across Run lease loss until the cancellation sweeper fences it', async () => {
+    const execution = { jobId: `${runId}/step`, attemptId, attempt: 0 };
+    await prisma.run.update({
+      where: { runId },
+      data: { leaseToken: 'run-token', leaseExpiresAt: new Date(Date.now() + 60_000) },
+    });
+    expect(
+      await repository.acquireLease(
+        attemptId,
+        'worker-1',
+        'worker-token',
+        new Date(Date.now() + 60_000),
+      ),
+    ).toBe(true);
+    expect(await repository.startLeasedAttempt(attemptId, 'worker-token')).toBe(true);
+    await repository.setJobStatus(execution.jobId, AttemptStatuses.RUNNING);
+    expect(await repository.cancelWorkerAttempt(execution, runId, 'run-token', 5_000)).toBe(true);
+    await prisma.run.update({
+      where: { runId },
+      data: { leaseExpiresAt: new Date(Date.now() - 1_000) },
+    });
+    await prisma.executionAttempt.update({
+      where: { attemptId },
+      data: {
+        leaseExpiresAt: new Date(Date.now() - 1_000),
+        cancelGraceUntil: new Date(Date.now() - 1_000),
+      },
+    });
+    expect(
+      await repository.timeoutExpiredAttempt(attemptId, new Date(), { code: 'lease_expired' }),
+    ).toBe(false);
+    expect(await repository.fenceExpiredWorkerCancellations()).toBe(1);
+    expect((await prisma.executionAttempt.findUniqueOrThrow({ where: { attemptId } })).status).toBe(
+      AttemptStatuses.CANCELLED,
+    );
+  });
 });

@@ -7,6 +7,7 @@ import type {
   ExecutorDispatchV1,
   ExecutorLeaseClaimV1,
   ExecutorMessageDecision,
+  ExecutorObjectRefV1,
 } from '@monai-devops/core-engine';
 import type { PluginResult } from '@monai-devops/plugin-sdk';
 import type { PluginLogEntry } from '@monai-devops/plugin-sdk';
@@ -71,7 +72,7 @@ export interface WorkerLogReceipt {
   attemptId: string;
   stepId: string;
   sequence: number;
-  log: PluginLogEntry;
+  log: PluginLogEntry & { objectRef?: ExecutorObjectRefV1 };
 }
 
 export type ExecutionControlType = 'pause' | 'resume' | 'cancel';
@@ -126,6 +127,18 @@ export interface ExecutionRepository {
     leaseTtlMs: number,
     workerId?: string,
   ): Promise<ExecutorMessageDecision>;
+  storeWorkerObject(
+    workerId: string,
+    execution: ExecutionIdentity,
+    leaseToken: string,
+    kind: 'result' | 'log',
+    content: Buffer,
+  ): Promise<ExecutorObjectRefV1 | undefined>;
+  readWorkerObject(
+    workerId: string,
+    objectId: string,
+  ): Promise<{ ref: ExecutorObjectRefV1; content: Buffer } | undefined>;
+  cleanupExpiredWorkerObjects(now: Date): Promise<number>;
   /** Only returns a terminal inbox receipt consistent with the authoritative Attempt/Job. */
   readWorkerTerminal(execution: ExecutionIdentity): Promise<WorkerTerminalResult | undefined>;
   listWorkerLogsForRun(runId: string): Promise<WorkerLogReceipt[]>;
@@ -140,7 +153,9 @@ export interface ExecutionRepository {
     execution: ExecutionIdentity,
     runId: string,
     runLeaseToken: string,
+    graceMs?: number,
   ): Promise<boolean>;
+  fenceExpiredWorkerCancellations(): Promise<number>;
   registerWait(input: RegisterExecutionWaitInput): Promise<boolean>;
   /** Read-only confirmation that the same worker wait was already atomically persisted. */
   confirmRegisteredWorkerWait(

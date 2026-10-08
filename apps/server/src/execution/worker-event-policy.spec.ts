@@ -29,5 +29,31 @@ describe('worker event policy', () => {
         payload: { level: 'info', message: 'ok', timestamp: 1, secret: 'x' },
       }),
     ).toBe(false);
+    const objectRef = {
+      version: 1,
+      objectId: '12345678-1234-1234-1234-123456789abc',
+      kind: 'log',
+      contentType: 'text/plain',
+      sizeBytes: 5_000,
+      sha256: 'a'.repeat(64),
+      expiresAt: '2026-10-15T00:00:00.000Z',
+    };
+    expect(
+      validWorkerEvent({
+        ...event,
+        payload: { level: 'info', message: 'stored', timestamp: 1, objectRef },
+      }),
+    ).toBe(true);
+    expect(
+      validWorkerEvent({
+        ...event,
+        payload: {
+          level: 'info',
+          message: 'stored',
+          timestamp: 1,
+          objectRef: { ...objectRef, kind: 'result', contentType: 'application/json' },
+        },
+      }),
+    ).toBe(false);
   });
 });

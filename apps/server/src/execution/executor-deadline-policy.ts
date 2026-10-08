@@ -9,3 +9,13 @@ export function resolveExecutorAttemptDeadlineMs(value: string | undefined): num
   }
   return parsed;
 }
+
+/** Hard cancel remains immediate unless an explicit cooperative grace is configured. */
+export function resolveExecutorCancelGraceMs(value: string | undefined): number {
+  if (value === undefined || value.trim() === '') return 0;
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed < 0 || parsed > 30_000) {
+    throw new Error('EXECUTOR_CANCEL_GRACE_MS must be an integer from 0 to 30000');
+  }
+  return parsed;
+}

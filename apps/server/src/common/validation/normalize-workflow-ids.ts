@@ -29,6 +29,7 @@ export interface WorkflowDraftStep {
   retryPolicy?: WorkflowStep['retryPolicy'];
   mayWait?: boolean;
   requestedCapabilities?: string[];
+  secretRefs?: Record<string, string>;
 }
 
 export interface WorkflowDraft {
@@ -177,6 +178,7 @@ function normalizeDraftStep(
     ...(step.requestedCapabilities !== undefined
       ? { requestedCapabilities: step.requestedCapabilities }
       : {}),
+    ...(step.secretRefs !== undefined ? { secretRefs: step.secretRefs } : {}),
     config: remapContextReferences(step.config, refMap, stepLabel) as Record<string, unknown>,
   };
 }

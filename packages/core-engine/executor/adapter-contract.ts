@@ -6,6 +6,39 @@ import { validateWakeCondition, type ExecutionWakeCondition } from '../reliabili
 export const EXECUTOR_PROTOCOL_VERSION = 1 as const;
 export const EXECUTOR_EVENT_MAX_BYTES = 64 * 1024;
 export const EXECUTOR_DATA_MAX_BYTES = 1024 * 1024;
+export const EXECUTOR_INLINE_RESULT_MAX_BYTES = 64 * 1024;
+
+/** Opaque storage location; clients must use an authorized reader, never a filesystem path. */
+export interface ExecutorObjectRefV1 {
+  version: 1;
+  objectId: string;
+  kind: 'result' | 'log';
+  contentType: 'application/json' | 'text/plain';
+  sizeBytes: number;
+  sha256: string;
+  expiresAt: string;
+}
+
+export function isExecutorObjectRef(value: unknown): value is ExecutorObjectRefV1 {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const ref = value as Record<string, unknown>;
+  return (
+    ref.version === 1 &&
+    typeof ref.objectId === 'string' &&
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(ref.objectId) &&
+    ((ref.kind === 'result' && ref.contentType === 'application/json') ||
+      (ref.kind === 'log' && ref.contentType === 'text/plain')) &&
+    typeof ref.sizeBytes === 'number' &&
+    Number.isInteger(ref.sizeBytes) &&
+    ref.sizeBytes > 0 &&
+    ref.sizeBytes <= EXECUTOR_DATA_MAX_BYTES &&
+    typeof ref.sha256 === 'string' &&
+    /^[0-9a-f]{64}$/.test(ref.sha256) &&
+    typeof ref.expiresAt === 'string' &&
+    Number.isFinite(Date.parse(ref.expiresAt)) &&
+    Object.keys(ref).length === 7
+  );
+}
 
 export type ExecutorJsonValue =
   | null
@@ -101,6 +134,7 @@ export type ExecutorRejectCode =
   | 'duplicate'
   | 'out_of_order'
   | 'already_terminal'
+  | 'cancel_requested'
   | 'invalid_payload'
   | 'payload_too_large'
   | 'wait_not_allowed';

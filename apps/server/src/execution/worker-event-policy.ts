@@ -1,4 +1,4 @@
-import type { ExecutorMessageV1 } from '@monai-devops/core-engine';
+import { isExecutorObjectRef, type ExecutorMessageV1 } from '@monai-devops/core-engine';
 
 export const MAX_WORKER_LOG_EVENTS = 100;
 export const MAX_WORKER_LOG_CHARS = 4_096;
@@ -21,6 +21,10 @@ export function validWorkerEvent(message: ExecutorMessageV1): boolean {
     typeof payload.timestamp === 'number' &&
     Number.isFinite(payload.timestamp) &&
     (payload.stream === undefined || payload.stream === 'stdout' || payload.stream === 'stderr') &&
-    Object.keys(payload).every((key) => ['level', 'message', 'timestamp', 'stream'].includes(key))
+    (payload.objectRef === undefined ||
+      (isExecutorObjectRef(payload.objectRef) && payload.objectRef.kind === 'log')) &&
+    Object.keys(payload).every((key) =>
+      ['level', 'message', 'timestamp', 'stream', 'objectRef'].includes(key),
+    )
   );
 }

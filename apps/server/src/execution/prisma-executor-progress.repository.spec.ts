@@ -142,6 +142,46 @@ describeIfDb('PrismaExecutionRepository worker progress inbox', () => {
     });
   });
 
+  it('sends a cooperative cancel hint, then fences writes after the durable grace deadline', async () => {
+    expect(
+      await repository.cancelWorkerAttempt(request.execution, request.runId, 'run-token', 5_000),
+    ).toBe(true);
+    expect(
+      (
+        await prisma.executionAttempt.findUniqueOrThrow({
+          where: { attemptId: request.execution.attemptId },
+        })
+      ).status,
+    ).toBe(AttemptStatuses.RUNNING);
+    expect(await repository.acceptWorkerMessage(request, progress('heartbeat', 1), 30_000)).toEqual(
+      {
+        accepted: false,
+        code: 'cancel_requested',
+      },
+    );
+    expect(await repository.fenceExpiredWorkerCancellations()).toBe(0);
+    await prisma.executionAttempt.update({
+      where: { attemptId: request.execution.attemptId },
+      data: { cancelGraceUntil: new Date(Date.now() - 1_000) },
+    });
+    expect(await repository.fenceExpiredWorkerCancellations()).toBe(1);
+    expect(await repository.fenceExpiredWorkerCancellations()).toBe(0);
+    expect(
+      (
+        await prisma.executionAttempt.findUniqueOrThrow({
+          where: { attemptId: request.execution.attemptId },
+        })
+      ).status,
+    ).toBe(AttemptStatuses.CANCELLED);
+    expect(
+      (await prisma.executionJob.findUniqueOrThrow({ where: { jobId: request.execution.jobId } }))
+        .status,
+    ).toBe(AttemptStatuses.CANCELLED);
+    expect(
+      (await repository.acceptWorkerMessage(request, progress('heartbeat', 1), 30_000)).accepted,
+    ).toBe(false);
+  });
+
   it('rejects malformed log events and a durable per-Attempt log overflow', async () => {
     const malformed = { ...progress('event', 1), payload: { line: 'unbounded' } };
     expect(await repository.acceptWorkerMessage(request, malformed, 30_000)).toEqual({

@@ -1,10 +1,13 @@
 import { Injectable } from '@nestjs/common';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import { Prisma } from '@prisma/client';
 import {
   AttemptStatuses,
   EXECUTOR_PROTOCOL_VERSION,
+  EXECUTOR_DATA_MAX_BYTES,
+  EXECUTOR_INLINE_RESULT_MAX_BYTES,
+  isExecutorObjectRef,
   assessExecutorMessage,
   resolveRetryPolicy,
   validateExecutorDispatch,
@@ -13,6 +16,7 @@ import {
   type ExecutorDispatchV1,
   type ExecutorMessageDecision,
   type ExecutorMessageV1,
+  type ExecutorObjectRefV1,
   type WorkflowDefinition,
 } from '@monai-devops/core-engine';
 import { PrismaService } from '../prisma/prisma.service.js';
@@ -39,6 +43,105 @@ import { MAX_WORKER_LOG_EVENTS, validWorkerEvent } from './worker-event-policy.j
 @Injectable()
 export class PrismaExecutionRepository implements ExecutionRepository {
   constructor(private readonly prisma: PrismaService) {}
+
+  async storeWorkerObject(
+    workerId: string,
+    execution: ExecutionIdentity,
+    leaseToken: string,
+    kind: 'result' | 'log',
+    content: Buffer,
+  ): Promise<ExecutorObjectRefV1 | undefined> {
+    const minimum = kind === 'result' ? EXECUTOR_INLINE_RESULT_MAX_BYTES : 4_096;
+    if (content.length <= minimum || content.length > EXECUTOR_DATA_MAX_BYTES) {
+      return undefined;
+    }
+    if (kind === 'result') {
+      try {
+        const value = JSON.parse(content.toString('utf8')) as Record<string, unknown>;
+        if (
+          !value ||
+          typeof value !== 'object' ||
+          Array.isArray(value) ||
+          typeof value.success !== 'boolean'
+        )
+          return undefined;
+      } catch {
+        return undefined;
+      }
+    }
+    return this.prisma.$transaction(async (tx) => {
+      const rows = await tx.$queryRaw<Array<{ attemptId: string }>>`
+        SELECT attempt."attempt_id" AS "attemptId"
+        FROM "execution_attempts" AS attempt
+        JOIN "execution_jobs" AS job ON job."job_id" = attempt."job_id"
+        JOIN "runs" AS run ON run."run_id" = job."run_id"
+        WHERE attempt."attempt_id" = ${execution.attemptId}
+          AND attempt."job_id" = ${execution.jobId}
+          AND attempt."attempt" = ${execution.attempt}
+          AND attempt."status" = ${AttemptStatuses.RUNNING}
+          AND attempt."lease_owner" = ${workerId}
+          AND attempt."lease_token" = ${leaseToken}
+          AND attempt."lease_expires_at" > clock_timestamp()
+          AND (attempt."dispatch"->>'deadlineAt' IS NULL OR (attempt."dispatch"->>'deadlineAt')::timestamptz > clock_timestamp())
+          AND run."status" = 'running'
+          AND run."is_active" = TRUE
+        FOR UPDATE OF attempt
+      `;
+      if (rows.length !== 1) return undefined;
+      const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60_000);
+      const objectId = randomUUID();
+      const sha256 = createHash('sha256').update(content).digest('hex');
+      await tx.executorObject.create({
+        data: {
+          objectId,
+          attemptId: execution.attemptId,
+          workerId,
+          kind,
+          content: Uint8Array.from(content),
+          contentType: kind === 'result' ? 'application/json' : 'text/plain',
+          sizeBytes: content.length,
+          sha256,
+          expiresAt,
+        },
+      });
+      return {
+        version: 1,
+        objectId,
+        kind,
+        contentType: kind === 'result' ? 'application/json' : 'text/plain',
+        sizeBytes: content.length,
+        sha256,
+        expiresAt: expiresAt.toISOString(),
+      };
+    });
+  }
+
+  async readWorkerObject(
+    workerId: string,
+    objectId: string,
+  ): Promise<{ ref: ExecutorObjectRefV1; content: Buffer } | undefined> {
+    const object = await this.prisma.executorObject.findFirst({
+      where: { objectId, workerId, expiresAt: { gt: new Date() } },
+    });
+    if (!object) return undefined;
+    return {
+      ref: {
+        version: 1,
+        objectId,
+        kind: object.kind as 'result' | 'log',
+        contentType: object.contentType as 'application/json' | 'text/plain',
+        sizeBytes: object.sizeBytes,
+        sha256: object.sha256,
+        expiresAt: object.expiresAt.toISOString(),
+      },
+      content: Buffer.from(object.content),
+    };
+  }
+
+  async cleanupExpiredWorkerObjects(now: Date): Promise<number> {
+    return (await this.prisma.executorObject.deleteMany({ where: { expiresAt: { lte: now } } }))
+      .count;
+  }
 
   async ensureJob(input: CreateExecutionJobInput): Promise<void> {
     await this.prisma.executionJob.upsert({
@@ -226,6 +329,7 @@ export class PrismaExecutionRepository implements ExecutionRepository {
           {
             status: { in: [AttemptStatuses.LEASED, AttemptStatuses.RUNNING] },
             leaseExpiresAt: { lt: now },
+            cancelGraceUntil: null,
           },
         ],
       },
@@ -314,8 +418,63 @@ export class PrismaExecutionRepository implements ExecutionRepository {
       const decision = assessExecutorMessage(request, fence, message, now);
       if (!decision.accepted) return decision;
       const progress = message as ExecutorMessageV1;
+      if (attempt.cancelGraceUntil && progress.kind !== 'complete') {
+        return { accepted: false, code: 'cancel_requested' };
+      }
       if (!validWorkerEvent(progress)) return { accepted: false, code: 'invalid_payload' };
+      if (progress.kind === 'complete') {
+        if (
+          Buffer.byteLength(JSON.stringify(progress.result), 'utf8') >
+          EXECUTOR_INLINE_RESULT_MAX_BYTES
+        ) {
+          return { accepted: false, code: 'payload_too_large' };
+        }
+        const data = progress.result.data;
+        if (data && typeof data === 'object' && !Array.isArray(data) && 'objectRef' in data) {
+          const ref = (data as Record<string, unknown>).objectRef;
+          if (!isExecutorObjectRef(ref) || Object.keys(data).length !== 1) {
+            return { accepted: false, code: 'invalid_payload' };
+          }
+          const saved = await tx.executorObject.findFirst({
+            where: {
+              objectId: ref.objectId,
+              attemptId: request.execution.attemptId,
+              workerId: attempt.leaseOwner ?? '',
+              expiresAt: { gt: now },
+            },
+          });
+          if (
+            !saved ||
+            saved.sizeBytes !== ref.sizeBytes ||
+            saved.sha256 !== ref.sha256 ||
+            saved.expiresAt.toISOString() !== ref.expiresAt
+          ) {
+            return { accepted: false, code: 'invalid_payload' };
+          }
+        }
+      }
       if (progress.kind === 'event') {
+        const payload = progress.payload as Record<string, unknown>;
+        if (payload.objectRef) {
+          const ref = payload.objectRef as ExecutorObjectRefV1;
+          const saved = await tx.executorObject.findFirst({
+            where: {
+              objectId: ref.objectId,
+              attemptId: request.execution.attemptId,
+              workerId: attempt.leaseOwner ?? '',
+              kind: 'log',
+              expiresAt: { gt: now },
+            },
+          });
+          if (
+            !saved ||
+            saved.sizeBytes !== ref.sizeBytes ||
+            saved.sha256 !== ref.sha256 ||
+            saved.expiresAt.toISOString() !== ref.expiresAt
+          ) {
+            return { accepted: false, code: 'invalid_payload' };
+          }
+        }
         const logs = await tx.executionAttemptMessage.count({
           where: { attemptId: request.execution.attemptId, kind: 'event' },
         });
@@ -567,6 +726,9 @@ export class PrismaExecutionRepository implements ExecutionRepository {
             message: log.message.slice(0, 4_096),
             timestamp: log.timestamp,
             ...(log.stream === 'stdout' || log.stream === 'stderr' ? { stream: log.stream } : {}),
+            ...(isExecutorObjectRef(log.objectRef) && log.objectRef.kind === 'log'
+              ? { objectRef: log.objectRef }
+              : {}),
           },
         },
       ];
@@ -599,6 +761,7 @@ export class PrismaExecutionRepository implements ExecutionRepository {
           AND attempt."attempt" = ${execution.attempt}
           AND attempt."status" IN (${AttemptStatuses.LEASED}, ${AttemptStatuses.RUNNING})
           AND attempt."lease_expires_at" < clock_timestamp()
+          AND attempt."cancel_grace_until" IS NULL
           AND EXISTS (
             SELECT 1 FROM "execution_jobs" AS job
             JOIN "runs" AS run ON run."run_id" = job."run_id"
@@ -629,7 +792,38 @@ export class PrismaExecutionRepository implements ExecutionRepository {
     execution: ExecutionIdentity,
     runId: string,
     runLeaseToken: string,
+    graceMs = 0,
   ): Promise<boolean> {
+    if (!Number.isInteger(graceMs) || graceMs < 0 || graceMs > 30_000) {
+      throw new Error('Invalid worker cancellation grace');
+    }
+    if (graceMs > 0) {
+      const requested = await this.prisma.$executeRaw`
+        UPDATE "execution_attempts" AS attempt
+        SET "cancel_grace_until" = clock_timestamp() + (${graceMs} * INTERVAL '1 millisecond')
+        WHERE attempt."attempt_id" = ${execution.attemptId}
+          AND attempt."job_id" = ${execution.jobId}
+          AND attempt."attempt" = ${execution.attempt}
+          AND attempt."status" = ${AttemptStatuses.RUNNING}
+          AND attempt."cancel_grace_until" IS NULL
+          AND EXISTS (
+            SELECT 1 FROM "execution_jobs" AS job
+            JOIN "runs" AS run ON run."run_id" = job."run_id"
+            WHERE job."job_id" = attempt."job_id"
+              AND job."run_id" = ${runId}
+              AND job."status" = ${AttemptStatuses.RUNNING}
+              AND run."is_active" = TRUE
+              AND run."lease_token" = ${runLeaseToken}
+              AND run."lease_expires_at" > clock_timestamp()
+          )
+      `;
+      if (requested === 1) return true;
+      const existing = await this.prisma.executionAttempt.findUnique({
+        where: { attemptId: execution.attemptId },
+        select: { status: true, cancelGraceUntil: true },
+      });
+      if (existing?.status === AttemptStatuses.RUNNING && existing.cancelGraceUntil) return true;
+    }
     return this.prisma.$transaction(async (tx) => {
       const changed = await tx.$executeRaw`
         UPDATE "execution_attempts" AS attempt
@@ -667,6 +861,34 @@ export class PrismaExecutionRepository implements ExecutionRepository {
       });
       if (job.count !== 1) throw new Error(`Worker cancellation Job mismatch: ${execution.jobId}`);
       return true;
+    });
+  }
+
+  async fenceExpiredWorkerCancellations(): Promise<number> {
+    return this.prisma.$transaction(async (tx) => {
+      const rows = await tx.$queryRaw<Array<{ jobId: string }>>`
+        UPDATE "execution_attempts" AS attempt
+        SET "status" = ${AttemptStatuses.CANCELLED},
+            "finished_at" = clock_timestamp(),
+            "lease_owner" = NULL,
+            "lease_token" = NULL,
+            "lease_expires_at" = NULL,
+            "heartbeat_at" = NULL,
+            "cancel_grace_until" = NULL
+        WHERE attempt."cancel_grace_until" <= clock_timestamp()
+          AND attempt."status" IN (${AttemptStatuses.RUNNING}, ${AttemptStatuses.LEASED})
+        RETURNING attempt."job_id" AS "jobId"
+      `;
+      for (const row of rows) {
+        await tx.executionJob.updateMany({
+          where: {
+            jobId: row.jobId,
+            status: { in: [AttemptStatuses.RUNNING, AttemptStatuses.LEASED] },
+          },
+          data: { status: AttemptStatuses.CANCELLED },
+        });
+      }
+      return rows.length;
     });
   }
 
@@ -742,6 +964,7 @@ export class PrismaExecutionRepository implements ExecutionRepository {
           attemptId,
           status: { in: [AttemptStatuses.LEASED, AttemptStatuses.RUNNING] },
           leaseExpiresAt: { lt: now },
+          cancelGraceUntil: null,
           job: {
             run: {
               OR: [{ leaseExpiresAt: null }, { leaseExpiresAt: { lt: now } }],

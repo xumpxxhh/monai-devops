@@ -7,6 +7,7 @@ import {
   EXECUTOR_PROTOCOL_VERSION,
   assessExecutorCancel,
   assessExecutorMessage,
+  isExecutorObjectRef,
   validateExecutorDispatch,
   type ExecutorDispatchV1,
   type ExecutorFenceState,
@@ -14,6 +15,20 @@ import {
 } from '../executor/adapter-contract.js';
 
 const NOW = new Date('2026-09-25T10:00:00.000Z');
+
+it('accepts only bounded opaque result references', () => {
+  const ref = {
+    version: 1,
+    objectId: '12345678-1234-1234-1234-123456789abc',
+    kind: 'result',
+    contentType: 'application/json',
+    sizeBytes: 70_000,
+    sha256: 'a'.repeat(64),
+    expiresAt: '2026-10-01T00:00:00.000Z',
+  };
+  assert.equal(isExecutorObjectRef(ref), true);
+  assert.equal(isExecutorObjectRef({ ...ref, objectId: 'C:\\secret.txt' }), false);
+});
 
 function request(): ExecutorDispatchV1 {
   return {

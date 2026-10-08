@@ -70,7 +70,10 @@ import {
   authorizeExecutorCapabilities,
   ExecutorCapabilityDeniedError,
 } from '../execution/executor-capability-policy.js';
-import { resolveExecutorAttemptDeadlineMs } from '../execution/executor-deadline-policy.js';
+import {
+  resolveExecutorAttemptDeadlineMs,
+  resolveExecutorCancelGraceMs,
+} from '../execution/executor-deadline-policy.js';
 import { buildRunRecoverySnapshot, RunRecoveryNotReadyError } from './run-recovery-snapshot.js';
 
 export interface SubmitRunOptions {
@@ -347,6 +350,16 @@ export class RunManagerService implements OnModuleInit, OnModuleDestroy {
           : {}),
       }),
     ) as ExecutorJsonObject;
+    if (
+      Object.keys(step.secretRefs ?? {}).length > 0 &&
+      !this.config.get<string>('EXECUTOR_WORKER_IDENTITIES_JSON')?.trim()
+    ) {
+      return {
+        success: false,
+        code: PluginFailureCodes.PLUGIN_CONFIG_INVALID,
+        message: 'Named worker identity is required for Secret references',
+      };
+    }
     const dispatch = {
       protocolVersion: EXECUTOR_PROTOCOL_VERSION,
       runId,
@@ -361,6 +374,7 @@ export class RunManagerService implements OnModuleInit, OnModuleDestroy {
           resolveExecutorAttemptDeadlineMs(this.config.get<string>('EXECUTOR_ATTEMPT_DEADLINE_MS')),
       ).toISOString(),
       requiredCapabilities,
+      ...(step.secretRefs ? { secretRefs: step.secretRefs } : {}),
       input: { config: { type: config.type }, context: remoteContext },
     };
     if (!(await this.executionRepository.registerWorkerDispatch(dispatch, runLease.token))) {
@@ -372,6 +386,7 @@ export class RunManagerService implements OnModuleInit, OnModuleDestroy {
         execution,
         runId,
         runLease.token,
+        resolveExecutorCancelGraceMs(this.config.get<string>('EXECUTOR_CANCEL_GRACE_MS')),
       );
     };
     signal.addEventListener('abort', onAbort, { once: true });

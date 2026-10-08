@@ -13,6 +13,7 @@ import { ExecutionControlService } from '../execution/execution-control.service.
 import { ExecutionWakeService } from '../execution/execution-wake.service.js';
 import { RunRecoveryService } from './run-recovery.service.js';
 import { WorkerTransportController } from '../execution/worker-transport.controller.js';
+import { ExecutorObjectCleanupService } from '../execution/executor-object-cleanup.service.js';
 
 @Global()
 @Module({
@@ -26,6 +27,7 @@ import { WorkerTransportController } from '../execution/worker-transport.control
     ExecutionRecoveryService,
     ExecutionControlService,
     ExecutionWakeService,
+    ExecutorObjectCleanupService,
     RunManagerService,
     RunRecoveryService,
     RunStreamService,

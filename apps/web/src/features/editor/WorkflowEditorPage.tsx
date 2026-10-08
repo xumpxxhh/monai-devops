@@ -106,6 +106,7 @@ interface StepNodeData {
   retryPolicy?: WorkflowStep['retryPolicy'];
   mayWait?: boolean;
   requestedCapabilities?: string[];
+  secretRefs?: Record<string, string>;
   configInvalid?: boolean;
   [key: string]: unknown;
 }
@@ -208,6 +209,7 @@ function stepToNodeData(step: WorkflowStep): StepNodeData {
     retryPolicy: step.retryPolicy,
     mayWait: isPluginStep(step) ? step.mayWait : undefined,
     requestedCapabilities: isPluginStep(step) ? step.requestedCapabilities : undefined,
+    secretRefs: isPluginStep(step) ? step.secretRefs : undefined,
   };
 
   if (isSetStateStep(step)) {
@@ -294,6 +296,7 @@ function buildDraft(
           retryPolicy: node.data.retryPolicy,
           mayWait: node.data.mayWait,
           requestedCapabilities: node.data.requestedCapabilities,
+          secretRefs: node.data.secretRefs,
         },
         deps,
       );

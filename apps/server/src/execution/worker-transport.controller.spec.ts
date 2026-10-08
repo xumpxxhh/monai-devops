@@ -9,6 +9,8 @@ describe('WorkerTransportController', () => {
   const repository = {
     claimWorkerDispatch: jest.fn(async () => undefined),
     acceptRegisteredWorkerMessage: jest.fn(async () => ({ accepted: false, code: 'duplicate' })),
+    storeWorkerObject: jest.fn(async () => ({ objectId: 'object-1' })),
+    readWorkerObject: jest.fn(async () => undefined),
   };
 
   function controller(configuredToken?: string) {
@@ -130,5 +132,42 @@ describe('WorkerTransportController', () => {
       30_000,
       'worker-1',
     );
+  });
+
+  it('requires a named worker identity and active lease for object upload', async () => {
+    const subject = new WorkerTransportController(
+      repository as unknown as ExecutionRepository,
+      {
+        get: jest.fn((key: string) =>
+          key === 'EXECUTOR_WORKER_IDENTITIES_JSON'
+            ? JSON.stringify([{ workerId: 'worker-1', tokens: [token], plugins }])
+            : undefined,
+        ),
+      } as unknown as ConfigService,
+    );
+    const upload = {
+      execution: { jobId: 'job', attemptId: 'attempt', attempt: 0 },
+      leaseToken: 'lease',
+      kind: 'result',
+      bodyBase64: Buffer.from(JSON.stringify({ success: true, data: 'x'.repeat(70_000) })).toString(
+        'base64',
+      ),
+    };
+    await expect(controller(token).uploadObject(`Bearer ${token}`, upload)).rejects.toMatchObject({
+      status: 403,
+    });
+    expect(await subject.uploadObject(`Bearer ${token}`, upload)).toEqual({
+      objectRef: { objectId: 'object-1' },
+    });
+    expect(repository.storeWorkerObject).toHaveBeenCalledWith(
+      'worker-1',
+      upload.execution,
+      'lease',
+      'result',
+      Buffer.from(upload.bodyBase64, 'base64'),
+    );
+    await expect(subject.readObject(`Bearer ${token}`, 'missing')).rejects.toMatchObject({
+      status: 404,
+    });
   });
 });

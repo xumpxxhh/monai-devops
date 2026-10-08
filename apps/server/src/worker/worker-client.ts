@@ -1,6 +1,9 @@
 import { setTimeout as delay } from 'node:timers/promises';
 import {
   EXECUTOR_PROTOCOL_VERSION,
+  EXECUTOR_DATA_MAX_BYTES,
+  EXECUTOR_INLINE_RESULT_MAX_BYTES,
+  isExecutorObjectRef,
   validateExecutorDispatch,
   type ExecutorDispatchV1,
   type ExecutorLeaseClaimV1,
@@ -24,6 +27,8 @@ export interface WorkerClientOptions {
   token: string;
   workerId: string;
   plugins: PluginDefinition[];
+  /** Explicit in-memory allowlist; Worker main maps names to its own environment. */
+  secretEnv?: Record<string, string>;
   claimWaitMs?: number;
   fetchImpl?: typeof fetch;
 }
@@ -40,6 +45,7 @@ export class WorkerClient {
   private readonly offers: Array<{ name: string; version: string; capabilities: string[] }>;
   private readonly claimWaitMs: number;
   private readonly fetchImpl: typeof fetch;
+  private readonly secretEnv: Record<string, string>;
 
   constructor(options: WorkerClientOptions) {
     this.baseUrl = new URL(`${options.serverUrl.replace(/\/$/, '')}/`);
@@ -57,11 +63,14 @@ export class WorkerClient {
     }
     this.token = options.token.trim();
     this.workerId = options.workerId.trim();
+    this.secretEnv = options.secretEnv ?? {};
     this.plugins = new Map(options.plugins.map((plugin) => [plugin.name, plugin]));
     this.offers = options.plugins.map((plugin) => ({
       name: plugin.name,
       version: plugin.version,
-      capabilities: plugin.capabilities ?? [],
+      capabilities: (plugin.capabilities ?? []).filter(
+        (capability) => capability !== 'secret.read' || Object.keys(this.secretEnv).length > 0,
+      ),
     }));
     this.claimWaitMs = options.claimWaitMs ?? 20_000;
     if (!Number.isInteger(this.claimWaitMs) || this.claimWaitMs < 0 || this.claimWaitMs > 20_000) {
@@ -192,25 +201,63 @@ export class WorkerClient {
     );
     interval.unref?.();
     const mayWait = dispatch.requiredCapabilities.includes('execution.wait');
+    const secretRefs = dispatch.secretRefs ?? {};
+    const secrets: Record<string, string> = {};
+    let secretsAllowed =
+      Object.keys(secretRefs).length === 0 || dispatch.requiredCapabilities.includes('secret.read');
+    for (const [alias, ref] of Object.entries(secretRefs)) {
+      const name = /^secret:\/\/env\/([A-Z][A-Z0-9_]{0,127})$/.exec(ref)?.[1];
+      const value = name ? this.secretEnv[name] : undefined;
+      if (!name || typeof value !== 'string' || value.length < 8) {
+        secretsAllowed = false;
+        break;
+      }
+      secrets[alias] = value;
+    }
+    const secretValues = Object.values(secrets);
+    const redact = (text: string) =>
+      secretValues.reduce((value, secret) => value.split(secret).join('[REDACTED]'), text);
     let logChain: Promise<void> = Promise.resolve();
     let logCount = 0;
     const log = (level: string, message: string, stream?: 'stdout' | 'stderr') => {
       if (logCount >= MAX_WORKER_LOG_EVENTS) return;
       logCount += 1;
-      // Never forward arbitrary logger data or unbounded text from an untrusted plugin.
-      const payload = {
-        level,
-        message: message.slice(0, MAX_WORKER_LOG_CHARS),
-        timestamp: Date.now(),
-        ...(stream ? { stream } : {}),
-      };
-      logChain = logChain.then(() =>
-        send('event', {
+      const safeMessage = redact(message);
+      logChain = logChain.then(async () => {
+        let objectRef: unknown;
+        if (safeMessage.length > MAX_WORKER_LOG_CHARS) {
+          const content = Buffer.from(safeMessage, 'utf8').subarray(0, EXECUTOR_DATA_MAX_BYTES);
+          const upload = await this.post(
+            'executor-workers/objects',
+            {
+              execution: dispatch.execution,
+              leaseToken: claim.leaseToken,
+              kind: 'log',
+              bodyBase64: content.toString('base64'),
+            },
+            controller.signal,
+          );
+          if (
+            !record(upload) ||
+            !isExecutorObjectRef(upload.objectRef) ||
+            upload.objectRef.kind !== 'log'
+          ) {
+            throw new Error('Invalid executor log object upload response');
+          }
+          objectRef = upload.objectRef;
+        }
+        return send('event', {
           eventType: 'plugin:log',
           payloadVersion: 1,
-          payload,
-        }),
-      );
+          payload: {
+            level,
+            message: objectRef ? '[log stored as object]' : safeMessage,
+            timestamp: Date.now(),
+            ...(stream ? { stream } : {}),
+            ...(objectRef ? { objectRef } : {}),
+          },
+        });
+      });
     };
     try {
       const plugin = this.plugins.get(dispatch.plugin.name);
@@ -218,7 +265,7 @@ export class WorkerClient {
       if (
         !plugin ||
         plugin.version !== dispatch.plugin.version ||
-        Object.keys(dispatch.secretRefs ?? {}).length > 0 ||
+        !secretsAllowed ||
         dispatch.requiredCapabilities.some(
           (capability) => !(plugin.capabilities ?? []).includes(capability),
         )
@@ -232,6 +279,7 @@ export class WorkerClient {
         try {
           result = await plugin.execute(dispatch.input.config, {
             ...dispatch.input.context,
+            ...(secretValues.length > 0 ? { executorSecrets: secrets } : {}),
             [PluginContextKeys.signal]: controller.signal,
             [PluginContextKeys.logger]: {
               debug: (message: string) => log('debug', message),
@@ -246,13 +294,20 @@ export class WorkerClient {
           result = {
             success: false,
             code: PluginFailureCodes.PLUGIN_EXECUTION_ERROR,
-            message: error instanceof Error ? error.message : 'Worker plugin failed',
+            message: error instanceof Error ? redact(error.message) : 'Worker plugin failed',
           };
         }
       }
       clearInterval(interval);
       await logChain;
       await messageChain;
+      if (secretValues.some((value) => JSON.stringify(result).includes(value))) {
+        result = {
+          success: false,
+          code: PluginFailureCodes.PLUGIN_EXECUTION_ERROR,
+          message: 'Plugin result contained a Secret value',
+        };
+      }
       if (result.wait) {
         if (mayWait) {
           await send('wait', {
@@ -265,6 +320,27 @@ export class WorkerClient {
           success: false,
           code: PluginFailureCodes.PLUGIN_CONFIG_INVALID,
           message: 'Worker wait is not enabled',
+        };
+      }
+      const serialized = Buffer.from(JSON.stringify(result), 'utf8');
+      if (serialized.length > EXECUTOR_INLINE_RESULT_MAX_BYTES) {
+        const upload = await this.post(
+          'executor-workers/objects',
+          {
+            execution: dispatch.execution,
+            leaseToken: claim.leaseToken,
+            kind: 'result',
+            bodyBase64: serialized.toString('base64'),
+          },
+          controller.signal,
+        );
+        if (!record(upload) || !isExecutorObjectRef(upload.objectRef)) {
+          throw new Error('Invalid executor object upload response');
+        }
+        result = {
+          success: result.success,
+          ...(result.code ? { code: result.code } : {}),
+          data: { objectRef: upload.objectRef },
         };
       }
       await send('complete', { result });

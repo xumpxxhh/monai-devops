@@ -119,6 +119,20 @@ export function validateStepKinds(workflow: WorkflowDefinition): void {
         `步骤 "${step.id}" 的 requestedCapabilities 必须为不重复的非空字符串数组`,
       );
     }
+    if (
+      step.secretRefs !== undefined &&
+      (typeof step.secretRefs !== 'object' ||
+        step.secretRefs === null ||
+        Array.isArray(step.secretRefs) ||
+        Object.entries(step.secretRefs).some(
+          ([name, ref]) =>
+            !/^[A-Za-z][A-Za-z0-9_]{0,63}$/.test(name) ||
+            typeof ref !== 'string' ||
+            !/^secret:\/\/env\/[A-Z][A-Z0-9_]{0,127}$/.test(ref),
+        ))
+    ) {
+      throw new WorkflowValidationError(`步骤 "${step.id}" 的 secretRefs 必须为受限 Secret 引用`);
+    }
   }
 }
 

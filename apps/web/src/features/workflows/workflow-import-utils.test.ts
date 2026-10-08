@@ -66,11 +66,13 @@ describe('definitionToDraft', () => {
           plugin: 'test-plugin',
           config: {},
           requestedCapabilities: ['execution.wait'],
+          secretRefs: { apiKey: 'secret://env/API_KEY' },
         },
       ],
     };
     expect(definitionToDraft(definition).draft.steps[0]).toMatchObject({
       requestedCapabilities: ['execution.wait'],
+      secretRefs: { apiKey: 'secret://env/API_KEY' },
     });
   });
   it('converts plugin and set_state steps with dependsOn remapping', () => {

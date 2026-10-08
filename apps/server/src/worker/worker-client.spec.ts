@@ -211,4 +211,144 @@ describe('WorkerClient', () => {
     expect(observedAbort).toBe(true);
     expect(fetchImpl).toHaveBeenCalledTimes(1);
   });
+
+  it('resolves authorized Secret refs only inside the worker and redacts logs/results', async () => {
+    const secret = 'private-secret-value-123';
+    const messages: Array<Record<string, unknown>> = [];
+    const plugin: PluginDefinition = {
+      name: 'safe-plugin',
+      version: '1.0.0',
+      capabilities: ['secret.read'],
+      execute: async (_config, context) => {
+        const value = (context.executorSecrets as Record<string, string>).apiKey;
+        (context[PluginContextKeys.logger] as { info(message: string): void }).info(
+          `value=${value}`,
+        );
+        return { success: true, data: { leaked: value } };
+      },
+    };
+    const fetchImpl = jest.fn(async (url: URL | RequestInfo, init?: RequestInit) => {
+      if (String(url).endsWith('/claim')) {
+        expect(JSON.parse(String(init?.body))).toMatchObject({
+          plugins: [{ capabilities: ['secret.read'] }],
+        });
+        return json({
+          assignment: assignment({
+            ...dispatch,
+            requiredCapabilities: ['secret.read'],
+            secretRefs: { apiKey: 'secret://env/API_KEY' },
+          }),
+        });
+      }
+      messages.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+      return json({ accepted: true });
+    });
+    const client = new WorkerClient({
+      serverUrl: 'http://localhost:3000/api/v1/devops',
+      token,
+      workerId: 'worker-1',
+      plugins: [plugin],
+      secretEnv: { API_KEY: secret },
+      claimWaitMs: 0,
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    });
+    await client.runOnce();
+    expect(JSON.stringify(messages)).not.toContain(secret);
+    expect(messages).toMatchObject([
+      { kind: 'event', payload: { message: 'value=[REDACTED]' } },
+      {
+        kind: 'complete',
+        result: { success: false, message: 'Plugin result contained a Secret value' },
+      },
+    ]);
+  });
+
+  it('uploads a large result and completes with only an opaque object reference', async () => {
+    const messages: Array<Record<string, unknown>> = [];
+    const plugin: PluginDefinition = {
+      name: 'safe-plugin',
+      version: '1.0.0',
+      execute: async () => ({ success: true, data: 'x'.repeat(70_000) }),
+    };
+    const ref = {
+      version: 1,
+      objectId: '12345678-1234-1234-1234-123456789abc',
+      kind: 'result',
+      contentType: 'application/json',
+      sizeBytes: 70_027,
+      sha256: 'a'.repeat(64),
+      expiresAt: new Date(Date.now() + 60_000).toISOString(),
+    };
+    const fetchImpl = jest.fn(async (url: URL | RequestInfo, init?: RequestInit) => {
+      if (String(url).endsWith('/claim')) return json({ assignment: assignment() });
+      const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      if (String(url).endsWith('/objects')) {
+        expect(Buffer.from(String(body.bodyBase64), 'base64').length).toBeGreaterThan(65_536);
+        return json({ objectRef: ref });
+      }
+      messages.push(body);
+      return json({ accepted: true });
+    });
+    const client = new WorkerClient({
+      serverUrl: 'http://localhost:3000/api/v1/devops',
+      token,
+      workerId: 'worker-1',
+      plugins: [plugin],
+      claimWaitMs: 0,
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    });
+    await client.runOnce();
+    expect(messages).toMatchObject([
+      { kind: 'complete', result: { success: true, data: { objectRef: ref } } },
+    ]);
+    expect(JSON.stringify(messages)).not.toContain('x'.repeat(100));
+  });
+
+  it('uploads an oversized log and emits a bounded reference event', async () => {
+    const messages: Array<Record<string, unknown>> = [];
+    const plugin: PluginDefinition = {
+      name: 'safe-plugin',
+      version: '1.0.0',
+      execute: async (_config, context) => {
+        (context[PluginContextKeys.logger] as { info(message: string): void }).info(
+          'x'.repeat(5_000),
+        );
+        return { success: true };
+      },
+    };
+    const ref = {
+      version: 1,
+      objectId: '12345678-1234-1234-1234-123456789abc',
+      kind: 'log',
+      contentType: 'text/plain',
+      sizeBytes: 5_000,
+      sha256: 'b'.repeat(64),
+      expiresAt: new Date(Date.now() + 60_000).toISOString(),
+    };
+    const fetchImpl = jest.fn(async (url: URL | RequestInfo, init?: RequestInit) => {
+      if (String(url).endsWith('/claim')) return json({ assignment: assignment() });
+      const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      if (String(url).endsWith('/objects')) {
+        expect(body.kind).toBe('log');
+        expect(Buffer.from(String(body.bodyBase64), 'base64').length).toBe(5_000);
+        return json({ objectRef: ref });
+      }
+      messages.push(body);
+      return json({ accepted: true });
+    });
+    const client = new WorkerClient({
+      serverUrl: 'http://localhost:3000/api/v1/devops',
+      token,
+      workerId: 'worker-1',
+      plugins: [plugin],
+      claimWaitMs: 0,
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    });
+    await client.runOnce();
+    expect(messages).toMatchObject([
+      { kind: 'event', payload: { message: '[log stored as object]', objectRef: ref } },
+      { kind: 'complete', result: { success: true } },
+    ]);
+    expect(JSON.stringify(messages)).not.toContain('x'.repeat(100));
+  });
 });

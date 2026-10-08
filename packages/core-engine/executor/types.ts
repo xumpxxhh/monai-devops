@@ -81,6 +81,8 @@ export interface PluginStep extends BaseStep {
   mayWait?: boolean;
   /** Explicitly requested remote capabilities; never grants permission by itself. */
   requestedCapabilities?: string[];
+  /** Opaque references; values are resolved only inside the authorized remote worker. */
+  secretRefs?: Record<string, string>;
 }
 
 export interface SetStateStep extends BaseStep {
