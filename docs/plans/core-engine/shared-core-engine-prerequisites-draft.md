@@ -8,6 +8,7 @@
 - 归档日期：2026-09-18
 - 当前状态：Core-0、Core-1 已完成；Core-2 顶层可靠调度与恢复最小闭环已收尾，覆盖 Attempt/Run lease、retry/new Attempt、跨进程控制、signal/timer 等待及超时、重启接管、永久不可恢复状态的显式终结。Core-3.1 本地适配已落地；Core-3.2 的非生产 `test-plugin` 最小远程闭环已收尾，覆盖远程领取/回传、失败、日志、等待唤醒、硬取消、worker 崩溃及持有 Run 的服务进程重启。Core-3.3 实验路径已完成 capability 派发授权、worker 领取匹配、命名凭据与消息 owner 校验，详见[实施进度](./core-3-executor-capability-boundary.md)；Run 用户身份/多租户绑定仍未完成，生产远程执行继续禁用。嵌套挂起与 paused 在途步骤的无损续跑不在 Core-2 实现范围；真实外部副作用的幂等认证和更大规模故障注入留待 Core-4 验证。
 - Core-3.4 进度：非生产 `test-plugin` 路径的 deadline、可选取消宽限期、受限日志、Worker 端 Secret 引用解析、结果/日志对象引用及保留清理闭环已落地；生产密钥管理与用户级对象访问不在此试验范围。
+- Core-3 退出状态：3.5 的自动化故障证据、人工验收清单和回滚步骤已整理在[退出验证手册](./core-3-exit-verification.md)。生产门槛仍受 Run 用户/租户授权、生产凭据与 Secret 治理、并发/长时基线和真实灰度演练阻塞；生产远程执行保持禁用，不将非生产实验闭环误记为整个 Core-3 完成。
 - 决策状态：总体方向已采纳，阶段细节逐项决策
 - 适用范围：`core-engine`、Run 模型、事件模型、插件/工具执行边界和可靠性基础
 - 下游路线：[企业级 CI/CD 推演](../ci-cd-engine/enterprise-ci-cd-roadmap-draft.md)、[AI Agent 推演](../agent-engine/ai-agent-execution-engine-roadmap-draft.md)
