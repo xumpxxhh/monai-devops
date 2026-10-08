@@ -7,6 +7,7 @@ import { ConfigService } from '@nestjs/config';
 import { Test } from '@nestjs/testing';
 import type { NestExpressApplication } from '@nestjs/platform-express';
 import testPlugin from '@monai-devops/test-plugin';
+import printPlugin from '@monai-devops/print-plugin';
 import { assertTestDatabaseUrl } from '../common/storage/assert-test-database-url.js';
 import { EngineService } from '../engine/engine.service.js';
 import { ExecutionLeaseService } from '../execution/execution-lease.service.js';
@@ -29,9 +30,11 @@ describeIfDb('remote worker HTTP/database integration', () => {
   let workerLeaseTtlMs = 30_000;
   let allowedCapabilities = 'execution.wait';
   let namedIdentities: string | undefined;
+  let remoteDevEnabled = false;
   const config = {
     get: (key: string, fallback?: unknown) => {
       if (key === 'EXECUTOR_REMOTE_TEST_ENABLED') return true;
+      if (key === 'EXECUTOR_REMOTE_DEV_ENABLED') return remoteDevEnabled;
       if (key === 'EXECUTOR_WORKER_HTTP_TOKEN') return token;
       if (key === 'APP_ENV') return 'local-test';
       if (key === 'EXECUTOR_WORKER_LEASE_TTL_MS') return workerLeaseTtlMs;
@@ -123,6 +126,50 @@ describeIfDb('remote worker HTTP/database integration', () => {
         where: { attemptId: attempt?.attemptId, kind: 'complete' },
       }),
     ).not.toBeNull();
+  });
+
+  it('runs a non-test plugin with full nested configuration over the development HTTP path', async () => {
+    remoteDevEnabled = true;
+    try {
+      const submitted = await manager.submitRun({
+        id: 'remote-print-integration',
+        name: 'Remote print integration',
+        steps: [
+          {
+            id: 'print',
+            name: 'Remote print',
+            plugin: 'print-plugin',
+            config: { data: { nested: { value: 42 } } },
+          },
+        ],
+      });
+      runIds.push(submitted.runId);
+      const address = app.getHttpServer().address() as { port: number };
+      const worker = new WorkerClient({
+        serverUrl: `http://127.0.0.1:${address.port}/api/v1/devops`,
+        token,
+        workerId: 'print-integration-worker',
+        plugins: [printPlugin],
+        claimWaitMs: 5_000,
+      });
+      expect(await worker.runOnce()).toBe(true);
+      let run = await runs.findById(submitted.runId);
+      for (let i = 0; i < 100 && run?.status !== 'finished'; i++) {
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        run = await runs.findById(submitted.runId);
+      }
+      expect(run?.status).toBe('finished');
+      expect(run?.result?.results[0]?.pluginResult?.data).toEqual({
+        message: '{\n  "nested": {\n    "value": 42\n  }\n}',
+      });
+      expect(
+        await prisma.executionAttempt.findFirst({
+          where: { job: { runId: submitted.runId }, leaseOwner: 'print-integration-worker' },
+        }),
+      ).not.toBeNull();
+    } finally {
+      remoteDevEnabled = false;
+    }
   });
 
   it('keeps a large result out of Run JSON and serves its object only to the named worker', async () => {
@@ -758,6 +805,8 @@ describeIfDb('remote worker HTTP/database integration', () => {
         ...process.env,
         EXECUTOR_SERVER_URL: `http://127.0.0.1:${address.port}/api/v1/devops`,
         EXECUTOR_WORKER_HTTP_TOKEN: token,
+        EXECUTOR_WORKER_IDENTITIES_JSON: '',
+        EXECUTOR_WORKER_SECRET_NAMES: '',
         EXECUTOR_WORKER_ALLOWED_PLUGINS: 'test-plugin',
         EXECUTOR_WORKER_ID: 'integration-process-worker',
         EXECUTOR_WORKER_CLAIM_WAIT_MS: '1000',
@@ -820,6 +869,8 @@ describeIfDb('remote worker HTTP/database integration', () => {
         ...process.env,
         EXECUTOR_SERVER_URL: `http://127.0.0.1:${address.port}/api/v1/devops`,
         EXECUTOR_WORKER_HTTP_TOKEN: token,
+        EXECUTOR_WORKER_IDENTITIES_JSON: '',
+        EXECUTOR_WORKER_SECRET_NAMES: '',
         EXECUTOR_WORKER_ALLOWED_PLUGINS: 'test-plugin',
         EXECUTOR_WORKER_ID: 'crashing-process-worker',
         EXECUTOR_WORKER_CLAIM_WAIT_MS: '1000',

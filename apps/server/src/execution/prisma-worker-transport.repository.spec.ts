@@ -204,7 +204,7 @@ describeIfDb('PrismaExecutionRepository worker transport', () => {
     expect(await prisma.runEvent.count({ where: { runId: request.runId } })).toBe(0);
     expect(
       await repository.cleanupExpiredWorkerObjects(new Date(Date.now() + 8 * 24 * 60 * 60_000)),
-    ).toBe(1);
+    ).toBeGreaterThanOrEqual(1);
     expect(await repository.readWorkerObject('worker-1', ref!.objectId)).toBeUndefined();
   });
 

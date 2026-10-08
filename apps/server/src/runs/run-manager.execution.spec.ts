@@ -17,7 +17,7 @@ describe('RunManagerService execution projection', () => {
   const execution = { jobId: 'run-1/step-1', attemptId: 'run-1/step-1/attempt-0', attempt: 0 };
   const step = { id: 'step-1', name: 'Step 1', plugin: 'print', config: {} };
 
-  function createSubject(remoteEnabled = false, environment = 'development') {
+  function createSubject(remoteEnabled = false, environment = 'development', devEnabled = false) {
     const repository = {
       ensureJob: jest.fn(async () => undefined),
       ensureAttempt: jest.fn(async () => undefined),
@@ -30,7 +30,9 @@ describe('RunManagerService execution projection', () => {
     const runRepository = {
       heartbeatRunLease: jest.fn(async () => true),
       findById: jest.fn(async () => ({
-        workflowSnapshot: { steps: [{ ...step, plugin: 'test-plugin' }] },
+        workflowSnapshot: {
+          steps: [{ ...step, plugin: devEnabled ? 'print-plugin' : 'test-plugin' }],
+        },
         events: [],
       })),
     };
@@ -50,6 +52,7 @@ describe('RunManagerService execution projection', () => {
       {
         get: jest.fn((key: string) => {
           if (key === 'EXECUTOR_REMOTE_TEST_ENABLED') return remoteEnabled;
+          if (key === 'EXECUTOR_REMOTE_DEV_ENABLED') return devEnabled;
           if (key === 'EXECUTOR_WORKER_HTTP_TOKEN') return 'x'.repeat(32);
           if (key === 'APP_ENV') return environment;
           return undefined;
@@ -245,9 +248,9 @@ describe('RunManagerService execution projection', () => {
     const signal = new AbortController().signal;
     const result = await (
       service as unknown as {
-        executeRemoteTestPlugin(name: string, config: object, context: object): Promise<unknown>;
+        executeRemotePlugin(name: string, config: object, context: object): Promise<unknown>;
       }
-    ).executeRemoteTestPlugin(
+    ).executeRemotePlugin(
       'test-plugin',
       { type: 'unit', extra: 'not-forwarded' },
       {
@@ -273,6 +276,46 @@ describe('RunManagerService execution projection', () => {
       signal,
     );
     expect(result).toEqual({ success: true });
+  });
+
+  it('dispatches a registered non-test plugin with its full config in development mode', async () => {
+    const { service, repository } = createSubject(false, 'local-dev', true);
+    (service as unknown as { fencedRunIds: Set<string> }).fencedRunIds.add('run-1');
+    (service as unknown as { managedRunIds: Set<string> }).managedRunIds.add('run-1');
+    const remote = service as unknown as {
+      executeRemotePlugin(name: string, config: object, context: object): Promise<unknown>;
+    };
+    const config = { message: 'hello', nested: { count: 2 } };
+    await remote.executeRemotePlugin('print-plugin', config, {
+      runId: 'run-1',
+      workflowId: 'workflow-1',
+      stepId: 'step-1',
+      execution,
+      signal: new AbortController().signal,
+    });
+    expect(repository.registerWorkerDispatch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        plugin: { name: 'print-plugin', version: '1.0.0' },
+        policyVersion: 'development-tenant-v1',
+        input: { config, context: {} },
+      }),
+      'run-token',
+    );
+  });
+
+  it('still refuses development remote routing under production APP_ENV', async () => {
+    const { service, leases } = createSubject(false, 'production', true);
+    (service as unknown as { fencedRunIds: Set<string> }).fencedRunIds.add('run-1');
+    await (
+      service as unknown as {
+        authorizeStepExecution(
+          candidate: typeof step,
+          runId: string,
+          identity: typeof execution,
+        ): Promise<void>;
+      }
+    ).authorizeStepExecution(step, 'run-1', execution);
+    expect(leases.start).toHaveBeenCalledWith(execution);
   });
 
   it('persists a never-started condition skip as a terminal skipped attempt', async () => {

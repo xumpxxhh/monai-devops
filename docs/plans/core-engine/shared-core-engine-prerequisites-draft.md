@@ -6,7 +6,7 @@
 > 本文提取两条路线共同依赖的执行编排内核能力，作为共享内核演进的阶段基线。各阶段仍以最小闭环实施，具体技术选型和兼容性变化在对应阶段文档中评审。
 
 - 归档日期：2026-09-18
-- 当前状态：Core-0、Core-1 已完成；Core-2 顶层可靠调度与恢复最小闭环已收尾；Core-3 的受限非生产 `test-plugin` 实验闭环已落地，但生产退出门槛未满足；Core-4 尚未形成完整的稳定性验收。证据和剩余工作见下方[阶段收口表](#阶段收口表)；不能将“规划决策收口”等同于“Core-0～4 全部完成”。
+- 当前状态：Core-0、Core-1 已完成；Core-2 顶层可靠调度与恢复最小闭环已收尾；Core-3 已扩展为开发环境通用插件远程执行，采用单一全权限默认租户，生产化按用户决策预留且生产远程开关保持关闭；Core-4 尚未形成完整的稳定性验收。证据和剩余工作见下方[阶段收口表](#阶段收口表)。
 - 决策状态：共享语义和分层方向已定；生产身份授权、Secret/对象设施与容量目标仍须独立决策
 - 适用范围：`core-engine`、Run 模型、事件模型、插件/工具执行边界和可靠性基础
 - 下游路线：[企业级 CI/CD 推演](../ci-cd-engine/enterprise-ci-cd-roadmap-draft.md)、[AI Agent 推演](../agent-engine/ai-agent-execution-engine-roadmap-draft.md)
@@ -20,14 +20,14 @@
 | Core-0 语义与兼容 | 已完成                           | [语义盘点](./execution-semantics-inventory-draft.md)固定旧工作流兼容边界                                                                                                    |
 | Core-1 身份与事件 | 已完成                           | [执行身份](./core-1-execution-identity-draft.md)、[事件回放](./core-1-event-replay.md)、[结果原因](./core-1-outcome-reasons.md)记录实现与兼容约束                           |
 | Core-2 可靠调度   | 顶层最小闭环已收尾               | [Core-2 实施记录](./core-2-reliable-execution-foundation.md)；嵌套挂起与 paused 在途步骤无损续跑不包含在其验收范围                                                          |
-| Core-3 Executor   | 非生产实验闭环已收尾；生产未验收 | [实施记录](./core-3-executor-capability-boundary.md)与[退出验证/回滚手册](./core-3-exit-verification.md)；Run 用户/租户授权、生产凭据与 Secret、容量/长时基线、灰度演练仍缺 |
+| Core-3 Executor   | 开发环境通用远程闭环；生产化预留 | [实施记录](./core-3-executor-capability-boundary.md)与[退出验证/回滚手册](./core-3-exit-verification.md)；开发态默认单租户，不等同生产鉴权；生产凭据、Secret 和灰度尚未接入 |
 | Core-4 稳定性验证 | 未完成                           | 已有故障/恢复、重复回传与兼容回归测试，但尚无统一的并发、长任务、大事件量、事件回放一致性及真实外部副作用幂等的量化验收报告                                                 |
 
 2026-10-08 回归基线：server 202/202、core-engine 160/160、Web 47/47。这证明现有自动化回归通过，不替代生产环境、容量或跨领域集成验收。Core-3 生产远程执行保持禁用；在 Core-3 生产门槛和 Core-4 稳定性门槛通过前，不把此实施基线宣称为可承载生产 CI/CD 与 AI Agent 的完整共享内核。
 
 ### 剩余工作与退出门槛
 
-1. **Core-3 生产边界**：为 Run API 建立可信调用者及租户身份，覆盖提交、读取、事件、控制和对象访问；以 principal × workflow × capability × 环境策略派发前授权。确定生产 Worker 凭据、Secret 提供者、对象存储与隔离部署，完成负载基线和实际灰度/回滚演练。验收与回滚步骤见[Core-3 退出验证](./core-3-exit-verification.md)。
+1. **Core-3 生产化预留**：开发环境固定 `development-default` 全权限租户，已注册插件可显式远程执行；生产仍需为 Run API 建立可信调用者及租户身份，覆盖提交、读取、事件、控制和对象访问，并替换为 principal × workflow × capability × 环境策略授权。生产 Worker 凭据、Secret 提供者、对象存储与隔离部署及实际灰度/回滚演练预留给上线阶段；不以这些生产事项阻塞开发环境闭环。边界见[Core-3 退出验证](./core-3-exit-verification.md)。
 2. **Core-4 稳定性验证**：先固定可复现的测试环境、负载、持续时间、资源上限和合格阈值；对本地与受限远程路径分别做并发、长任务和大事件量测试，记录吞吐、延迟、积压、恢复时间及资源曲线。故障矩阵至少覆盖 Worker/Run owner/HTTP 入口中断、重复投递、过期 lease、等待唤醒与取消；逐项核对权威 Job/Attempt、事件 offset 回放和 Run 投影一致性。使用具备真实外部副作用的幂等测试目标验证重试后效果只发生一次，明确不可撤销副作用的失败处理。输出可复跑脚本、原始结果、环境信息和通过/失败结论，而非仅记录测试数量。
 3. **下游准入**：只有 Core-3 生产边界和 Core-4 量化验证通过、旧工作流人工兼容复测完成，并形成签署的验收记录后，才将共享内核标为整体完成。此前 CI/CD 与 Agent 路线可做独立设计和原型，不应依赖尚未兑现的生产远程执行承诺。
 

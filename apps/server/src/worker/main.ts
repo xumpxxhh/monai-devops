@@ -1,8 +1,7 @@
 import '../preload-env.js';
 import { hostname } from 'node:os';
 import { setTimeout as delay } from 'node:timers/promises';
-import testPlugin from '@monai-devops/test-plugin';
-import printPlugin from '@monai-devops/print-plugin';
+import { registeredPlugins } from '../plugins/plugin-registry.js';
 import { WorkerClient } from './worker-client.js';
 
 async function main(): Promise<void> {
@@ -12,7 +11,7 @@ async function main(): Promise<void> {
       .map((name) => name.trim())
       .filter(Boolean),
   );
-  const plugins = [testPlugin, printPlugin].filter((plugin) => allowed.has(plugin.name));
+  const plugins = registeredPlugins.filter((plugin) => allowed.has(plugin.name));
   const secretNames = (process.env.EXECUTOR_WORKER_SECRET_NAMES ?? '')
     .split(',')
     .map((name) => name.trim())
@@ -26,7 +25,7 @@ async function main(): Promise<void> {
       .filter((entry) => typeof entry[1] === 'string'),
   ) as Record<string, string>;
   if (plugins.length === 0 || plugins.length !== allowed.size) {
-    throw new Error('Worker allowlist must name only available test-plugin/print-plugin entries');
+    throw new Error('Worker allowlist must name only registered plugin entries');
   }
   const client = new WorkerClient({
     serverUrl: process.env.EXECUTOR_SERVER_URL ?? '',

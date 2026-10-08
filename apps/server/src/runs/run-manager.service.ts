@@ -75,6 +75,11 @@ import {
   resolveExecutorCancelGraceMs,
 } from '../execution/executor-deadline-policy.js';
 import { buildRunRecoverySnapshot, RunRecoveryNotReadyError } from './run-recovery-snapshot.js';
+import {
+  DEVELOPMENT_RUN_TENANT_ID,
+  developmentRunTenantCanDispatch,
+  isDevelopmentAppEnvironment,
+} from './development-run-tenant.js';
 
 export interface SubmitRunOptions {
   priority?: number;
@@ -252,34 +257,52 @@ export class RunManagerService implements OnModuleInit, OnModuleDestroy {
       this.registerStepWait(step, context.runId, context.execution, checkpoint, condition),
     );
     this.engineService.setPluginExecutionOverride?.((name, config, context) =>
-      this.executeRemoteTestPlugin(name, config, context),
+      this.executeRemotePlugin(name, config, context),
     );
   }
 
-  private remoteTestEnabled(): boolean {
-    const enabled = this.config.get<string | boolean>('EXECUTOR_REMOTE_TEST_ENABLED');
+  private remoteMode(): 'development' | 'legacy-test' | undefined {
+    const devEnabled = this.config.get<string | boolean>('EXECUTOR_REMOTE_DEV_ENABLED');
+    const legacyEnabled = this.config.get<string | boolean>('EXECUTOR_REMOTE_TEST_ENABLED');
     const environment = this.config.get<string>('APP_ENV');
     const workerToken = this.config.get<string>('EXECUTOR_WORKER_HTTP_TOKEN');
     const workerIdentities = this.config.get<string>('EXECUTOR_WORKER_IDENTITIES_JSON');
-    return (
-      (enabled === true || enabled === 'true') &&
-      ((typeof workerToken === 'string' && workerToken.length >= 32) ||
-        (typeof workerIdentities === 'string' && workerIdentities.trim().length > 0)) &&
-      environment !== 'production' &&
-      process.env.NODE_ENV !== 'production'
-    );
+    if (
+      environment === 'production' ||
+      process.env.NODE_ENV === 'production' ||
+      !(
+        (typeof workerToken === 'string' && workerToken.length >= 32) ||
+        (typeof workerIdentities === 'string' && workerIdentities.trim().length > 0)
+      )
+    ) {
+      return undefined;
+    }
+    if (
+      (devEnabled === true || devEnabled === 'true') &&
+      isDevelopmentAppEnvironment(environment)
+    ) {
+      return 'development';
+    }
+    if (legacyEnabled === true || legacyEnabled === 'true') return 'legacy-test';
+    return undefined;
+  }
+
+  private remotePluginEnabled(name: string): boolean {
+    const mode = this.remoteMode();
+    if (mode === 'legacy-test') return name === 'test-plugin';
+    if (mode !== 'development') return false;
+    const allowlist = this.config.get<string>('EXECUTOR_REMOTE_DEV_PLUGINS')?.trim();
+    if (!allowlist || allowlist === '*') return true;
+    return allowlist.split(',').some((item) => item.trim() === name);
   }
 
   private isRemoteStep(step: WorkflowStep, runId: string): boolean {
     return (
-      this.remoteTestEnabled() &&
-      this.fencedRunIds.has(runId) &&
-      isPluginStep(step) &&
-      step.plugin === 'test-plugin'
+      this.fencedRunIds.has(runId) && isPluginStep(step) && this.remotePluginEnabled(step.plugin)
     );
   }
 
-  private async executeRemoteTestPlugin(
+  private async executeRemotePlugin(
     name: string,
     config: PluginConfig,
     context: PluginContext,
@@ -287,11 +310,10 @@ export class RunManagerService implements OnModuleInit, OnModuleDestroy {
     const runId = context.runId;
     const execution = context.execution as ExecutionIdentity | undefined;
     if (
-      name !== 'test-plugin' ||
       typeof runId !== 'string' ||
       !this.managedRunIds.has(runId) ||
       !this.fencedRunIds.has(runId) ||
-      !this.remoteTestEnabled()
+      !this.remotePluginEnabled(name)
     ) {
       return undefined;
     }
@@ -300,7 +322,7 @@ export class RunManagerService implements OnModuleInit, OnModuleDestroy {
       typeof context.workflowId !== 'string' ||
       typeof context.stepId !== 'string'
     ) {
-      throw new Error('Remote test execution identity unavailable');
+      throw new Error('Remote execution identity unavailable');
     }
     const signal = getAbortSignal(context);
     await (this.eventChains.get(runId) ?? Promise.resolve());
@@ -309,12 +331,17 @@ export class RunManagerService implements OnModuleInit, OnModuleDestroy {
       throw new Error(`Run lease or cancellation signal unavailable for remote step: ${runId}`);
     }
     const plugin = this.engineService.getPlugin(name);
-    if (!plugin) throw new Error(`Remote test plugin unavailable: ${name}`);
-    if (typeof config.type !== 'string') throw new Error('Remote test plugin type is invalid');
+    if (!plugin) throw new Error(`Remote plugin unavailable: ${name}`);
+    if (this.remoteMode() === 'legacy-test' && typeof config.type !== 'string') {
+      throw new Error('Remote test plugin type is invalid');
+    }
     const run = await this.runRepository.findById(runId);
+    if (!run || !developmentRunTenantCanDispatch(run)) {
+      throw new Error(`Development tenant cannot dispatch Run: ${runId}`);
+    }
     const step = run?.workflowSnapshot.steps.find((candidate) => candidate.id === context.stepId);
     if (!step || !isPluginStep(step) || step.plugin !== name) {
-      throw new Error(`Remote test step snapshot unavailable: ${context.stepId}`);
+      throw new Error(`Remote step snapshot unavailable: ${context.stepId}`);
     }
     const mayWait = step.mayWait === true;
     if (mayWait && resolveRetryPolicy(step.retryPolicy).maxAttempts < 2) {
@@ -368,14 +395,21 @@ export class RunManagerService implements OnModuleInit, OnModuleDestroy {
       execution,
       plugin: { name, version: plugin.version },
       idempotencyKey: execution.jobId,
-      policyVersion: 'experimental-test-v2',
+      policyVersion:
+        this.remoteMode() === 'legacy-test' ? 'experimental-test-v2' : 'development-tenant-v1',
       deadlineAt: new Date(
         Date.now() +
           resolveExecutorAttemptDeadlineMs(this.config.get<string>('EXECUTOR_ATTEMPT_DEADLINE_MS')),
       ).toISOString(),
       requiredCapabilities,
       ...(step.secretRefs ? { secretRefs: step.secretRefs } : {}),
-      input: { config: { type: config.type }, context: remoteContext },
+      input: {
+        config:
+          this.remoteMode() === 'legacy-test'
+            ? { type: config.type as string }
+            : (JSON.parse(JSON.stringify(config)) as ExecutorJsonObject),
+        context: remoteContext,
+      },
     };
     if (!(await this.executionRepository.registerWorkerDispatch(dispatch, runLease.token))) {
       throw new Error(`Remote dispatch registration failed: ${execution.attemptId}`);
@@ -587,7 +621,11 @@ export class RunManagerService implements OnModuleInit, OnModuleDestroy {
       createdAt: new Date(),
       events: [],
       source: 'api',
-      metadata: {},
+      metadata:
+        process.env.NODE_ENV !== 'production' &&
+        isDevelopmentAppEnvironment(this.config.get<string>('APP_ENV'))
+          ? { tenantId: DEVELOPMENT_RUN_TENANT_ID }
+          : {},
     };
 
     const recoveryState =
