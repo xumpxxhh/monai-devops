@@ -97,7 +97,13 @@ describeIfDb('PrismaExecutionRepository worker progress inbox', () => {
       occurredAt: new Date().toISOString(),
     };
     return kind === 'event'
-      ? { ...base, kind, eventType: 'plugin:log', payloadVersion: 1, payload: { line: 'ok' } }
+      ? {
+          ...base,
+          kind,
+          eventType: 'plugin:log',
+          payloadVersion: 1,
+          payload: { level: 'info', message: 'ok', timestamp: Date.now() },
+        }
       : { ...base, kind };
   }
 
@@ -122,13 +128,48 @@ describeIfDb('PrismaExecutionRepository worker progress inbox', () => {
       }),
     ).toMatchObject([
       { sequence: 1, kind: 'heartbeat' },
-      { sequence: 2, kind: 'event', eventType: 'plugin:log', payload: { line: 'ok' } },
+      {
+        sequence: 2,
+        kind: 'event',
+        eventType: 'plugin:log',
+        payload: { level: 'info', message: 'ok' },
+      },
     ]);
     expect(await prisma.runEvent.count({ where: { runId: request.runId } })).toBe(0);
     expect(await repository.acceptWorkerMessage(request, progress('event', 2), 30_000)).toEqual({
       accepted: false,
       code: 'duplicate',
     });
+  });
+
+  it('rejects malformed log events and a durable per-Attempt log overflow', async () => {
+    const malformed = { ...progress('event', 1), payload: { line: 'unbounded' } };
+    expect(await repository.acceptWorkerMessage(request, malformed, 30_000)).toEqual({
+      accepted: false,
+      code: 'invalid_payload',
+    });
+    await prisma.executionAttemptMessage.createMany({
+      data: Array.from({ length: 100 }, (_, index) => ({
+        attemptId: request.execution.attemptId,
+        sequence: index + 1,
+        kind: 'event',
+        eventType: 'plugin:log',
+        payloadVersion: 1,
+        payload: { level: 'info', message: 'ok', timestamp: 1 },
+        occurredAt: new Date(),
+      })),
+    });
+    expect(await repository.acceptWorkerMessage(request, progress('event', 1), 30_000)).toEqual({
+      accepted: false,
+      code: 'payload_too_large',
+    });
+    expect(
+      (
+        await prisma.executionAttempt.findUniqueOrThrow({
+          where: { attemptId: request.execution.attemptId },
+        })
+      ).messageSequence,
+    ).toBe(0);
   });
 
   it('rejects worker progress whose dispatch changes server-approved capability or deadline', async () => {

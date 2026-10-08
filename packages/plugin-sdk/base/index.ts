@@ -110,7 +110,18 @@ export function createPlugin(options: CreatePluginOptionsWithoutSchema): PluginD
 export function createPlugin<T extends z.ZodType>(
   options: CreatePluginOptionsWithSchema<T> | CreatePluginOptionsWithoutSchema,
 ): PluginDefinition {
-  const { name, version, description, execute, hooks, resultSchema } = options;
+  const { name, version, description, capabilities, execute, hooks, resultSchema } = options;
+  if (
+    capabilities !== undefined &&
+    (!Array.isArray(capabilities) ||
+      capabilities.some(
+        (capability) =>
+          typeof capability !== 'string' || capability.trim() !== capability || !capability,
+      ) ||
+      new Set(capabilities).size !== capabilities.length)
+  ) {
+    throw new Error('Plugin capabilities must be unique non-empty strings');
+  }
 
   if ('configSchema' in options && options.configSchema) {
     const { configSchema } = options;
@@ -127,6 +138,7 @@ export function createPlugin<T extends z.ZodType>(
       name,
       version,
       description,
+      capabilities,
       hooks,
       configSchema,
       resultSchema,
@@ -150,6 +162,7 @@ export function createPlugin<T extends z.ZodType>(
     name,
     version,
     description,
+    capabilities,
     hooks,
     resultSchema,
     execute: wrapWithHooks(legacyExecute, hooks),

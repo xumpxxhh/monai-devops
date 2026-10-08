@@ -1,6 +1,7 @@
 import { Type } from 'class-transformer';
 import {
   ArrayMinSize,
+  IsBoolean,
   IsArray,
   IsIn,
   IsInt,
@@ -121,6 +122,15 @@ export class WorkflowDraftStepDto implements WorkflowDraftStep {
   @ValidateNested()
   @Type(() => RetryPolicyDto)
   retryPolicy?: RetryPolicyDto;
+
+  @IsOptional()
+  @IsBoolean()
+  mayWait?: boolean;
+
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  requestedCapabilities?: string[];
 }
 
 export class WorkflowDraftDto implements WorkflowDraft {

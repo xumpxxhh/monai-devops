@@ -79,6 +79,8 @@ export interface PluginStep extends BaseStep {
   config: PluginConfig;
   /** 显式允许插件请求持久化挂起；含此步骤的工作流按串行 DAG 调度。 */
   mayWait?: boolean;
+  /** Explicitly requested remote capabilities; never grants permission by itself. */
+  requestedCapabilities?: string[];
 }
 
 export interface SetStateStep extends BaseStep {
@@ -290,6 +292,8 @@ export type PluginExecutor = (
 /** In-process execution bridge. Unlike ExecutorAdapterV1, context can contain live logger/signal. */
 export interface PluginExecutionAdapter {
   readonly kind: 'local' | 'remote';
+  /** Local execution shares the trusted host process; this is not a sandbox grant. */
+  readonly trustLevel?: 'trusted-process';
   execute: PluginExecutor;
 }
 

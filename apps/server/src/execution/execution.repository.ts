@@ -61,6 +61,12 @@ export interface ClaimedWorkerDispatch {
   claim: ExecutorLeaseClaimV1;
 }
 
+export interface WorkerPluginOffer {
+  name: string;
+  version: string;
+  capabilities: string[];
+}
+
 export interface WorkerLogReceipt {
   attemptId: string;
   stepId: string;
@@ -113,10 +119,12 @@ export interface ExecutionRepository {
   claimWorkerDispatch(
     workerId: string,
     leaseTtlMs: number,
+    plugins: WorkerPluginOffer[],
   ): Promise<ClaimedWorkerDispatch | undefined>;
   acceptRegisteredWorkerMessage(
     message: unknown,
     leaseTtlMs: number,
+    workerId?: string,
   ): Promise<ExecutorMessageDecision>;
   /** Only returns a terminal inbox receipt consistent with the authoritative Attempt/Job. */
   readWorkerTerminal(execution: ExecutionIdentity): Promise<WorkerTerminalResult | undefined>;

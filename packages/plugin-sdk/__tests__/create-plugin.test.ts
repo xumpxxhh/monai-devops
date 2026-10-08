@@ -8,6 +8,27 @@ const configSchema = z.object({
 });
 
 describe('createPlugin with configSchema', () => {
+  it('retains a validated capability declaration', () => {
+    const plugin = createPlugin({
+      name: 'typed-plugin',
+      version: '1.0.0',
+      capabilities: ['execution.wait'],
+      configSchema,
+      execute: async () => ({ success: true }),
+    });
+    assert.deepEqual(plugin.capabilities, ['execution.wait']);
+    assert.throws(
+      () =>
+        createPlugin({
+          name: 'bad',
+          version: '1',
+          capabilities: ['network', 'network'],
+          configSchema,
+          execute: async () => ({ success: true }),
+        }),
+      /capabilities/,
+    );
+  });
   it('returns PLUGIN_CONFIG_INVALID when config fails validation', async () => {
     const plugin = createPlugin({
       name: 'typed-plugin',

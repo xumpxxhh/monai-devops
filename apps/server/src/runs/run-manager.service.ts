@@ -12,6 +12,7 @@ import { ConfigService } from '@nestjs/config';
 import {
   getAbortSignal,
   PluginContextKeys,
+  PluginFailureCodes,
   type PluginConfig,
   type PluginContext,
   type PluginResult,
@@ -65,6 +66,11 @@ import {
 } from '../execution/execution.repository.js';
 import { ExecutionLeaseService } from '../execution/execution-lease.service.js';
 import { ExecutionControlService } from '../execution/execution-control.service.js';
+import {
+  authorizeExecutorCapabilities,
+  ExecutorCapabilityDeniedError,
+} from '../execution/executor-capability-policy.js';
+import { resolveExecutorAttemptDeadlineMs } from '../execution/executor-deadline-policy.js';
 import { buildRunRecoverySnapshot, RunRecoveryNotReadyError } from './run-recovery-snapshot.js';
 
 export interface SubmitRunOptions {
@@ -251,10 +257,11 @@ export class RunManagerService implements OnModuleInit, OnModuleDestroy {
     const enabled = this.config.get<string | boolean>('EXECUTOR_REMOTE_TEST_ENABLED');
     const environment = this.config.get<string>('APP_ENV');
     const workerToken = this.config.get<string>('EXECUTOR_WORKER_HTTP_TOKEN');
+    const workerIdentities = this.config.get<string>('EXECUTOR_WORKER_IDENTITIES_JSON');
     return (
       (enabled === true || enabled === 'true') &&
-      typeof workerToken === 'string' &&
-      workerToken.length >= 32 &&
+      ((typeof workerToken === 'string' && workerToken.length >= 32) ||
+        (typeof workerIdentities === 'string' && workerIdentities.trim().length > 0)) &&
       environment !== 'production' &&
       process.env.NODE_ENV !== 'production'
     );
@@ -310,6 +317,26 @@ export class RunManagerService implements OnModuleInit, OnModuleDestroy {
     if (mayWait && resolveRetryPolicy(step.retryPolicy).maxAttempts < 2) {
       throw new Error('Remote wait requires retryPolicy.maxAttempts >= 2');
     }
+    let requiredCapabilities: string[];
+    try {
+      requiredCapabilities = authorizeExecutorCapabilities(
+        plugin,
+        step,
+        this.config.get<string>('EXECUTOR_ALLOWED_CAPABILITIES') ?? '',
+      );
+    } catch (error) {
+      if (error instanceof ExecutorCapabilityDeniedError) {
+        this.logger.warn(
+          `Run ${runId} step ${step.id} ${error.code}: ${error.capability} (${error.boundary})`,
+        );
+        return {
+          success: false,
+          code: PluginFailureCodes.PLUGIN_CONFIG_INVALID,
+          message: error.message,
+        };
+      }
+      throw error;
+    }
     const remoteContext = JSON.parse(
       JSON.stringify({
         ...(context[PluginContextKeys.checkpoint] !== undefined
@@ -328,8 +355,12 @@ export class RunManagerService implements OnModuleInit, OnModuleDestroy {
       execution,
       plugin: { name, version: plugin.version },
       idempotencyKey: execution.jobId,
-      policyVersion: 'experimental-test-v1',
-      requiredCapabilities: mayWait ? ['execution.wait'] : [],
+      policyVersion: 'experimental-test-v2',
+      deadlineAt: new Date(
+        Date.now() +
+          resolveExecutorAttemptDeadlineMs(this.config.get<string>('EXECUTOR_ATTEMPT_DEADLINE_MS')),
+      ).toISOString(),
+      requiredCapabilities,
       input: { config: { type: config.type }, context: remoteContext },
     };
     if (!(await this.executionRepository.registerWorkerDispatch(dispatch, runLease.token))) {

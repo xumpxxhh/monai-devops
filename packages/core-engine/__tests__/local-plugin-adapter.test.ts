@@ -16,6 +16,7 @@ describe('local plugin adapter', () => {
       return { success: true, data: { adapter: 'local' } };
     });
     assert.equal(adapter.kind, 'local');
+    assert.equal(adapter.trustLevel, 'trusted-process');
     const executor = createWorkflowExecutor({
       pluginAdapter: adapter,
       pluginExecutor: async () => {

@@ -85,6 +85,7 @@ async function executeTestPlugin(
 export const testPlugin = createPlugin({
   name: 'test-plugin',
   version: '1.0.0',
+  capabilities: ['execution.wait'],
   description: '这是一个测试插件',
   configSchema,
   resultSchema: z.object({

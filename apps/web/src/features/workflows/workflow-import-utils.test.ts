@@ -56,6 +56,23 @@ describe('parseWorkflowJson', () => {
 });
 
 describe('definitionToDraft', () => {
+  it('preserves plugin capability requests in imported drafts', () => {
+    const definition: WorkflowDefinition = {
+      ...sampleDefinition,
+      steps: [
+        {
+          id: 'a',
+          name: 'a',
+          plugin: 'test-plugin',
+          config: {},
+          requestedCapabilities: ['execution.wait'],
+        },
+      ],
+    };
+    expect(definitionToDraft(definition).draft.steps[0]).toMatchObject({
+      requestedCapabilities: ['execution.wait'],
+    });
+  });
   it('converts plugin and set_state steps with dependsOn remapping', () => {
     const { draft, skippedWorkflowStepCount } = definitionToDraft(sampleDefinition);
 

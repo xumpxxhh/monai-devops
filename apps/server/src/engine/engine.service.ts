@@ -195,6 +195,7 @@ export class EngineService implements OnModuleInit, OnModuleDestroy {
       name: plugin.name,
       version: plugin.version,
       description: plugin.description,
+      capabilities: plugin.capabilities,
       hasConfigSchema: Boolean(plugin.configSchema),
       hasResultSchema: Boolean(plugin.resultSchema),
     }));
@@ -216,6 +217,7 @@ export class EngineService implements OnModuleInit, OnModuleDestroy {
       name: plugin.name,
       version: plugin.version,
       description: plugin.description,
+      capabilities: plugin.capabilities,
       hasConfigSchema: Boolean(plugin.configSchema),
       hasResultSchema: Boolean(plugin.resultSchema),
     };

@@ -122,6 +122,7 @@ interface WorkflowDefinition {
   name: 'Build',
   plugin: 'shell',
   config: { cmd: 'pnpm build', resourceType: 'runner' },
+  requestedCapabilities?: string[]; // 远程执行时请求的能力；服务端仍须授权
   dependsOn?: string[];
   condition?: StepCondition;
   priority?: number; // 越小越优先；默认继承 run 级 priority

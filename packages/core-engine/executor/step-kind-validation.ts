@@ -106,6 +106,19 @@ export function validateStepKinds(workflow: WorkflowDefinition): void {
     if (step.mayWait !== undefined && typeof step.mayWait !== 'boolean') {
       throw new WorkflowValidationError(`步骤 "${step.id}" 的 mayWait 必须为布尔值`);
     }
+    if (
+      step.requestedCapabilities !== undefined &&
+      (!Array.isArray(step.requestedCapabilities) ||
+        step.requestedCapabilities.some(
+          (capability) =>
+            typeof capability !== 'string' || capability.trim() !== capability || !capability,
+        ) ||
+        new Set(step.requestedCapabilities).size !== step.requestedCapabilities.length)
+    ) {
+      throw new WorkflowValidationError(
+        `步骤 "${step.id}" 的 requestedCapabilities 必须为不重复的非空字符串数组`,
+      );
+    }
   }
 }
 

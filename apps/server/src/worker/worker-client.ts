@@ -12,6 +12,7 @@ import {
   type PluginDefinition,
   type PluginResult,
 } from '@monai-devops/plugin-sdk';
+import { MAX_WORKER_LOG_CHARS, MAX_WORKER_LOG_EVENTS } from '../execution/worker-event-policy.js';
 
 interface Assignment {
   dispatch: ExecutorDispatchV1;
@@ -36,6 +37,7 @@ export class WorkerClient {
   private readonly token: string;
   private readonly workerId: string;
   private readonly plugins: Map<string, PluginDefinition>;
+  private readonly offers: Array<{ name: string; version: string; capabilities: string[] }>;
   private readonly claimWaitMs: number;
   private readonly fetchImpl: typeof fetch;
 
@@ -56,6 +58,11 @@ export class WorkerClient {
     this.token = options.token.trim();
     this.workerId = options.workerId.trim();
     this.plugins = new Map(options.plugins.map((plugin) => [plugin.name, plugin]));
+    this.offers = options.plugins.map((plugin) => ({
+      name: plugin.name,
+      version: plugin.version,
+      capabilities: plugin.capabilities ?? [],
+    }));
     this.claimWaitMs = options.claimWaitMs ?? 20_000;
     if (!Number.isInteger(this.claimWaitMs) || this.claimWaitMs < 0 || this.claimWaitMs > 20_000) {
       throw new Error('Invalid worker claim wait');
@@ -110,7 +117,7 @@ export class WorkerClient {
   async runOnce(signal?: AbortSignal): Promise<boolean> {
     const response = await this.post(
       'executor-workers/claim',
-      { workerId: this.workerId, waitMs: this.claimWaitMs },
+      { workerId: this.workerId, waitMs: this.claimWaitMs, plugins: this.offers },
       signal,
     );
     const assignment = this.parseAssignment(response);
@@ -125,6 +132,13 @@ export class WorkerClient {
     const onStop = () => controller.abort();
     stopSignal?.addEventListener('abort', onStop, { once: true });
     if (stopSignal?.aborted) controller.abort();
+    const deadlineTimer = dispatch.deadlineAt
+      ? setTimeout(
+          () => controller.abort(),
+          Math.max(0, Date.parse(dispatch.deadlineAt) - Date.now()),
+        )
+      : undefined;
+    deadlineTimer?.unref?.();
     let sequence = claim.nextSequence;
     let leaseExpiresAt = Date.parse(claim.leaseExpiresAt);
     const leaseTtlMs = Math.max(3_000, leaseExpiresAt - Date.now());
@@ -177,16 +191,16 @@ export class WorkerClient {
       Math.max(500, Math.floor(leaseTtlMs / 3)),
     );
     interval.unref?.();
-    const mayWait =
-      dispatch.plugin.name === 'test-plugin' &&
-      dispatch.requiredCapabilities.length === 1 &&
-      dispatch.requiredCapabilities[0] === 'execution.wait';
+    const mayWait = dispatch.requiredCapabilities.includes('execution.wait');
     let logChain: Promise<void> = Promise.resolve();
+    let logCount = 0;
     const log = (level: string, message: string, stream?: 'stdout' | 'stderr') => {
+      if (logCount >= MAX_WORKER_LOG_EVENTS) return;
+      logCount += 1;
       // Never forward arbitrary logger data or unbounded text from an untrusted plugin.
       const payload = {
         level,
-        message: message.slice(0, 4_096),
+        message: message.slice(0, MAX_WORKER_LOG_CHARS),
         timestamp: Date.now(),
         ...(stream ? { stream } : {}),
       };
@@ -205,7 +219,9 @@ export class WorkerClient {
         !plugin ||
         plugin.version !== dispatch.plugin.version ||
         Object.keys(dispatch.secretRefs ?? {}).length > 0 ||
-        (dispatch.requiredCapabilities.length > 0 && !mayWait)
+        dispatch.requiredCapabilities.some(
+          (capability) => !(plugin.capabilities ?? []).includes(capability),
+        )
       ) {
         result = {
           success: false,
@@ -254,6 +270,7 @@ export class WorkerClient {
       await send('complete', { result });
     } finally {
       clearInterval(interval);
+      if (deadlineTimer) clearTimeout(deadlineTimer);
       stopSignal?.removeEventListener('abort', onStop);
       controller.abort();
     }

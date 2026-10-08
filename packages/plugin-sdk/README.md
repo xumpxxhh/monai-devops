@@ -90,6 +90,7 @@ interface PluginManifest {
   name: string;
   version: string;
   description?: string;
+  capabilities?: string[]; // 可使用的远程能力声明；省略表示无特权
 }
 
 interface PluginDefinition extends PluginManifest {

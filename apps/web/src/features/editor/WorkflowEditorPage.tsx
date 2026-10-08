@@ -105,6 +105,7 @@ interface StepNodeData {
   priority?: number;
   retryPolicy?: WorkflowStep['retryPolicy'];
   mayWait?: boolean;
+  requestedCapabilities?: string[];
   configInvalid?: boolean;
   [key: string]: unknown;
 }
@@ -206,6 +207,7 @@ function stepToNodeData(step: WorkflowStep): StepNodeData {
     priority: step.priority,
     retryPolicy: step.retryPolicy,
     mayWait: isPluginStep(step) ? step.mayWait : undefined,
+    requestedCapabilities: isPluginStep(step) ? step.requestedCapabilities : undefined,
   };
 
   if (isSetStateStep(step)) {
@@ -291,6 +293,7 @@ function buildDraft(
           priority: node.data.priority,
           retryPolicy: node.data.retryPolicy,
           mayWait: node.data.mayWait,
+          requestedCapabilities: node.data.requestedCapabilities,
         },
         deps,
       );

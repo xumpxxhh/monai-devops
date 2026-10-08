@@ -11,6 +11,8 @@ export interface PluginManifest {
   name: string;
   version: string;
   description?: string;
+  /** Capabilities this plugin is designed to use; absence means no remote privilege. */
+  capabilities?: string[];
 }
 
 /**

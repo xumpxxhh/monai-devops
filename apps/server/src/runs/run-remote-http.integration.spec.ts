@@ -27,12 +27,14 @@ describeIfDb('remote worker HTTP/database integration', () => {
   jest.setTimeout(90_000);
   const token = `${randomUUID()}${randomUUID()}`;
   let workerLeaseTtlMs = 30_000;
+  let allowedCapabilities = 'execution.wait';
   const config = {
     get: (key: string, fallback?: unknown) => {
       if (key === 'EXECUTOR_REMOTE_TEST_ENABLED') return true;
       if (key === 'EXECUTOR_WORKER_HTTP_TOKEN') return token;
       if (key === 'APP_ENV') return 'local-test';
       if (key === 'EXECUTOR_WORKER_LEASE_TTL_MS') return workerLeaseTtlMs;
+      if (key === 'EXECUTOR_ALLOWED_CAPABILITIES') return allowedCapabilities;
       return fallback;
     },
   } as ConfigService;
@@ -505,6 +507,42 @@ describeIfDb('remote worker HTTP/database integration', () => {
     ).toEqual([{ status: 'waiting' }, { status: 'succeeded' }]);
   });
 
+  it('denies an unapproved capability before registering a worker dispatch', async () => {
+    allowedCapabilities = '';
+    try {
+      const submitted = await manager.submitRun({
+        id: 'remote-capability-denied-integration',
+        name: 'Remote capability denial',
+        steps: [
+          {
+            id: 'test',
+            name: 'Remote wait',
+            plugin: 'test-plugin',
+            config: { type: 'wait' },
+            mayWait: true,
+            retryPolicy: { maxAttempts: 2, backoffMs: 0 },
+          },
+        ],
+      });
+      const runId = submitted.runId;
+      runIds.push(runId);
+      let run = await runs.findById(runId);
+      for (let i = 0; i < 100 && run?.status !== 'failed'; i++) {
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        run = await runs.findById(runId);
+      }
+      expect(run?.status).toBe('failed');
+      expect(
+        run?.events.some((event) => JSON.stringify(event).includes('EXECUTOR_CAPABILITY_DENIED')),
+      ).toBe(true);
+      const attempts = await prisma.executionAttempt.findMany({ where: { job: { runId } } });
+      expect(attempts).toHaveLength(1);
+      expect(attempts[0]?.dispatch).toBeNull();
+    } finally {
+      allowedCapabilities = 'execution.wait';
+    }
+  });
+
   it('projects a remote plugin failure and its log without turning it into infrastructure retry', async () => {
     const submitted = await manager.submitRun({
       id: 'remote-failure-integration',
@@ -554,7 +592,9 @@ describeIfDb('remote worker HTTP/database integration', () => {
       dispatch = await prisma.executionAttempt.findFirst({ where: { job: { runId } } });
     }
     expect(dispatch?.dispatch).toBeTruthy();
-    const assignment = await executions.claimWorkerDispatch('cancel-worker', workerLeaseTtlMs);
+    const assignment = await executions.claimWorkerDispatch('cancel-worker', workerLeaseTtlMs, [
+      { name: 'test-plugin', version: '1.0.0', capabilities: ['execution.wait'] },
+    ]);
     expect(assignment?.dispatch.runId).toBe(runId);
     await engine.cancelRun(runId, 'hard');
     let attempt = await prisma.executionAttempt.findUnique({

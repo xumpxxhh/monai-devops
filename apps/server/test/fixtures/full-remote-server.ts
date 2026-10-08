@@ -43,6 +43,7 @@ async function main(): Promise<void> {
       if (key === 'APP_ENV') return 'local-test';
       if (key === 'RUN_LEASE_TTL_MS') return 3_000;
       if (key === 'RUN_RECOVERY_POLL_MS') return 1_000;
+      if (key === 'EXECUTOR_ALLOWED_CAPABILITIES') return 'execution.wait';
       return fallback;
     },
   } as ConfigService;

@@ -408,6 +408,26 @@ describe('backward compat / helpers', () => {
     );
   });
 
+  it('rejects malformed or duplicated requested capabilities', () => {
+    assert.throws(
+      () =>
+        validateStepKinds({
+          id: 'w',
+          name: 'w',
+          steps: [
+            {
+              id: 'p',
+              name: 'p',
+              plugin: 'p',
+              config: {},
+              requestedCapabilities: ['network', 'network'],
+            },
+          ],
+        }),
+      WorkflowValidationError,
+    );
+  });
+
   it('deriveChildRunId stays within length and charset', () => {
     const id = deriveChildRunId('parent-run-abcdefghijklmnop', 'step-id-verylongname', 0);
     assert.ok(id.length < 128);

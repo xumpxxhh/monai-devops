@@ -101,6 +101,9 @@ function cloneStepToDraft(
         unknown
       >,
       ...(step.mayWait !== undefined ? { mayWait: step.mayWait } : {}),
+      ...(step.requestedCapabilities !== undefined
+        ? { requestedCapabilities: step.requestedCapabilities }
+        : {}),
     };
   }
   return {

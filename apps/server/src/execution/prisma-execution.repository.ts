@@ -27,12 +27,14 @@ import type {
   RecoveryJob,
   WorkerTerminalResult,
   WorkerLogReceipt,
+  WorkerPluginOffer,
 } from './execution.repository.js';
 import type {
   ExecutionCheckpoint,
   ExecutionIdentity,
   ExecutionWakeCondition,
 } from '@monai-devops/core-engine';
+import { MAX_WORKER_LOG_EVENTS, validWorkerEvent } from './worker-event-policy.js';
 
 @Injectable()
 export class PrismaExecutionRepository implements ExecutionRepository {
@@ -101,16 +103,20 @@ export class PrismaExecutionRepository implements ExecutionRepository {
   async claimWorkerDispatch(
     workerId: string,
     leaseTtlMs: number,
+    plugins: WorkerPluginOffer[],
   ): Promise<ClaimedWorkerDispatch | undefined> {
     if (
       !workerId.trim() ||
       workerId.length > 128 ||
       !Number.isInteger(leaseTtlMs) ||
-      leaseTtlMs < 3_000
+      leaseTtlMs < 3_000 ||
+      !Array.isArray(plugins) ||
+      plugins.length === 0
     ) {
       throw new Error('Invalid worker claim');
     }
     const token = randomUUID();
+    const offered = JSON.stringify(plugins);
     return this.prisma.$transaction(async (tx) => {
       const rows = await tx.$queryRaw<
         Array<{
@@ -133,6 +139,12 @@ export class PrismaExecutionRepository implements ExecutionRepository {
             AND run."is_active" = TRUE
             AND run."lease_token" IS NOT NULL
             AND run."lease_expires_at" > clock_timestamp()
+            AND EXISTS (
+              SELECT 1 FROM jsonb_array_elements(${offered}::jsonb) AS offer
+              WHERE offer->>'name' = (attempt."dispatch"->'plugin'->>'name')
+                AND offer->>'version' = (attempt."dispatch"->'plugin'->>'version')
+                AND (attempt."dispatch"->'requiredCapabilities') <@ (offer->'capabilities')
+            )
           ORDER BY attempt."created_at"
           FOR UPDATE OF attempt SKIP LOCKED
           LIMIT 1
@@ -175,6 +187,7 @@ export class PrismaExecutionRepository implements ExecutionRepository {
   async acceptRegisteredWorkerMessage(
     message: unknown,
     leaseTtlMs: number,
+    workerId?: string,
   ): Promise<ExecutorMessageDecision> {
     if (!message || typeof message !== 'object' || Array.isArray(message)) {
       return { accepted: false, code: 'invalid_payload' };
@@ -193,7 +206,7 @@ export class PrismaExecutionRepository implements ExecutionRepository {
     });
     if (!attempt?.dispatch) return { accepted: false, code: 'invalid_identity' };
     validateExecutorDispatch(attempt.dispatch);
-    return this.acceptWorkerMessage(attempt.dispatch, message, leaseTtlMs);
+    return this.acceptWorkerMessage(attempt.dispatch, message, leaseTtlMs, workerId);
   }
 
   async acquireLease(
@@ -261,6 +274,7 @@ export class PrismaExecutionRepository implements ExecutionRepository {
     request: ExecutorDispatchV1,
     message: unknown,
     leaseTtlMs: number,
+    workerId?: string,
   ): Promise<ExecutorMessageDecision> {
     validateExecutorDispatch(request);
     if (!Number.isInteger(leaseTtlMs) || leaseTtlMs < 3_000) {
@@ -287,6 +301,9 @@ export class PrismaExecutionRepository implements ExecutionRepository {
       ) {
         return { accepted: false, code: 'invalid_payload' };
       }
+      if (workerId && attempt.leaseOwner !== workerId) {
+        return { accepted: false, code: 'invalid_identity' };
+      }
       const fence = {
         execution: request.execution,
         leaseToken: attempt.leaseToken ?? '',
@@ -297,6 +314,15 @@ export class PrismaExecutionRepository implements ExecutionRepository {
       const decision = assessExecutorMessage(request, fence, message, now);
       if (!decision.accepted) return decision;
       const progress = message as ExecutorMessageV1;
+      if (!validWorkerEvent(progress)) return { accepted: false, code: 'invalid_payload' };
+      if (progress.kind === 'event') {
+        const logs = await tx.executionAttemptMessage.count({
+          where: { attemptId: request.execution.attemptId, kind: 'event' },
+        });
+        if (logs >= MAX_WORKER_LOG_EVENTS) {
+          return { accepted: false, code: 'payload_too_large' };
+        }
+      }
       const terminal = progress.kind === 'complete' || progress.kind === 'wait';
       const nextStatus =
         progress.kind === 'complete'
@@ -328,9 +354,7 @@ export class PrismaExecutionRepository implements ExecutionRepository {
               : Prisma.empty
           }
           ${
-            terminal
-              ? Prisma.sql`, "lease_owner" = NULL, "lease_expires_at" = NULL, "heartbeat_at" = NULL`
-              : Prisma.empty
+            terminal ? Prisma.sql`, "lease_expires_at" = NULL, "heartbeat_at" = NULL` : Prisma.empty
           }
           ${progress.kind === 'complete' ? Prisma.sql`, "finished_at" = clock_timestamp()` : Prisma.empty}
         WHERE "attempt_id" = ${request.execution.attemptId}
@@ -338,6 +362,7 @@ export class PrismaExecutionRepository implements ExecutionRepository {
           AND "attempt" = ${request.execution.attempt}
           AND "status" = ${AttemptStatuses.RUNNING}
           AND "lease_token" = ${progress.leaseToken}
+          ${workerId ? Prisma.sql`AND "lease_owner" = ${workerId}` : Prisma.empty}
           AND "lease_expires_at" > clock_timestamp()
           AND "message_sequence" = ${attempt.messageSequence}
           ${

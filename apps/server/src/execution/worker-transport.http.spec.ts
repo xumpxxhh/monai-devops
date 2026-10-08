@@ -8,6 +8,7 @@ import { WorkerTransportController } from './worker-transport.controller.js';
 
 describe('worker HTTP transport', () => {
   const token = 'test-worker-token-with-at-least-32-characters';
+  const plugins = [{ name: 'test-plugin', version: '1.0.0', capabilities: ['execution.wait'] }];
   let app: NestExpressApplication;
   const repository = {
     claimWorkerDispatch: jest.fn(async () => undefined),
@@ -48,10 +49,10 @@ describe('worker HTTP transport', () => {
     const response = await request(app.getHttpServer())
       .post('/api/v1/devops/executor-workers/claim')
       .set('Authorization', `Bearer ${token}`)
-      .send({ workerId: 'worker-1', waitMs: 0 })
+      .send({ workerId: 'worker-1', waitMs: 0, plugins })
       .expect(201);
     expect(response.body).toEqual({ assignment: null });
-    expect(repository.claimWorkerDispatch).toHaveBeenCalledWith('worker-1', 30_000);
+    expect(repository.claimWorkerDispatch).toHaveBeenCalledWith('worker-1', 30_000, plugins);
   });
 
   it('routes authenticated messages without accepting a client dispatch', async () => {

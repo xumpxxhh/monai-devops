@@ -1,7 +1,46 @@
+import 'reflect-metadata';
 import { isPluginStep, WORKFLOW_STATE_REF_ID } from '@monai-devops/core-engine';
+import { plainToInstance } from 'class-transformer';
+import { validateSync } from 'class-validator';
+import { WorkflowDraftDto } from '../../workflows/dto/workflow-draft.dto.js';
 import { normalizeWorkflowIds } from './normalize-workflow-ids.js';
 
 describe('normalizeWorkflowIds', () => {
+  it('preserves explicit capability requests on plugin drafts', () => {
+    const result = normalizeWorkflowIds({
+      name: 'Capabilities',
+      steps: [
+        {
+          name: 'Wait',
+          plugin: 'test-plugin',
+          config: { type: 'wait' },
+          mayWait: true,
+          requestedCapabilities: ['execution.wait'],
+        },
+      ],
+    });
+    expect(result.steps[0]).toMatchObject({
+      mayWait: true,
+      requestedCapabilities: ['execution.wait'],
+    });
+  });
+
+  it('retains capability requests through the HTTP DTO whitelist', () => {
+    const dto = plainToInstance(WorkflowDraftDto, {
+      name: 'Capabilities',
+      steps: [
+        {
+          name: 'Wait',
+          plugin: 'test-plugin',
+          config: { type: 'wait' },
+          mayWait: true,
+          requestedCapabilities: ['execution.wait'],
+        },
+      ],
+    });
+    expect(validateSync(dto, { whitelist: true, forbidNonWhitelisted: true })).toEqual([]);
+    expect(dto.steps[0]?.requestedCapabilities).toEqual(['execution.wait']);
+  });
   it('generates workflow and step ids when omitted on create', () => {
     const result = normalizeWorkflowIds({
       name: 'Test',

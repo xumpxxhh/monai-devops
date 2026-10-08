@@ -849,7 +849,9 @@ describeIfDb('Run recovery integration', () => {
       input: { config: { type: 'unit' }, context: {} },
     };
     expect(await executions.registerWorkerDispatch(dispatch, 'old-run-token')).toBe(true);
-    const claimed = await executions.claimWorkerDispatch('worker-before-restart', 30_000);
+    const claimed = await executions.claimWorkerDispatch('worker-before-restart', 30_000, [
+      { name: 'test-plugin', version: '1.0.0', capabilities: [] },
+    ]);
     expect(claimed?.dispatch).toEqual(dispatch);
     const pluginResult = { success: true, data: { type: 'unit', message: 'worker completed' } };
     expect(

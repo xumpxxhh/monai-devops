@@ -1,6 +1,7 @@
 import { jest } from '@jest/globals';
 import { setTimeout as delay } from 'node:timers/promises';
 import { EXECUTOR_PROTOCOL_VERSION, type ExecutorDispatchV1 } from '@monai-devops/core-engine';
+import { PluginContextKeys } from '@monai-devops/plugin-sdk';
 import type { PluginDefinition } from '@monai-devops/plugin-sdk';
 import { WorkerClient } from './worker-client.js';
 
@@ -51,7 +52,12 @@ describe('WorkerClient', () => {
     };
     const fetchImpl = jest.fn(async (url: URL | RequestInfo, init?: RequestInit) => {
       expect(init?.headers).toMatchObject({ authorization: `Bearer ${token}` });
-      if (String(url).endsWith('/claim')) return json({ assignment: assignment() });
+      if (String(url).endsWith('/claim')) {
+        expect(JSON.parse(String(init?.body))).toMatchObject({
+          plugins: [{ name: 'safe-plugin', version: '1.0.0', capabilities: [] }],
+        });
+        return json({ assignment: assignment() });
+      }
       const message = JSON.parse(String(init?.body)) as Record<string, unknown>;
       messages.push(message);
       return json({ accepted: true });
@@ -166,5 +172,43 @@ describe('WorkerClient', () => {
           plugins: [],
         }),
     ).toThrow('requires HTTPS');
+  });
+
+  it('aborts plugin execution at the server-issued deadline', async () => {
+    let observedAbort = false;
+    const plugin: PluginDefinition = {
+      name: 'safe-plugin',
+      version: '1.0.0',
+      execute: async (_config, context) => {
+        const signal = context[PluginContextKeys.signal] as AbortSignal;
+        await new Promise<void>((resolve) =>
+          signal.addEventListener('abort', () => resolve(), { once: true }),
+        );
+        observedAbort = signal.aborted;
+        return { success: false };
+      },
+    };
+    const fetchImpl = jest.fn(async (url: URL | RequestInfo) => {
+      if (String(url).endsWith('/claim')) {
+        return json({
+          assignment: assignment({
+            ...dispatch,
+            deadlineAt: new Date(Date.now() + 50).toISOString(),
+          }),
+        });
+      }
+      throw new Error('Expired attempt must not report completion');
+    });
+    const client = new WorkerClient({
+      serverUrl: 'http://localhost:3000/api/v1/devops',
+      token,
+      workerId: 'worker-1',
+      plugins: [plugin],
+      claimWaitMs: 0,
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    });
+    await expect(client.runOnce()).rejects.toThrow('Worker execution aborted');
+    expect(observedAbort).toBe(true);
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
   });
 });
