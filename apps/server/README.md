@@ -74,6 +74,12 @@ pnpm dev:test            # 强制用 .env.test（MONAI_ENV_FILE）
 
 健康检查：`GET /{prefix}/healthz`
 
+### 开发默认工作流
+
+`APP_ENV=local-dev` 或 `online-dev` 启动时，server 会按稳定 ID 补齐六个 `[开发示例] Core-3 ...` 工作流：基础执行、并行与依赖、Secret 引用、大结果引用、预期失败、等待与取消。它们会出现在 Web 的工作流列表中，可以直接触发；重复启动不会覆盖已在 Web 编辑的同 ID 定义。设 `DEV_WORKFLOW_SEED_ENABLED=false` 可关闭补齐。测试和生产环境不写入这些示例。
+
+要观察远程 Worker 链路，需同时运行 `pnpm --filter server worker:dev`，并按 `.env.example` 配置 `EXECUTOR_REMOTE_DEV_ENABLED`、命名 Worker 凭据及插件白名单。Secret 示例还要求 Worker 环境中允许并设置 `CORE3_DEV_SECRET`；缺失时会显示失败。预期失败示例用于检查失败事件；等待示例会进入 waiting，可在 Web 观察或取消，目前 Web 没有 signal 操作入口，不会自动完成。不开远程开关时，其余示例仍可验证本地工作流路径，但 Secret 示例仅针对远程 Worker。
+
 ---
 
 ## 架构一览
