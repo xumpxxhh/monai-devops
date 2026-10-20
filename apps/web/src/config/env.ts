@@ -9,7 +9,10 @@ const rawBasePath = import.meta.env.DEVOPS_BASE_PATH ?? '/';
 
 export const routerBasename = toRouterBasename(rawBasePath);
 
-export const apiBaseUrl = import.meta.env.DEVOPS_API_BASE_URL ?? '';
+const configuredApiBaseUrl = import.meta.env.DEVOPS_API_BASE_URL ?? '';
+export const apiBaseUrl = configuredApiBaseUrl
+  ? new URL(configuredApiBaseUrl, window.location.origin).toString().replace(/\/$/, '')
+  : '';
 
 function buildWsUrl(pathSuffix: string): string {
   if (!apiBaseUrl) return '';

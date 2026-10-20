@@ -4,18 +4,18 @@ MONAI DevOps 控制台前端：工作流可视化编辑、运行监控、插件�
 
 ## 技术栈
 
-| 类别 | 选型 |
-|---|---|
-| 框架 | React 19 + TypeScript + Vite 8 |
-| 路由 | react-router-dom 7（`BrowserRouter` + `basename`） |
-| 样式 | Tailwind CSS 3（自定义 brand / status token） |
-| DAG 画布 | `@xyflow/react` + `@dagrejs/dagre` 自动布局 |
-| 表单 / 弹层 | Radix UI 原语 + 自研 `shared/ui` |
-| 代码编辑 | CodeMirror 6（`@uiw/react-codemirror`） |
-| 图标 / 字体 | Font Awesome + JetBrains Mono |
-| Toast | sonner |
-| 类型复用 | `@monai-devops/core-engine`（步骤 kind、DAG 校验、`$ref` 工具等） |
-| 测试 | Vitest + Testing Library + jsdom |
+| 类别        | 选型                                                              |
+| ----------- | ----------------------------------------------------------------- |
+| 框架        | React 19 + TypeScript + Vite 8                                    |
+| 路由        | react-router-dom 7（`BrowserRouter` + `basename`）                |
+| 样式        | Tailwind CSS 3（自定义 brand / status token）                     |
+| DAG 画布    | `@xyflow/react` + `@dagrejs/dagre` 自动布局                       |
+| 表单 / 弹层 | Radix UI 原语 + 自研 `shared/ui`                                  |
+| 代码编辑    | CodeMirror 6（`@uiw/react-codemirror`）                           |
+| 图标 / 字体 | Font Awesome + JetBrains Mono                                     |
+| Toast       | sonner                                                            |
+| 类型复用    | `@monai-devops/core-engine`（步骤 kind、DAG 校验、`$ref` 工具等） |
+| 测试        | Vitest + Testing Library + jsdom                                  |
 
 不引入全局状态库：页面内 `useState` / 模块级单例（如共享 `WorkflowRunClient`、插件 schema 缓存）。
 
@@ -53,10 +53,10 @@ pnpm check-types
 
 Vite `envPrefix` 为 `DEVOPS_`（只有此前缀会注入客户端）。
 
-| 变量 | 说明 | 开发默认（`.env.development`） | 生产（`.env.production`） |
-|---|---|---|---|
-| `DEVOPS_BASE_PATH` | React Router `basename`（静态资源 `base` 需另行配置时留意） | `/` | `/devops` |
-| `DEVOPS_API_BASE_URL` | REST / SSE 根地址；WS 由其推导 | `http://localhost:3000/api/v1/devops` | `/api/v1/devops`（同源相对路径） |
+| 变量                  | 说明                                                        | 开发默认（`.env.development`）        | 生产（`.env.production`）        |
+| --------------------- | ----------------------------------------------------------- | ------------------------------------- | -------------------------------- |
+| `DEVOPS_BASE_PATH`    | React Router `basename`（静态资源 `base` 需另行配置时留意） | `/`                                   | `/devops`                        |
+| `DEVOPS_API_BASE_URL` | REST / SSE 根地址；WS 由其推导                              | `http://localhost:3000/api/v1/devops` | `/api/v1/devops`（同源相对路径） |
 
 WS 地址由 `getRunsWsUrl()` 生成：把 API URL 的协议换成 `ws`/`wss`，路径追加 `/runs/ws`。
 
@@ -66,17 +66,17 @@ WS 地址由 `getRunsWsUrl()` 生成：把 API URL 的协议换成 `ws`/`wss`，
 
 ## 路由
 
-| 路径 | 布局 | 页面 |
-|---|---|---|
-| `/` | AppShell | 概览 Dashboard |
-| `/workflows` | AppShell | 工作流列表 |
-| `/runs` | AppShell | 运行列表 |
-| `/plugins` | AppShell | 插件管理 / 试运行 |
-| `/resources` | AppShell | 资源池与等待队列 |
-| `/workflows/new` | Fullscreen | 新建工作流编辑器 |
-| `/workflows/:id/edit` | Fullscreen | 编辑已有工作流 |
-| `/runs/:runId` | 全屏详情 | 运行详情（DAG + 日志 + 控制） |
-| `/test` | 独立 | 开发探测页 |
+| 路径                  | 布局       | 页面                          |
+| --------------------- | ---------- | ----------------------------- |
+| `/`                   | AppShell   | 概览 Dashboard                |
+| `/workflows`          | AppShell   | 工作流列表                    |
+| `/runs`               | AppShell   | 运行列表                      |
+| `/plugins`            | AppShell   | 插件管理 / 试运行             |
+| `/resources`          | AppShell   | 资源池与等待队列              |
+| `/workflows/new`      | Fullscreen | 新建工作流编辑器              |
+| `/workflows/:id/edit` | Fullscreen | 编辑已有工作流                |
+| `/runs/:runId`        | 全屏详情   | 运行详情（DAG + 日志 + 控制） |
+| `/test`               | 独立       | 开发探测页                    |
 
 **AppShell**：侧栏导航 + 最近运行 + Topbar（环境标签、WS 状态、新建入口）。  
 **FullscreenLayout**：编辑器用顶栏（返回 / 标题 / 保存·运行等操作）。
@@ -136,17 +136,17 @@ RunDetail ◄── useWorkflowRun ◄── 共享 Client（按 runId 多路监
 
 基于 React Flow 的全屏 DAG 编辑：
 
-| 能力 | 说明 |
-|---|---|
-| 调色板 | 已注册插件、内置 `set_state` / `workflow`、已导入子工作流 |
-| 连线 | `dependsOn`；本地 `validateDag`（复用 core-engine） |
-| 节点检查器 | 名称、条件、优先级、`resourceType`；按 kind 配置面板 |
-| 插件配置 | `JsonSchemaForm` + 上游 `$ref`（祖先步骤 / `__workflow_state__`） |
-| 内置步骤 | `BuiltinStepPanels`：`patch`、`inputState`、`loop` 等 |
-| 导入 | `ImportWorkflowModal`：`reference` / `copy` |
-| 工作流设置 | 名称、`stateSchema`（JSON） |
-| 保存 | 新建 `POST /workflows`，更新 `PUT /workflows/:id`；保存前校验全部步骤 config |
-| 运行 | 将当前草稿 `POST /runs`（可不先保存）；成功后跳转运行详情 |
+| 能力       | 说明                                                                         |
+| ---------- | ---------------------------------------------------------------------------- |
+| 调色板     | 已注册插件、内置 `set_state` / `workflow`、已导入子工作流                    |
+| 连线       | `dependsOn`；本地 `validateDag`（复用 core-engine）                          |
+| 节点检查器 | 名称、条件、优先级、`resourceType`；按 kind 配置面板                         |
+| 插件配置   | `JsonSchemaForm` + 上游 `$ref`（祖先步骤 / `__workflow_state__`）            |
+| 内置步骤   | `BuiltinStepPanels`：`patch`、`inputState`、`loop` 等                        |
+| 导入       | `ImportWorkflowModal`：`reference` / `copy`                                  |
+| 工作流设置 | 名称、`stateSchema`（JSON）                                                  |
+| 保存       | 新建 `POST /workflows`，更新 `PUT /workflows/:id`；保存前校验全部步骤 config |
+| 运行       | 将当前草稿 `POST /runs`（可不先保存）；成功后跳转运行详情                    |
 
 步骤 config 校验见 `step-config-validation.ts`（对照后端下发的插件 JSON Schema；内置 kind 有合成 `resultSchema` 供 `$ref` 选字段）。
 
@@ -180,13 +180,13 @@ RunDetail ◄── useWorkflowRun ◄── 共享 Client（按 runId 多路监
 
 ### HTTP（`shared/api`）
 
-| 模块 | 职责 |
-|---|---|
-| `http.ts` | `apiGet/Post/Put/Delete`、`apiPostSse`；错误包装为 `ApiError` |
-| `workflows.ts` | 工作流 CRUD、validate、run、imports；`WorkflowDraft` 类型 |
-| `runs.ts` | Run 列表/详情/事件/控制 |
-| `misc.ts` | plugins（含 dry-run）、resources、stats、health、system |
-| `runs-events.ts` | 轻量发布订阅，刷新「最近运行」 |
+| 模块             | 职责                                                          |
+| ---------------- | ------------------------------------------------------------- |
+| `http.ts`        | `apiGet/Post/Put/Delete`、`apiPostSse`；错误包装为 `ApiError` |
+| `workflows.ts`   | 工作流 CRUD、validate、run、imports；`WorkflowDraft` 类型     |
+| `runs.ts`        | Run 列表/详情/事件/控制                                       |
+| `misc.ts`        | plugins（含 dry-run）、resources、stats、health、system       |
+| `runs-events.ts` | 轻量发布订阅，刷新「最近运行」                                |
 
 所有路径相对 `DEVOPS_API_BASE_URL`，**不要**再写全局前缀。
 
@@ -201,14 +201,14 @@ RunDetail ◄── useWorkflowRun ◄── 共享 Client（按 runId 多路监
 
 ## 共享 UI 与表单
 
-| 目录 / 组件 | 用途 |
-|---|---|
-| `shared/ui/form` | Input、Select、Switch、Checkbox、Field、Cascader、Textarea |
-| `shared/ui/json-schema-form` | 按 JSON Schema 渲染插件配置；支持 ContextRef 级联选字段、类型兼容校验 |
-| `shared/plugins` | `PluginConfigForm` / Modal、`preloadPluginConfigSchemas` |
-| `shared/ui/code-editor` | JSON 等 CodeMirror 封装 |
-| Modal / Drawer / Tabs / Toast / EmptyState / DropdownMenu | 通用交互 |
-| `StatusBadge` / `ProgressBar` | 运行与步骤状态 |
+| 目录 / 组件                                               | 用途                                                                  |
+| --------------------------------------------------------- | --------------------------------------------------------------------- |
+| `shared/ui/form`                                          | Input、Select、Switch、Checkbox、Field、Cascader、Textarea            |
+| `shared/ui/json-schema-form`                              | 按 JSON Schema 渲染插件配置；支持 ContextRef 级联选字段、类型兼容校验 |
+| `shared/plugins`                                          | `PluginConfigForm` / Modal、`preloadPluginConfigSchemas`              |
+| `shared/ui/code-editor`                                   | JSON 等 CodeMirror 封装                                               |
+| Modal / Drawer / Tabs / Toast / EmptyState / DropdownMenu | 通用交互                                                              |
+| `StatusBadge` / `ProgressBar`                             | 运行与步骤状态                                                        |
 
 设计 token（`tailwind.config.js`）：`brand`、`canvas`/`surface`、状态色 `completed`/`running`/`queued`/`failed`/`skipped`，圆角 `card`/`ctrl`/`pill`。
 
@@ -248,14 +248,14 @@ features/run-detail/
 
 ## 脚本
 
-| 脚本 | 作用 |
-|---|---|
+| 脚本                    | 作用                                       |
+| ----------------------- | ------------------------------------------ |
 | `pnpm dev` / `dev:test` | Vite 开发服（二者当前等价，均靠 `.env.*`） |
-| `pnpm build` | 类型检查 + 生产构建 |
-| `pnpm preview` | 预览构建产物 |
-| `pnpm test` | Vitest |
-| `pnpm check-types` | `tsc -b` |
-| `pnpm lint` / `format` | ESLint / Prettier |
+| `pnpm build`            | 类型检查 + 生产构建                        |
+| `pnpm preview`          | 预览构建产物                               |
+| `pnpm test`             | Vitest                                     |
+| `pnpm check-types`      | `tsc -b`                                   |
+| `pnpm lint` / `format`  | ESLint / Prettier                          |
 
 主要单测覆盖：`dag-utils`、`step-config-validation`、`run-state`、`json-schema-form`（schema / context-ref）。
 

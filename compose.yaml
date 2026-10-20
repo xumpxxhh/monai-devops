@@ -1,0 +1,48 @@
+services:
+  devops-server:
+    build:
+      context: .
+      target: server
+    image: monai-devops-server:${APP_VERSION:-local}
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      APP_ENV: production
+      GLOBAL_API_PREFIX: api/v1/devops
+      PORT: '3000'
+      DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL in .env}
+      DEV_WORKFLOW_SEED_ENABLED: 'false'
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      EMBEDDING_API_KEY: ${EMBEDDING_API_KEY:-}
+    expose:
+      - '3000'
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'node',
+          '-e',
+          "fetch('http://127.0.0.1:3000/api/v1/devops/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks:
+      - app_net
+
+  devops-migrate:
+    image: monai-devops-server:${APP_VERSION:-local}
+    profiles: ['tools']
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL in .env}
+    working_dir: /workspace/apps/server
+    command: ['./node_modules/.bin/prisma', 'migrate', 'deploy']
+    restart: 'no'
+    networks:
+      - app_net
+
+networks:
+  app_net:
+    external: true
+    name: ${APP_DOCKER_NETWORK:?Set the existing Docker network name}

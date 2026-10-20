@@ -96,18 +96,18 @@ interface PluginManifest {
 interface PluginDefinition extends PluginManifest {
   execute: (config: PluginConfig, context: PluginContext) => Promise<PluginResult>;
   hooks?: PluginHooks;
-  configSchema?: ZodType;   // 有则 execute 前 safeParse
-  resultSchema?: ZodType;   // 声明 data 形状；不做运行时校验
+  configSchema?: ZodType; // 有则 execute 前 safeParse
+  resultSchema?: ZodType; // 声明 data 形状；不做运行时校验
 }
 ```
 
 ### Config / Context
 
-| 类型 | 含义 |
-|---|---|
-| `PluginConfig` | 引擎边界：来自 JSON 的原始 config |
+| 类型                   | 含义                                     |
+| ---------------------- | ---------------------------------------- |
+| `PluginConfig`         | 引擎边界：来自 JSON 的原始 config        |
 | `InferPluginConfig<T>` | `z.infer<T>`，供带 schema 的插件内部使用 |
-| `PluginContext` | 索引签名对象；编排器可注入任意扩展字段 |
+| `PluginContext`        | 索引签名对象；编排器可注入任意扩展字段   |
 
 ### `PluginResult`
 
@@ -122,19 +122,19 @@ interface PluginResult {
 
 ### 失败码 `PluginFailureCodes`
 
-| 码 | 谁产生 | 含义 |
-|---|---|---|
-| `PLUGIN_CONFIG_INVALID` | `createPlugin`（有 `configSchema`） | Zod 校验失败 |
-| `PLUGIN_CANCELLED` | `createPlugin`（捕获 `PluginCancelledError`） | 协作取消 |
-| `PLUGIN_NOT_FOUND` | 引擎 plugin manager | 未注册该插件名 |
-| `PLUGIN_EXECUTION_ERROR` | 引擎 plugin manager | execute 意外 throw（非取消） |
+| 码                       | 谁产生                                        | 含义                         |
+| ------------------------ | --------------------------------------------- | ---------------------------- |
+| `PLUGIN_CONFIG_INVALID`  | `createPlugin`（有 `configSchema`）           | Zod 校验失败                 |
+| `PLUGIN_CANCELLED`       | `createPlugin`（捕获 `PluginCancelledError`） | 协作取消                     |
+| `PLUGIN_NOT_FOUND`       | 引擎 plugin manager                           | 未注册该插件名               |
+| `PLUGIN_EXECUTION_ERROR` | 引擎 plugin manager                           | execute 意外 throw（非取消） |
 
 SDK 本身只直接产生前两种；后两种由上层在「查表 / 兜底 catch」时写入。
 
 ### `PluginCancelledError`
 
 ```ts
-throw new PluginCancelledError();           // 默认文案：「插件执行已取消」
+throw new PluginCancelledError(); // 默认文案：「插件执行已取消」
 throw new PluginCancelledError('自定义');
 ```
 
@@ -187,12 +187,12 @@ interface PluginHooks<TConfig = PluginConfig> {
 }
 ```
 
-| 情况 | `afterExecute` | `onError` | 返回值 |
-|---|---|---|---|
-| `execute` 返回 `{ success: false }`（业务失败） | ✅ 仍调用 | ❌ | 原 Result |
-| `execute` / `beforeExecute` **抛** `PluginCancelledError` | ❌ | ❌ | `PLUGIN_CANCELLED` |
-| `execute` / `beforeExecute` **抛** 其它 Error | ❌ | ✅ | `{ success: false, message }` |
-| 无 hooks，抛非取消异常 | — | — | 继续向外抛 |
+| 情况                                                      | `afterExecute` | `onError` | 返回值                        |
+| --------------------------------------------------------- | -------------- | --------- | ----------------------------- |
+| `execute` 返回 `{ success: false }`（业务失败）           | ✅ 仍调用      | ❌        | 原 Result                     |
+| `execute` / `beforeExecute` **抛** `PluginCancelledError` | ❌             | ❌        | `PLUGIN_CANCELLED`            |
+| `execute` / `beforeExecute` **抛** 其它 Error             | ❌             | ✅        | `{ success: false, message }` |
+| 无 hooks，抛非取消异常                                    | —              | —         | 继续向外抛                    |
 
 要点：**业务失败用 Result，不走 `onError`；异常才走 `onError`。**
 
@@ -207,10 +207,10 @@ interface PluginHooks<TConfig = PluginConfig> {
 编排层（如 core-engine）通常注入：
 
 ```ts
-PluginContextKeys.logger  // 'logger'
-PluginContextKeys.signal // 'signal'
-PluginContextKeys.checkpoint // 'checkpoint'：ready waiting Attempt 的上次 checkpoint 载荷
-PluginContextKeys.wakePayload // 'wakePayload'：signal 唤醒载荷（timer 唤醒时缺省）
+PluginContextKeys.logger; // 'logger'
+PluginContextKeys.signal; // 'signal'
+PluginContextKeys.checkpoint; // 'checkpoint'：ready waiting Attempt 的上次 checkpoint 载荷
+PluginContextKeys.wakePayload; // 'wakePayload'：signal 唤醒载荷（timer 唤醒时缺省）
 ```
 
 顶层插件步骤声明 `mayWait: true` 后，可返回 `{ success: true, wait: { checkpoint, condition } }` 请求持久化挂起；`condition` 为 `{ kind: 'signal', key, timeoutAt? }` 或 `{ kind: 'timer', wakeAt, timeoutAt? }`，时间为 ISO 字符串。恢复时同一 Attempt 再次调用插件，`checkpoint` 与 `wakePayload` 由上述 Context 键提供。等待超时后按幂等重试策略恢复或结算 Run 失败；当前不支持嵌套子工作流挂起。
@@ -248,12 +248,12 @@ log.append('line\n', 'stdout');
 
 ### 取消辅助
 
-| API | 行为 |
-|---|---|
-| `getAbortSignal(context)` | 读取 `context.signal` |
-| `isAborted(context)` | 无 signal 或未 abort → `false` |
-| `throwIfAborted(context)` | 已 abort → 抛 `PluginCancelledError` |
-| `sleep(ms, context)` | 可中断等待；abort 时以 `PluginCancelledError` reject；无 signal 则普通 `setTimeout` |
+| API                       | 行为                                                                                |
+| ------------------------- | ----------------------------------------------------------------------------------- |
+| `getAbortSignal(context)` | 读取 `context.signal`                                                               |
+| `isAborted(context)`      | 无 signal 或未 abort → `false`                                                      |
+| `throwIfAborted(context)` | 已 abort → 抛 `PluginCancelledError`                                                |
+| `sleep(ms, context)`      | 可中断等待；abort 时以 `PluginCancelledError` reject；无 signal 则普通 `setTimeout` |
 
 长任务推荐模式：
 
@@ -284,14 +284,14 @@ formatZodError(error: ZodError): string;
 
 ## 导出一览
 
-| 来源 | 导出 |
-|---|---|
-| `zod` | `z`、`ZodType`、`ZodError` |
-| `types` | `PluginManifest`、`PluginConfig`、`InferPluginConfig`、`PluginContext`、`PluginResult`、`PluginFailureCode`、`PluginFailureCodes`、`PluginCancelledError` |
-| `base` | `createPlugin`、`getConfig`、`getContext`、及相关 options / `PluginDefinition` / `PluginExecuteFn` 类型 |
-| `hooks` | `PluginHooks` |
-| `logger` | `PluginLogger`、`PluginLogEntry`、`PluginLogLevel`、`PluginLogStream`、`PluginContextKeys`、`noopLogger`、`getLogger`、`getAbortSignal`、`isAborted`、`throwIfAborted`、`sleep` |
-| `validation` | `formatZodError` |
+| 来源         | 导出                                                                                                                                                                            |
+| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `zod`        | `z`、`ZodType`、`ZodError`                                                                                                                                                      |
+| `types`      | `PluginManifest`、`PluginConfig`、`InferPluginConfig`、`PluginContext`、`PluginResult`、`PluginFailureCode`、`PluginFailureCodes`、`PluginCancelledError`                       |
+| `base`       | `createPlugin`、`getConfig`、`getContext`、及相关 options / `PluginDefinition` / `PluginExecuteFn` 类型                                                                         |
+| `hooks`      | `PluginHooks`                                                                                                                                                                   |
+| `logger`     | `PluginLogger`、`PluginLogEntry`、`PluginLogLevel`、`PluginLogStream`、`PluginContextKeys`、`noopLogger`、`getLogger`、`getAbortSignal`、`isAborted`、`throwIfAborted`、`sleep` |
+| `validation` | `formatZodError`                                                                                                                                                                |
 
 ---
 
@@ -310,13 +310,13 @@ packages/plugin-sdk/
 
 ## 开发脚本
 
-| 脚本 | 作用 |
-|---|---|
-| `pnpm build` | `tsc -p tsconfig.build.json` → `dist/` |
-| `pnpm check-types` | 类型检查 |
-| `pnpm test` | Node test runner（`scripts/run-tests.mjs`） |
-| `pnpm lint` / `lint:fix` | ESLint |
-| `pnpm format` / `format:check` | Prettier |
+| 脚本                           | 作用                                        |
+| ------------------------------ | ------------------------------------------- |
+| `pnpm build`                   | `tsc -p tsconfig.build.json` → `dist/`      |
+| `pnpm check-types`             | 类型检查                                    |
+| `pnpm test`                    | Node test runner（`scripts/run-tests.mjs`） |
+| `pnpm lint` / `lint:fix`       | ESLint                                      |
+| `pnpm format` / `format:check` | Prettier                                    |
 
 发布物仅包含 `dist/`（`exports` 指向 `./dist/index.js` 与 `.d.ts`）。
 
