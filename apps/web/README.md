@@ -55,7 +55,7 @@ Vite `envPrefix` 为 `DEVOPS_`（只有此前缀会注入客户端）。
 
 | 变量                  | 说明                                                        | 开发默认（`.env.development`）        | 生产（`.env.production`）        |
 | --------------------- | ----------------------------------------------------------- | ------------------------------------- | -------------------------------- |
-| `DEVOPS_BASE_PATH`    | React Router `basename`（静态资源 `base` 需另行配置时留意） | `/`                                   | `/devops`                        |
+| `DEVOPS_BASE_PATH`    | React Router `basename` 与 Vite 静态资源 `base`             | `/`                                   | `/devops`                        |
 | `DEVOPS_API_BASE_URL` | REST / SSE 根地址；WS 由其推导                              | `http://localhost:3000/api/v1/devops` | `/api/v1/devops`（同源相对路径） |
 
 WS 地址由 `getRunsWsUrl()` 生成：把 API URL 的协议换成 `ws`/`wss`，路径追加 `/runs/ws`。

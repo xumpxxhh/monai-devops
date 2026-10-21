@@ -5,7 +5,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends openssl ca-cert
 RUN corepack enable
 COPY . .
 RUN pnpm install --frozen-lockfile
-RUN pnpm --filter server db:generate
 ENV DEVOPS_BASE_PATH=/devops/
 ENV DEVOPS_API_BASE_URL=/api/v1/devops
 RUN pnpm build

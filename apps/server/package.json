@@ -6,7 +6,7 @@
   "private": true,
   "license": "UNLICENSED",
   "scripts": {
-    "prebuild": "node ../../scripts/sync-plugin-registry.mjs",
+    "prebuild": "pnpm db:generate && node ../../scripts/sync-plugin-registry.mjs",
     "build": "nest build",
     "check-types": "tsc --noEmit",
     "format": "prettier --write . --ignore-path ../../.prettierignore",

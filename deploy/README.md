@@ -13,15 +13,35 @@ The only long-running application container is `devops-server`. It joins the exi
    docker compose ps
    ```
 
-3. Export the frontend files without starting a web container:
+3. Mount the shared static directory into the existing Nginx container once:
 
-   ```bash
-   docker build --target web-dist --output type=local,dest=./web-dist .
+   ```yaml
+   volumes:
+     - /opt/monai-infra/www:/usr/share/nginx/html:ro
    ```
 
-   The output directory contains `index.html`, `assets/` and other static files. Mount or copy that directory into the existing Nginx container at the location serving `/devops/`; a one-time `docker cp` is not persistent across Nginx container recreation. The image is built with Vite base `/devops/` and browser API base `/api/v1/devops`.
+   Recreate Nginx once to apply the mount. Future frontend applications only need a new subdirectory under `www/` and a route in Nginx; the mount stays unchanged.
 
-4. Configure the existing Nginx gateway to serve `/devops/` from these files and proxy `/api/v1/devops/` to `http://devops-server:3000` over their shared Docker network. Preserve the API request path, forward WebSocket upgrade headers, and disable proxy buffering for SSE. Validate and reload Nginx.
-5. Check `GET /api/v1/devops/healthz`, open `/devops/`, and exercise a workflow run with live events.
+4. Export this application's frontend files directly to `www/devops/` without starting a web container:
+
+   ```bash
+   sudo mkdir -p /opt/monai-infra/www/devops
+   sudo docker build --target web-dist --output type=local,dest=/opt/monai-infra/www/devops .
+   ```
+
+   `www/devops/` contains `index.html`, `assets/` and other static files. The image is built with Vite base `/devops/` and browser API base `/api/v1/devops`.
+
+5. Configure the existing Nginx gateway to serve `/devops/` from its shared root:
+
+   ```nginx
+   location = /devops { return 301 /devops/; }
+   location /devops/ {
+       root /usr/share/nginx/html;
+       try_files $uri $uri/ /devops/index.html;
+   }
+   ```
+
+   Proxy `/api/v1/devops/` to `http://devops-server:3000` over their shared Docker network. Preserve the API request path, forward WebSocket upgrade headers, and disable proxy buffering for SSE. Validate and reload Nginx.
+6. Check `GET /api/v1/devops/healthz`, open `/devops/`, and exercise a workflow run with live events.
 
 Protect both routes with HTTPS and authentication before public access. Back up the database before migrations and plan restarts around active workflow runs.
