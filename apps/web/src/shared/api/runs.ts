@@ -1,6 +1,12 @@
 import type { WorkflowDraft } from './workflows';
 import { apiDelete, apiGet, apiPost } from './http';
-import type { PaginatedResponse, RunRecord, SerializedWorkflowLifecycleEvent } from '../types';
+import type {
+  DevelopmentAttempt,
+  DevelopmentObject,
+  PaginatedResponse,
+  RunRecord,
+  SerializedWorkflowLifecycleEvent,
+} from '../types';
 
 export interface RunControlCommandResponse {
   commandId: string;
@@ -31,6 +37,18 @@ export const runsApi = {
     return apiGet<{ runId: string; events: SerializedWorkflowLifecycleEvent[] }>(
       `/runs/${runId}/events`,
     );
+  },
+  getExecution(runId: string) {
+    return apiGet<{ runId: string; attempts: DevelopmentAttempt[] }>(`/runs/${runId}/execution`);
+  },
+  signalWait(runId: string, attemptId: string, key: string, payload: unknown) {
+    return apiPost<{ runId: string; attemptId: string; accepted: boolean }>(
+      `/runs/${runId}/attempts/${attemptId}/signal`,
+      { key, payload },
+    );
+  },
+  getObject(runId: string, objectId: string) {
+    return apiGet<DevelopmentObject>(`/runs/${runId}/objects/${objectId}`);
   },
   listChildren(runId: string) {
     return apiGet<{ runId: string; children: RunRecord[] }>(`/runs/${runId}/children`);

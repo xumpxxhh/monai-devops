@@ -46,6 +46,23 @@ export interface RecoveryJob {
   }>;
 }
 
+export interface DevelopmentAttemptView {
+  attemptId: string;
+  jobId: string;
+  stepId: string;
+  attempt: number;
+  status: AttemptStatus;
+  remote: boolean;
+  workerId?: string;
+  waitKind?: string;
+  wakeKey?: string;
+  createdAt: Date;
+  startedAt?: Date;
+  finishedAt?: Date;
+  result?: unknown;
+  reason?: unknown;
+}
+
 export interface RegisterExecutionWaitInput {
   execution: ExecutionIdentity;
   leaseToken: string;
@@ -113,6 +130,11 @@ export interface ExecutionRepository {
   /** 原子检查过期时间并将 Attempt/Job 一起转为 timed_out，防止与续租竞态。 */
   timeoutExpiredAttempt(attemptId: string, now: Date, reason: unknown): Promise<boolean>;
   listJobsForRun(runId: string): Promise<RecoveryJob[]>;
+  listDevelopmentAttemptsForRun(runId: string): Promise<DevelopmentAttemptView[]>;
+  readDevelopmentRunObject(
+    runId: string,
+    objectId: string,
+  ): Promise<{ ref: ExecutorObjectRefV1; content: Buffer } | undefined>;
   /** Under an active Run lease, project settled worker results missed before a server crash. */
   projectSettledWorkerAttempts(runId: string, runLeaseToken: string): Promise<number>;
   /** Bind the server-approved immutable dispatch to a queued Attempt under Run ownership. */

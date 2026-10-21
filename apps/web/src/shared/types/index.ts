@@ -126,6 +126,29 @@ export interface RunRecord {
   };
 }
 
+/** Local-development-only Core-3 inspection surface. */
+export interface DevelopmentAttempt {
+  attemptId: string;
+  jobId: string;
+  stepId: string;
+  attempt: number;
+  status: string;
+  remote: boolean;
+  workerId?: string;
+  waitKind?: string;
+  wakeKey?: string;
+  createdAt: string;
+  startedAt?: string;
+  finishedAt?: string;
+  result?: unknown;
+  reason?: unknown;
+}
+
+export interface DevelopmentObject {
+  objectRef: import('@monai-devops/core-engine').ExecutorObjectRefV1;
+  bodyBase64: string;
+}
+
 export type WorkflowImportMode = 'reference' | 'copy';
 
 export interface WorkflowImportRecord {

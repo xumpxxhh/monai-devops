@@ -14,10 +14,11 @@ import { ExecutionWakeService } from '../execution/execution-wake.service.js';
 import { RunRecoveryService } from './run-recovery.service.js';
 import { WorkerTransportController } from '../execution/worker-transport.controller.js';
 import { ExecutorObjectCleanupService } from '../execution/executor-object-cleanup.service.js';
+import { DevelopmentRunController } from './development-run.controller.js';
 
 @Global()
 @Module({
-  controllers: [RunsController, WorkerTransportController],
+  controllers: [RunsController, DevelopmentRunController, WorkerTransportController],
   providers: [
     PrismaRunRepository,
     PrismaExecutionRepository,

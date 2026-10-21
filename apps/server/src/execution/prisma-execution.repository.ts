@@ -24,6 +24,7 @@ import { toInputJson } from '../prisma/prisma-json.js';
 import type {
   CreateExecutionJobInput,
   ClaimedWorkerDispatch,
+  DevelopmentAttemptView,
   ExecutionControlCommand,
   ExecutionRepository,
   RegisterExecutionWaitInput,
@@ -122,6 +123,28 @@ export class PrismaExecutionRepository implements ExecutionRepository {
   ): Promise<{ ref: ExecutorObjectRefV1; content: Buffer } | undefined> {
     const object = await this.prisma.executorObject.findFirst({
       where: { objectId, workerId, expiresAt: { gt: new Date() } },
+    });
+    if (!object) return undefined;
+    return {
+      ref: {
+        version: 1,
+        objectId,
+        kind: object.kind as 'result' | 'log',
+        contentType: object.contentType as 'application/json' | 'text/plain',
+        sizeBytes: object.sizeBytes,
+        sha256: object.sha256,
+        expiresAt: object.expiresAt.toISOString(),
+      },
+      content: Buffer.from(object.content),
+    };
+  }
+
+  async readDevelopmentRunObject(
+    runId: string,
+    objectId: string,
+  ): Promise<{ ref: ExecutorObjectRefV1; content: Buffer } | undefined> {
+    const object = await this.prisma.executorObject.findFirst({
+      where: { objectId, expiresAt: { gt: new Date() }, attempt: { job: { runId } } },
     });
     if (!object) return undefined;
     return {
@@ -1007,6 +1030,30 @@ export class PrismaExecutionRepository implements ExecutionRepository {
         wakePayload: attempt.wakePayload ?? undefined,
         remoteDispatch: attempt.dispatch !== null,
       })),
+    }));
+  }
+
+  async listDevelopmentAttemptsForRun(runId: string): Promise<DevelopmentAttemptView[]> {
+    const rows = await this.prisma.executionAttempt.findMany({
+      where: { job: { runId } },
+      include: { job: { select: { stepId: true } } },
+      orderBy: [{ createdAt: 'asc' }, { attempt: 'asc' }],
+    });
+    return rows.map((row) => ({
+      attemptId: row.attemptId,
+      jobId: row.jobId,
+      stepId: row.job.stepId,
+      attempt: row.attempt,
+      status: row.status as DevelopmentAttemptView['status'],
+      remote: row.dispatch !== null,
+      workerId: row.leaseOwner ?? undefined,
+      waitKind: row.waitKind ?? undefined,
+      wakeKey: row.wakeKey ?? undefined,
+      createdAt: row.createdAt,
+      startedAt: row.startedAt ?? undefined,
+      finishedAt: row.finishedAt ?? undefined,
+      result: row.result ?? undefined,
+      reason: row.reason ?? undefined,
     }));
   }
 

@@ -38,6 +38,7 @@ import { WsPill } from '../../shared/ws/WsPill';
 import { RUN_STATUS_META } from '../../shared/types/status';
 import type { RunStatus, WorkflowRunResultSerialized } from '../../shared/types';
 import { DagStepNode } from './DagStepNode';
+import { DevelopmentExecutionPanel } from './DevelopmentExecutionPanel';
 import {
   applyRunEvent,
   createInitialRunState,
@@ -352,7 +353,7 @@ export default function RunDetailPage() {
   const [autoScroll, setAutoScroll] = useState(true);
   const [logScrollPaused, setLogScrollPaused] = useState(false);
   const [controlLoading, setControlLoading] = useState(false);
-  const [drawerStep, setDrawerStep] = useState<StepView | null>(null);
+  const [selectedStep, setDrawerStep] = useState<StepView | null>(null);
   const [wsBanner, setWsBanner] = useState('');
   const [wsSubscribe, setWsSubscribe] = useState<{
     runId: string;
@@ -362,6 +363,7 @@ export default function RunDetailPage() {
   /** 折叠的嵌套日志组；未记录视为展开 */
   const [collapsedNestGroups, setCollapsedNestGroups] = useState<Record<string, boolean>>({});
   const logEndRef = useRef<HTMLDivElement>(null);
+  const drawerStep = selectedStep ? (runState?.steps[selectedStep.id] ?? selectedStep) : null;
 
   const handleLayoutModeChange = useCallback((mode: LayoutMode) => {
     setLayoutMode(mode);
@@ -879,6 +881,14 @@ export default function RunDetailPage() {
                   查看资源队列 →
                 </Link>
               </div>
+            )}
+            {runId && (
+              <DevelopmentExecutionPanel
+                key={runId}
+                runId={runId}
+                stepId={drawerStep.id}
+                stepResult={drawerStep.pluginResult}
+              />
             )}
           </div>
         )}

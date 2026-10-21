@@ -5,6 +5,7 @@ import { Field, Input } from '../../shared/ui/form';
 import { PluginConfigFormModal } from '../../shared/plugins';
 import type { ConfigReferenceSource } from '../../shared/ui/json-schema-form/types';
 import { SetStateStepPanel, WorkflowRefStepPanel } from './BuiltinStepPanels';
+import { ExecutorSettingsPanel } from './ExecutorSettingsPanel';
 
 export interface StepInspectorSelection {
   id: string;
@@ -21,6 +22,10 @@ export interface StepInspectorSelection {
       maxIterations: number;
       until?: { when: string; equals?: unknown; exists?: boolean };
     };
+    retryPolicy?: { maxAttempts: number; backoffMs: number; maxBackoffMs?: number };
+    mayWait?: boolean;
+    requestedCapabilities?: string[];
+    secretRefs?: Record<string, string>;
   };
 }
 
@@ -91,6 +96,11 @@ export function StepInspectorPanel({
                 value={(selection.data.config ?? {}) as Record<string, unknown>}
                 onConfirm={(config) => onUpdate({ config })}
                 referenceSources={referenceSources}
+              />
+              <ExecutorSettingsPanel
+                key={selection.id}
+                value={selection.data}
+                onUpdate={onUpdate}
               />
             </>
           )}
