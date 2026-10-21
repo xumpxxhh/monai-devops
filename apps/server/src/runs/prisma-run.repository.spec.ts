@@ -75,6 +75,26 @@ describeIfDb('PrismaRunRepository integration', () => {
     expect(loaded?.events).toEqual([]);
   });
 
+  it('allocates distinct event indices when several writers append to one Run concurrently', async () => {
+    await repository.save(baseRecord());
+    const event = { type: 'workflow:start', workflowRunId: 'run-prisma-1' };
+
+    const offsets = await Promise.all(
+      Array.from({ length: 12 }, () => repository.appendEvent('run-prisma-1', event)),
+    );
+    const rows = await prisma.runEvent.findMany({
+      where: { runId: 'run-prisma-1' },
+      orderBy: { eventIndex: 'asc' },
+    });
+
+    expect(offsets.sort((a, b) => (a ?? -1) - (b ?? -1))).toEqual(
+      Array.from({ length: 12 }, (_, index) => index),
+    );
+    expect(rows.map((row) => row.eventIndex)).toEqual(
+      Array.from({ length: 12 }, (_, index) => index),
+    );
+  });
+
   it('stores initial recovery state privately, outside Run responses', async () => {
     await repository.save(baseRecord(), { secret: 'private', count: 1 });
 

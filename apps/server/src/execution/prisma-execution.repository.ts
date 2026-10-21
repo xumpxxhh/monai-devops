@@ -20,6 +20,7 @@ import {
   type WorkflowDefinition,
 } from '@monai-devops/core-engine';
 import { PrismaService } from '../prisma/prisma.service.js';
+import { lockRunEventStream } from '../runs/run-event-lock.js';
 import { toInputJson } from '../prisma/prisma-json.js';
 import type {
   CreateExecutionJobInput,
@@ -1062,6 +1063,9 @@ export class PrismaExecutionRepository implements ExecutionRepository {
     while (true) {
       const advanced = await this.prisma.$transaction(async (tx) => {
         const now = new Date();
+        if (!(await lockRunEventStream(tx, runId))) {
+          throw new Error(`Run unavailable for worker projection: ${runId}`);
+        }
         const run = await tx.run.findUnique({
           where: { runId },
           include: { events: { orderBy: { eventIndex: 'asc' } } },
@@ -1363,6 +1367,7 @@ export class PrismaExecutionRepository implements ExecutionRepository {
       });
       let expired = 0;
       for (const attempt of due) {
+        if (!(await lockRunEventStream(tx, attempt.job.runId))) continue;
         const changed = await tx.executionAttempt.updateMany({
           where: {
             attemptId: attempt.attemptId,

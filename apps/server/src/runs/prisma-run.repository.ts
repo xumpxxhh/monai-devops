@@ -4,6 +4,7 @@ import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { toInputJson } from '../prisma/prisma-json.js';
 import { applyAppendRunEvent, getRunEventRowIdsToDelete } from './run-event-merge.js';
+import { lockRunEventStream } from './run-event-lock.js';
 import {
   ACTIVE_RUN_STATUSES,
   toRunCreateData,
@@ -103,6 +104,7 @@ export class PrismaRunRepository implements RunRepository {
 
   async settleRecoveryBlocked(runId: string, token: string, reason: string): Promise<boolean> {
     return this.prisma.$transaction(async (tx) => {
+      if (!(await lockRunEventStream(tx, runId))) return false;
       const run = await tx.run.findUnique({
         where: { runId },
         include: { events: { orderBy: { eventIndex: 'asc' } } },
@@ -279,8 +281,7 @@ export class PrismaRunRepository implements RunRepository {
     const limit = this.config.get<number>('RUN_HISTORY_LIMIT', 500);
 
     return this.prisma.$transaction(async (tx) => {
-      const run = await tx.run.findUnique({ where: { runId } });
-      if (!run) return undefined;
+      if (!(await lockRunEventStream(tx, runId))) return undefined;
 
       const rows = await tx.runEvent.findMany({
         where: { runId },
