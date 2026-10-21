@@ -78,7 +78,7 @@ pnpm dev:test            # 强制用 .env.test（MONAI_ENV_FILE）
 
 `APP_ENV=local-dev` 或 `online-dev` 启动时，server 会按稳定 ID 补齐六个 `[开发示例] Core-3 ...` 工作流：基础执行、并行与依赖、Secret 引用、大结果引用、预期失败、等待与取消。它们会出现在 Web 的工作流列表中，可以直接触发；重复启动不会覆盖已在 Web 编辑的同 ID 定义。设 `DEV_WORKFLOW_SEED_ENABLED=false` 可关闭补齐。测试和生产环境不写入这些示例。
 
-要观察远程 Worker 链路，需同时运行 `pnpm --filter server worker:dev`，并按 `.env.example` 配置 `EXECUTOR_REMOTE_DEV_ENABLED`、命名 Worker 凭据及插件白名单。Secret 示例还要求 Worker 环境中允许并设置 `CORE3_DEV_SECRET`；缺失时会显示失败。预期失败示例用于检查失败事件；等待示例会进入 waiting，可在 Web 运行详情的步骤抽屉中输入 JSON Payload 并发送唤醒信号。不开远程开关时，其余示例仍可验证本地工作流路径，但 Secret 示例仅针对远程 Worker。
+从仓库根执行 `pnpm dev` 会同时启动 server、Web 和开发 Worker；仅执行 `pnpm dev:server` 或在 `apps/server` 执行 `pnpm dev` 时，仍需另起 `pnpm --filter server worker:dev`。按 `.env.example` 配置 `EXECUTOR_REMOTE_DEV_ENABLED`、命名 Worker 凭据及插件白名单。Secret 示例还要求 Worker 环境中允许并设置 `CORE3_DEV_SECRET`；缺失时会显示失败。预期失败示例用于检查失败事件；等待示例会进入 waiting，可在 Web 运行详情的步骤抽屉中输入 JSON Payload 并发送唤醒信号。不开远程开关时，其余示例仍可验证本地工作流路径，但 Secret 示例仅针对远程 Worker。
 
 Web 工作流编辑器的插件步骤提供重试、等待、Capability 请求和 `secret://env/NAME` 引用配置；运行详情的步骤抽屉可查看持久化 Attempt、唤醒 waiting Attempt、读取未过期且归属当前 Run 的对象引用。对应 `GET /runs/:runId/execution`、`POST /runs/:runId/attempts/:attemptId/signal`、`GET /runs/:runId/objects/:objectId` **仅在 `APP_ENV=local-dev` 且 `NODE_ENV` 非 production 时开放**，否则返回 404；这些接口使用开发默认租户边界，不是生产鉴权。仅在可信本机开发网络使用，不要把 local-dev 服务暴露到公网。
 

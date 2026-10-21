@@ -53,7 +53,7 @@
 
 明确的 dev/test `APP_ENV` 可设置 `EXECUTOR_REMOTE_DEV_ENABLED=true`，并配置命名 Worker 凭据或至少 32 字符的实验 token。此模式可将顶层已注册插件派发给独立 Worker，完整 JSON 配置随受限上下文送达；`EXECUTOR_REMOTE_DEV_PLUGINS` 可限制选路名单。开发 Run 使用单一 `development-default` 全权限租户，后续生产需替换为可信 principal/租户系统。旧 `EXECUTOR_REMOTE_TEST_ENABLED=true` 模式仍仅派发 `test-plugin` 并只转发 `config.type`。capability 须在插件 manifest、步骤请求及 `EXECUTOR_ALLOWED_CAPABILITIES` 中同时允许；`mayWait: true` 隐含请求 `execution.wait`，还须设置 `retryPolicy.maxAttempts >= 2`。远程等待被 signal 唤醒后创建下一 Attempt。`APP_ENV=production` 或 `NODE_ENV=production` 强制走本地路径。
 
-本机开发在 `apps/server/.env` 配置开发态选路、单一命名 Worker 身份、已注册插件白名单及可选环境 Secret；需分别启动 `pnpm --filter server dev` 与 `pnpm --filter server worker:dev`。新增插件后先执行 `pnpm sync:plugins`，再把插件名加入 Worker 白名单和命名身份报价。外部模型/网络插件自身所需的服务地址和凭据仍要按插件配置提供；“可远程派发”不等于外部服务已可用。提交仓库的 `.env.example` 保持远程开关关闭，不含可用凭据。
+本机开发在 `apps/server/.env` 配置开发态选路、单一命名 Worker 身份、已注册插件白名单及可选环境 Secret；仓库根目录 `pnpm dev` 会同时启动 server、Web 与 Worker，单独启动 server 时仍需另起 `pnpm --filter server worker:dev`。新增插件后先执行 `pnpm sync:plugins`，再把插件名加入 Worker 白名单和命名身份报价。外部模型/网络插件自身所需的服务地址和凭据仍要按插件配置提供；“可远程派发”不等于外部服务已可用。提交仓库的 `.env.example` 保持远程开关关闭，不含可用凭据。
 
 test DB 集成测试覆盖真实 HTTP 领取/完成、独立 worker 进程、worker 崩溃后的超时与旧 token 拒绝、新 manager 接管后的完成补投影、响应丢失与持续断线后的同序号重试、插件失败与日志、远程 wait/signal/新 Attempt、硬取消与迟到消息拒绝。独立 HTTP server 子进程重启和 Run owner/HTTP 同进程重启的故障注入均已通过；暂时不可恢复的 Run 改为按扫描间隔重试，不再固定延后 30 秒。协议 JSON 预检接受来自不同 JavaScript 运行域的普通对象，仍拒绝自定义原型、循环和非有限值。
 

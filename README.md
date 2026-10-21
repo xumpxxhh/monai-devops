@@ -127,9 +127,11 @@ pnpm db:migrate:dev
 pnpm dev:server          # 或 pnpm dev:server:test（对齐 web 默认 API 前缀）
 pnpm dev:web
 
-# 也可一次拉起 workspace 内所有 dev（会先 ^build）
+# 也可一次拉起 Server、Web 和开发 Worker（会先 ^build）
 pnpm dev
 ```
+
+根目录 `pnpm dev` 会运行 `server#worker:dev`，需在 `apps/server/.env` 配好 Worker URL、凭据和插件白名单；单独使用 `pnpm dev:server` 不会启动 Worker。不要在已有 Server/Worker 运行时再次执行根目录 `pnpm dev`，以免端口或 Worker 身份冲突。
 
 - Web：Vite，默认 `http://127.0.0.1:5173`
 - Server：默认 `http://localhost:3000/{GLOBAL_API_PREFIX}`
@@ -146,7 +148,7 @@ pnpm dev
 | 脚本                                | 作用                                                 |
 | ----------------------------------- | ---------------------------------------------------- |
 | `pnpm build`                        | Turbo 构建全部包                                     |
-| `pnpm dev`                          | 全部包 `dev`（依赖上游先 build）                     |
+| `pnpm dev`                          | 全部包 `dev` + Server 开发 Worker（先 build 上游）   |
 | `pnpm dev:server` / `dev:web`       | 仅后端 / 仅前端                                      |
 | `pnpm dev:server:test` / `dev:test` | 使用各包 `dev:test`（server 强制 `.env.test`）       |
 | `pnpm test`                         | 全仓测试（会先 `^build`）                            |
