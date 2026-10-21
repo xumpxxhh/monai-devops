@@ -23,7 +23,7 @@
 | Core-3 Executor   | 开发环境通用远程闭环；生产化预留 | [实施记录](./core-3-executor-capability-boundary.md)与[退出验证/回滚手册](./core-3-exit-verification.md)；开发态默认单租户，不等同生产鉴权；生产凭据、Secret 和灰度尚未接入 |
 | Core-4 稳定性验证 | 未完成                           | 已有故障/恢复、重复回传与兼容回归测试，但尚无统一的并发、长任务、大事件量、事件回放一致性及真实外部副作用幂等的量化验收报告                                                 |
 
-2026-10-08 回归基线：server 202/202、core-engine 160/160、Web 47/47。2026-10-21 补齐 Web 与 server 的 Core-3 开发态联动：编辑器可配置插件步骤重试、等待、Capability 与 Secret 引用；运行详情可查看 Attempt、发送 signal 和读取 Run 归属的对象引用；新接口仅 local-dev 开放，生产返回 404。本轮 Web 51/51、新增 server 控制器测试 4/4、Web/server 类型检查通过；server 全量集成测试因本机 `localhost:5432` 数据库不可达而未完成，需数据库恢复后重跑。这些回归不替代生产环境、容量或跨领域集成验收。Core-3 生产远程执行保持禁用；在 Core-3 生产门槛和 Core-4 稳定性门槛通过前，不把此实施基线宣称为可承载生产 CI/CD 与 AI Agent 的完整共享内核。
+2026-10-08 回归基线：server 202/202、core-engine 160/160、Web 47/47。2026-10-21 补齐 Web 与 server 的 Core-3 开发态联动：编辑器可配置插件步骤重试、等待、Capability 与 Secret 引用；运行详情可查看 Attempt、发送 signal 和读取 Run 归属的对象引用；新接口仅 local-dev 开放，生产返回 404。Docker 恢复后，六个开发示例实际触发并收敛：基础、并行、Secret、大结果、等待唤醒成功，预期失败按设计失败；大结果对象大小与 SHA-256 一致，跨 Run 读取返回 404。远程 HTTP/数据库集成测试 14/14、Web 52/52、新增 server 控制器测试 4/4、Web/server 类型检查通过。server 全量测试本轮未取得完整通过结果，需另行重跑。这些回归不替代生产环境、容量或跨领域集成验收。Core-3 生产远程执行保持禁用；在 Core-3 生产门槛和 Core-4 稳定性门槛通过前，不把此实施基线宣称为可承载生产 CI/CD 与 AI Agent 的完整共享内核。
 
 ### 剩余工作与退出门槛
 

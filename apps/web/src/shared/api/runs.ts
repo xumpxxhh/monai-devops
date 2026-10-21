@@ -43,7 +43,7 @@ export const runsApi = {
   },
   signalWait(runId: string, attemptId: string, key: string, payload: unknown) {
     return apiPost<{ runId: string; attemptId: string; accepted: boolean }>(
-      `/runs/${runId}/attempts/${attemptId}/signal`,
+      `/runs/${runId}/attempts/${encodeURIComponent(attemptId)}/signal`,
       { key, payload },
     );
   },
